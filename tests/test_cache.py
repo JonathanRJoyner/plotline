@@ -36,6 +36,12 @@ def test_estimate_bytes():
     assert estimate_bytes("abc") == sys.getsizeof("abc")
 
 
+def test_estimate_bytes_counts_dataclass_fields_and_tuples():
+    pen = Pen("p", 0.3, "#000000")
+    assert estimate_bytes(Layer(pen, [np.zeros((3, 2))])) - estimate_bytes(Layer(pen, [])) == 48
+    assert estimate_bytes((np.zeros(10), np.zeros(10))) == 160
+
+
 def test_clear():
     c = StageCache()
     c.put("k", np.zeros(10))
