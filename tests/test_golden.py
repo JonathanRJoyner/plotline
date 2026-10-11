@@ -1,7 +1,8 @@
 """Golden tests: the grid style on tiny synthetic images keeps giving the same paths.
 
-Coordinates are compared to 1e-3 mm, but the path count and every top-level key except ``layers``
-must match exactly, so a rounding difference that flips one grid cell shows up as a count
+Only the coordinates are compared with a tolerance (1e-3 mm). Everything else must match exactly:
+every top-level key except ``layers``, the number of layers, and the pen and the path count of the
+first layer. A rounding difference that flips one grid cell therefore shows up as a count
 mismatch. If a platform ever does that, move ``threshold`` in ``produce`` farther from every
 sampled ink value instead of loosening the comparison. After a deliberate change to the geometry,
 rewrite the files with ``pytest tests/test_golden.py --update-golden`` and review the diff.
@@ -55,6 +56,8 @@ def test_golden(name, update_golden):
     assert {k: v for k, v in actual.items() if k != "layers"} == {
         k: v for k, v in expected.items() if k != "layers"
     }
+    assert len(actual["layers"]) == len(expected["layers"])
+    assert actual["layers"][0]["pen"] == expected["layers"][0]["pen"]
     a, e = actual["layers"][0]["paths"], expected["layers"][0]["paths"]
     assert len(a) == len(e) and len(a) > 0
     assert np.allclose(
