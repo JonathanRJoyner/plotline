@@ -86,4 +86,10 @@ class Stage(ABC):
     ) -> Generator[Frame, None, Any]:
         """Yield a ``Frame`` as work progresses, then return the artifact. ``inputs`` maps each
         required kind to its artifact. The runner checks for cancellation after every frame, so
-        yield at least one; a long loop that does not yield must call ``ctx.check()`` itself."""
+        yield at least one; a long loop that does not yield must call ``ctx.check()`` itself.
+
+        ``inputs`` and the returned artifact are shared with the cache and with later runs. Never
+        modify them in place: copy before changing anything. The runner marks a returned array,
+        or each array in a returned list or tuple, read-only, so an in-place write to one raises
+        ``ValueError``. The root inputs belong to the caller and are not marked, but the same rule
+        holds for them."""

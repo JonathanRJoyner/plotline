@@ -125,7 +125,9 @@ def root_key(kind: str, value: Any) -> str:
 
 def stage_key(stage: Stage, settings: Settings, input_keys: dict[str, str]) -> str:
     """The cache key of one stage run: the stage's class, name and version, its settings, and the
-    keys of its inputs by kind. A change to any of them gives a new key."""
+    keys of its inputs by kind. A change to any of them gives a new key. Any configuration that
+    changes the output of a stage must live in its name, version or settings, because instance
+    attributes are not part of the key."""
     return _digest(
         canonical_json(
             {
@@ -137,6 +139,20 @@ def stage_key(stage: Stage, settings: Settings, input_keys: dict[str, str]) -> s
             }
         ).encode()
     )
+
+
+def _freeze(value: Any) -> None:
+    """Mark ``value`` read-only if it is an array, or each array in it if it is a list or tuple.
+
+    Anything else is left as it is. A cached artifact is shared, so an in-place write to it should
+    fail at once instead of corrupting later runs.
+    """
+    if isinstance(value, np.ndarray):
+        value.flags.writeable = False
+    elif isinstance(value, list | tuple):
+        for item in value:
+            if isinstance(item, np.ndarray):
+                item.flags.writeable = False
 
 
 def run_style(
@@ -158,6 +174,13 @@ def run_style(
 
     The result is built from the last stage's output: layers as they are, or paths on one layer of
     the first pen. Its tone map is the output of the last stage that provides ``tone``, if any.
+
+    Nothing is copied: the inputs a stage receives and the artifact it returns are the objects held
+    by ``cache``, handed to later runs and placed in the ``Result``. Stages and callers must never
+    modify them in place, and must copy before changing anything. Before it stores an artifact the
+    runner marks it read-only if it is an array, and each array in it if it is a list or tuple, so
+    an in-place write to one of those raises ``ValueError``. The roots belong to the caller and are
+    not marked, but the same rule holds for them.
     """
     artifacts: dict[str, Any] = {kind: roots[kind] for kind in sorted(ROOT_KINDS)}
     keys = {kind: root_key(kind, value) for kind, value in artifacts.items()}
@@ -177,6 +200,7 @@ def run_style(
                     break
                 yield replace(frame, stage=stage.name)
                 ctx.check()
+            _freeze(value)
             cache.put(key, value)
         else:
             yield Frame(1.0, "cached", stage=stage.name)

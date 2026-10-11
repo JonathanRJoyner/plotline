@@ -194,3 +194,33 @@ def test_stage_key_follows_class_name_version_settings_and_inputs():
         spy_key(image="other"),
     }
     assert len(keys) == 6 and spy_key() == spy_key()
+
+
+def test_cached_arrays_are_read_only():
+    points = np.zeros((3, 2))
+    paths = [np.zeros((2, 2)), np.ones((2, 2))]
+    a = Spy("a", ("image",), "points", value=points)
+    b = Spy("b", ("points",), "paths", value=paths)
+    style = Style("t", "T", "d", (a, b))
+    cache = StageCache()
+    assert points.flags.writeable and all(path.flags.writeable for path in paths)
+    _, result = run(style, style.defaults(), cache)
+    points_key = stage_key(a, SpySettings(), {"image": root_key("image", ROOTS["image"])})
+    paths_key = stage_key(b, SpySettings(), {"points": points_key})
+    cached_points = cache.get(points_key)
+    assert cached_points is points and cached_points.flags.writeable is False
+    with pytest.raises(ValueError):
+        cached_points[0, 0] = 1.0
+    cached_paths = cache.get(paths_key)
+    assert cached_paths is paths and [p.flags.writeable for p in cached_paths] == [False, False]
+    with pytest.raises(ValueError):
+        result.layers[0].paths[0][0, 0] = 1.0
+    assert ROOTS["image"].flags.writeable
+
+
+def test_arrays_in_a_cached_tuple_are_read_only():
+    pair = (np.zeros(3), np.ones(3))
+    stages = (Spy("a", ("image",), "pair", value=pair), Spy("b", ("pair",), "paths", value=PATHS))
+    style = Style("t", "T", "d", stages)
+    run(style, style.defaults(), StageCache())
+    assert [x.flags.writeable for x in pair] == [False, False]
