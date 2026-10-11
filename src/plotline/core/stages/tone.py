@@ -118,7 +118,9 @@ class ToneStage(Stage):
         assert isinstance(settings, ToneSettings)
         canvas: Canvas = inputs["canvas"]
         rgb = np.asarray(inputs["image"], dtype=np.float32)
-        lum = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+        lum = np.asarray(
+            0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2], dtype=np.float32
+        )
         if canvas.fit == "fill":
             _, _, w, h = canvas.drawing_rect
             lum = _crop_to_aspect(lum, w / h)
