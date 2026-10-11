@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python `>=3.11`. Runtime dependencies are exactly numpy, scipy, Pillow, pydantic 2 and click. The optional extra `fast` declares numba, and nothing imports it.
-- `plotline.core` imports nothing from `session` or `cli` and does no file, thread or network I/O. `plotline.cli` calls `session` and constructs `core.types` data classes, nothing else from `core`.
+- `plotline.core` imports nothing from `session` or `cli` and does no file, thread or network I/O. `plotline.cli` calls `session`, constructs `core.types` data classes and reads `core.registry` to list and describe styles; nothing else from `core`.
 - Public units are millimetres. Pixels appear only inside the tone stage and the preview rasterizer.
 - Every module that implements an algorithm names its published source in the module docstring. No code is copied from other projects.
 - No other tools or products are named or compared against in code, docs or commit messages.
@@ -90,6 +90,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -655,14 +658,14 @@ git commit -m "Add the cached pipeline runner with content-hash keys" -m "Co-Aut
 
 ```python
 def run_tone(image, canvas=Canvas(100, 100), **kw):
-    kw.setdefault("resolution", 32)
+    kw.setdefault("resolution", 64)
     frames, tone = collect(ToneStage().run({"image": image, "canvas": canvas}, ToneSettings(**kw), RunContext(CancelToken())))
     return frames, tone
 
 def test_shape_dtype_and_transform():
     frames, t = run_tone(gradient(64, 48))
-    assert t.ink.shape == (24, 32) and t.ink.dtype == np.float32
-    assert t.mm_per_px == pytest.approx(3.125) and t.origin_mm == pytest.approx((0, 12.5))
+    assert t.ink.shape == (48, 64) and t.ink.dtype == np.float32
+    assert t.mm_per_px == pytest.approx(1.5625) and t.origin_mm == pytest.approx((0, 12.5))
     assert len(frames) == 1 and frames[0].progress == 1
 
 def test_gradient_ink_falls_left_to_right():
@@ -683,7 +686,7 @@ def test_blur_lowers_variation():
 
 def test_fill_crops_to_the_drawing_aspect():
     _, t = run_tone(flat(64, 64, 0.5), Canvas(100, 50, 0, "fill"))
-    assert t.ink.shape == (16, 32) and t.rect_mm == pytest.approx((0, 0, 100, 50))
+    assert t.ink.shape == (32, 64) and t.rect_mm == pytest.approx((0, 0, 100, 50))
 
 def test_short_edge_is_at_least_one_pixel():
     _, t = run_tone(flat(4000, 1, 0.5), resolution=100)
