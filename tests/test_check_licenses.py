@@ -30,3 +30,10 @@ def test_closure_is_runtime_only():
 
 def test_environment_passes():
     assert cl.main() == 0
+
+
+def test_tokens_match_whole_words_only():
+    assert cl.is_allowed(
+        "THIS SOFTWARE IS PROVIDED WITHOUT IMPLIED WARRANTIES. License :: OSI Approved :: BSD License"
+    )
+    assert not cl.is_allowed("PERMITTED USE ONLY")

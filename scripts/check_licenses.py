@@ -6,8 +6,8 @@ skips optional extras, and judges each distribution by the licence text in its m
 classifiers of the core metadata specification.
 
 Matching is deliberately crude: a licence passes when its text contains an ALLOWED token and no
-DENIED token, case-sensitive. Anything unclear fails. A person then checks the package and, when
-its real licence is permissive, records the result in OVERRIDES.
+DENIED token, each matched as a whole word and case-sensitive. Anything unclear fails. A person
+then checks the package and, when its real licence is permissive, records the result in OVERRIDES.
 """
 
 import re
@@ -32,9 +32,8 @@ DENIED: tuple[str, ...] = ("GPL", "LGPL", "AGPL", "MPL", "EPL", "CDDL", "SSPL")
 # Normalised package name -> (licence, URL where the licence was checked). For packages whose
 # metadata trips a DENIED token for a reason that does not change their own licence.
 OVERRIDES: dict[str, tuple[str, str]] = {
-    # SciPy's own licence is BSD-3-Clause. Its wheel metadata also carries notices for bundled
-    # components: BSD disclaimers ("IMPLIED" contains "MPL") and a compiler runtime library
-    # under GPL-3.0-or-later with a runtime library exception.
+    # SciPy's own licence is BSD-3-Clause. Its wheel metadata also carries the notice for a
+    # bundled compiler runtime library under GPL-3.0-or-later with a runtime library exception.
     "scipy": ("BSD-3-Clause", "https://raw.githubusercontent.com/scipy/scipy/v1.17.1/LICENSE.txt"),
 }
 
@@ -51,8 +50,14 @@ def license_text(dist: Distribution) -> str:
     return "\n".join(p for p in parts if p)
 
 
+def _has_token(token: str, text: str) -> bool:
+    # "-" is a word boundary, so "MIT-CMU" holds "MIT"; "IMPLIED" does not hold "MPL".
+    return re.search(r"\b" + re.escape(token) + r"\b", text) is not None
+
+
 def is_allowed(text: str) -> bool:
-    return any(a in text for a in ALLOWED) and not any(d in text for d in DENIED)
+    allowed = any(_has_token(token, text) for token in ALLOWED)
+    return allowed and not any(_has_token(token, text) for token in DENIED)
 
 
 def runtime_closure(root: str = "plotline") -> list[str]:
