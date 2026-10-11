@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node (GUI frontend)
+node_modules/
+
+# Local work and outputs: keep personal images and plots out of the repo
+scratch/
+out/
+*.local.*
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
