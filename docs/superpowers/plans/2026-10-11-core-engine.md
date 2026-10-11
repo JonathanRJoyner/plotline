@@ -174,6 +174,15 @@ def test_closure_is_runtime_only():
 
 def test_environment_passes():
     assert cl.main() == 0
+
+def test_tokens_match_whole_words_only():
+    assert cl.is_allowed("THIS SOFTWARE IS PROVIDED WITHOUT IMPLIED WARRANTIES. License :: OSI Approved :: BSD License")
+    assert not cl.is_allowed("PERMITTED USE ONLY")
+
+def test_glued_copyleft_spellings_are_denied():
+    for t in ["MIT OR LGPLv3", "MIT/GPLv2", "License :: OSI Approved :: GNU General Public License v3 (GPLv3)"]:
+        assert not cl.is_allowed(t), t
+    assert cl.is_allowed("THIS SOFTWARE IS PROVIDED WITHOUT IMPLIED WARRANTIES. BSD-3-Clause")
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -185,7 +194,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'check_licenses'`
 
 `ALLOWED = ("MIT", "BSD", "Apache", "ISC", "HPND", "Historical Permission", "PSF", "Python Software Foundation", "Python-2.0")`. `DENIED = ("GPL", "LGPL", "AGPL", "MPL", "EPL", "CDDL", "SSPL")`. `OVERRIDES = {}`.
 
-`license_text` joins the `License-Expression` field, the `License` field and every `Classifier` starting with `License ::`. `is_allowed` is true when some `ALLOWED` token appears and no `DENIED` token appears, matching whole words case-sensitively. `runtime_closure` walks `Requires-Dist` breadth-first from `root`, skipping requirements whose marker contains `extra ==`, skipping names that raise `PackageNotFoundError` (platform-only dependencies), normalising names with `re.sub(r"[-_.]+", "-", name).lower()`, and returns the sorted names without `root`. `main` prints one line per package (`name  licence  OK|DENIED`), applies `OVERRIDES` by name, prints the offenders, and returns `1` when any exist.
+`license_text` joins the `License-Expression` field, the `License` field and every `Classifier` starting with `License ::`. `is_allowed` is true when some `ALLOWED` token appears as a whole word and no `DENIED` token appears at a word start, case-sensitive. `runtime_closure` walks `Requires-Dist` breadth-first from `root`, skipping requirements whose marker contains `extra ==`, skipping names that raise `PackageNotFoundError` (platform-only dependencies), normalising names with `re.sub(r"[-_.]+", "-", name).lower()`, and returns the sorted names without `root`. `main` prints one line per package (`name  licence  OK|DENIED`), applies `OVERRIDES` by name, prints the offenders, and returns `1` when any exist.
 
 - [ ] **Step 4: Write `.github/workflows/ci.yml` exactly as follows**
 
@@ -220,7 +229,7 @@ jobs:
 - [ ] **Step 5: Verify**
 
 Run: `uv run pytest tests/test_check_licenses.py -v`
-Expected: 4 passed.
+Expected: 6 passed.
 Run: `uv run --with pyyaml python -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml')); print('ok')"`
 Expected: `ok`.
 Run the verification set.

@@ -37,3 +37,13 @@ def test_tokens_match_whole_words_only():
         "THIS SOFTWARE IS PROVIDED WITHOUT IMPLIED WARRANTIES. License :: OSI Approved :: BSD License"
     )
     assert not cl.is_allowed("PERMITTED USE ONLY")
+
+
+def test_glued_copyleft_spellings_are_denied():
+    for t in [
+        "MIT OR LGPLv3",
+        "MIT/GPLv2",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    ]:
+        assert not cl.is_allowed(t), t
+    assert cl.is_allowed("THIS SOFTWARE IS PROVIDED WITHOUT IMPLIED WARRANTIES. BSD-3-Clause")

@@ -5,9 +5,10 @@ skips optional extras, and judges each distribution by the licence text in its m
 ``License-Expression`` field (PEP 639), the ``License`` field and the ``License ::``
 classifiers of the core metadata specification.
 
-Matching is deliberately crude: a licence passes when its text contains an ALLOWED token and no
-DENIED token, each matched as a whole word and case-sensitive. Anything unclear fails. A person
-then checks the package and, when its real licence is permissive, records the result in OVERRIDES.
+Matching is deliberately crude: a licence passes when its text contains an ALLOWED token as a
+whole word and no DENIED token at the start of a word, case-sensitive. Anything unclear fails. A
+person then checks the package and, when its real licence is permissive, records the result in
+OVERRIDES.
 """
 
 import re
@@ -50,14 +51,13 @@ def license_text(dist: Distribution) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def _has_token(token: str, text: str) -> bool:
-    # "-" is a word boundary, so "MIT-CMU" holds "MIT"; "IMPLIED" does not hold "MPL".
-    return re.search(r"\b" + re.escape(token) + r"\b", text) is not None
-
-
 def is_allowed(text: str) -> bool:
-    allowed = any(_has_token(token, text) for token in ALLOWED)
-    return allowed and not any(_has_token(token, text) for token in DENIED)
+    """True when an ALLOWED token is a whole word and no DENIED token starts a word.
+
+    Case-sensitive: "MIT-CMU" has "MIT" and "GPLv3" has "GPL", but "IMPLIED" has no "MPL".
+    """
+    allowed = any(re.search(r"\b" + re.escape(t) + r"\b", text) for t in ALLOWED)
+    return allowed and not any(re.search(r"\b" + re.escape(t), text) for t in DENIED)
 
 
 def runtime_closure(root: str = "plotline") -> list[str]:
