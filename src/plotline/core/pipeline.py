@@ -172,15 +172,18 @@ def run_style(
     ``ctx.check()`` runs after each one. A cancelled run therefore stops at a frame, stores
     nothing for the stage in progress and keeps the stages before it.
 
-    The result is built from the last stage's output: layers as they are, or paths on one layer of
-    the first pen. Its tone map is the output of the last stage that provides ``tone``, if any.
+    The result is built from the last stage's output: layers as they are, or the paths, as a
+    new list of the same arrays, on one layer of the first pen. Its tone map is the output of the
+    last stage that provides ``tone``, if any.
 
-    Nothing is copied: the inputs a stage receives and the artifact it returns are the objects held
-    by ``cache``, handed to later runs and placed in the ``Result``. Stages and callers must never
-    modify them in place, and must copy before changing anything. Before it stores an artifact the
-    runner marks it read-only if it is an array, and each array in it if it is a list or tuple, so
-    an in-place write to one of those raises ``ValueError``. The roots belong to the caller and are
-    not marked, but the same rule holds for them.
+    Everything else is shared, not copied: the inputs a stage receives and the artifact it
+    returns are the objects held by ``cache``, handed to later runs and placed in the ``Result``.
+    Stages and callers must never modify them in place, and must copy before changing anything.
+    Before it stores an artifact the runner marks it read-only if it is an array, and each array
+    in it if it is a list or tuple, so an in-place write to one of those raises ``ValueError``.
+    That marking covers arrays and lists or tuples of arrays only, so other artifact types rely
+    on the rule alone. The roots belong to the caller and are not marked, but the same rule holds
+    for them.
     """
     artifacts: dict[str, Any] = {kind: roots[kind] for kind in sorted(ROOT_KINDS)}
     keys = {kind: root_key(kind, value) for kind, value in artifacts.items()}
@@ -211,6 +214,6 @@ def run_style(
     if last.provides == "layers":
         layers = artifacts[last.name]
     else:
-        layers = [Layer(roots["pens"][0], artifacts[last.name])]
+        layers = [Layer(roots["pens"][0], list(artifacts[last.name]))]
     tone = next((artifacts[s.name] for s in reversed(style.stages) if s.provides == "tone"), None)
     return Result(roots["canvas"], layers, tone)

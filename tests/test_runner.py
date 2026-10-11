@@ -224,3 +224,15 @@ def test_arrays_in_a_cached_tuple_are_read_only():
     style = Style("t", "T", "d", stages)
     run(style, style.defaults(), StageCache())
     assert [x.flags.writeable for x in pair] == [False, False]
+
+
+def test_reordering_the_result_paths_leaves_the_cached_list_alone():
+    first, second = np.zeros((2, 2)), np.ones((2, 2))
+    a = Spy("a", ("image",), "paths", value=[first, second])
+    style = Style("t", "T", "d", (a,))
+    cache = StageCache()
+    _, result = run(style, style.defaults(), cache)
+    result.layers[0].paths.reverse()
+    _, again = run(style, style.defaults(), cache)
+    paths = again.layers[0].paths
+    assert a.runs == 1 and paths[0] is first and paths[1] is second
