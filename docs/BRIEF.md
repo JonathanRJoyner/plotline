@@ -15,7 +15,7 @@ It has four parts:
 
 ## 2. Who it's for
 
-- People with pen plotters (purpose-built plotters, converted 3D printers, drawing robots) who want good tonal drawings from images without paying for closed tools.
+- People with pen plotters (purpose-built plotters, converted 3D printers, drawing robots) who want good tonal drawings from images.
 - Generative and plotter artists who want styles they can combine and extend in code.
 - People who work with an AI assistant and want it to handle the "try settings, look, adjust" loop.
 
@@ -181,6 +181,7 @@ The repo starts private and will go public, so treat every commit as public from
 
 - **License:** MIT. Every runtime dependency must be permissively licensed (MIT, BSD, Apache-2.0 or similar). Check before adding one, and do not add copyleft dependencies.
 - **Original implementations:** build algorithms from published descriptions (papers, textbooks, well-known techniques). Cite the source in the module docstring. Do not copy code from other projects unless their license is compatible, and credit them if you do.
+- **Other products:** don't borrow names, UI, presets or marketing claims from other products, and don't compare against or disparage them. This avoids trademark use and implied affiliation. Citing papers and published descriptions is expected.
 - **No third-party images:** tests, examples and docs use images that are generated in code, made for this project, or clearly public domain or CC0, with the source noted.
 - **No personal details:** no machine-specific paths, credentials or private notes in the repo.
 - **Tests and CI from the first commit:**
@@ -228,3 +229,4 @@ Decide these during design, write the decision and reason into this brief, or as
 | MCP | Yes, a thin layer over the session | Lets an assistant run the try, look, adjust loop. No logic duplicated. |
 | First styles | Voronoi stipple, continuous line, dashes, plus Sketch Lines | Point placement underpins the largest group of future styles. Sketch Lines is a contrasting, simple baseline. |
 | Scope boundary | Machine-agnostic | Machine-specific output belongs downstream or in adapters, which keeps the core reusable. |
+| Other products | Cite published sources; never borrow product names, UI or presets; no comparisons | Avoids trademark use, implied affiliation and disparagement, and keeps a later paid tier from looking hypocritical. |
