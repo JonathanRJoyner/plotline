@@ -47,3 +47,21 @@ def test_glued_copyleft_spellings_are_denied():
     ]:
         assert not cl.is_allowed(t), t
     assert cl.is_allowed("THIS SOFTWARE IS PROVIDED WITHOUT IMPLIED WARRANTIES. BSD-3-Clause")
+
+
+def test_main_fails_on_a_denied_licence(monkeypatch, capsys):
+    monkeypatch.setattr(cl, "runtime_closure", lambda: ["demo"])
+    monkeypatch.setattr(cl, "distribution", lambda name: None)
+    monkeypatch.setattr(cl, "license_text", lambda dist: "GPL-3.0-only")
+    assert cl.main() == 1
+    assert "demo" in capsys.readouterr().out
+
+
+def test_closure_reaches_transitive_dependencies():
+    assert "pydantic-core" in cl.runtime_closure()
+
+
+def test_matching_is_case_sensitive_and_bounded_on_both_sides():
+    assert not cl.is_allowed("mit")
+    assert not cl.is_allowed("SUBMIT")
+    assert not cl.is_allowed("MITIGATION")
