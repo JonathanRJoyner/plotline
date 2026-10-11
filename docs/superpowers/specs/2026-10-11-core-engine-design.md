@@ -94,7 +94,7 @@ Optional extra `fast` declares numba (BSD-2) for later specs. Nothing in this sp
 
 Dev dependencies: pytest, ruff, mypy. The licence check script uses the standard library only.
 
-Tooling decisions: Python 3.11 or newer; uv for environments and locking, with `uv.lock` committed; hatchling as the build backend; ruff for both linting and formatting; mypy in strict mode on `src/plotline/core`, standard mode elsewhere; pytest.
+Tooling decisions: Python 3.11 or newer; uv for environments and locking, with `uv.lock` committed; hatchling as the build backend; ruff for both linting and formatting; mypy in strict mode on `src/plotline/core`, standard mode on the rest of `src`, and not run on tests; pytest.
 
 Vector rasterizers commonly used from Python are LGPL and are excluded by the licence rule, which is why the preview uses Pillow.
 
@@ -118,7 +118,7 @@ The brief also lists `crop`. It is `fill` plus an offset and is deferred, record
 
 **Layer:** `pen: Pen`, `paths: list[np.ndarray]`.
 
-**Result:** `canvas: Canvas`, `layers: list[Layer]`.
+**Result:** `canvas: Canvas`, `layers: list[Layer]`, `tone: ToneMap | None`. The runner attaches the tone map the style produced, when it produced one, so previews can overlay the source without recomputing it.
 
 Coordinates are page coordinates: origin at the top-left corner of the page, x to the right, y down, in mm. SVG uses the same convention, so export needs no flip.
 
@@ -277,7 +277,7 @@ Processing order: luminance from RGB with the ITU-R BT.601 weights 0.299, 0.587,
 
 **DotRenderer** (`name="render"`, requires `points`; provides `paths`). No settings beyond the empty model. Each point becomes a one-vertex path. Yields a frame at the end. Spec 2 extends it in place into the stipple renderer with dot size and dot shape settings.
 
-**OrderStage** (`name="order"`, requires `paths`; provides `paths`). Settings: `optimize` default true; `min_length_mm` default 0.0, range 0..10, with help text saying dots have zero length and are dropped by any positive value. Drops paths shorter than `min_length_mm`. When `optimize` is on, orders paths greedily: start at the drawing rect's top-left corner, repeatedly move to the nearest unvisited path endpoint, reversing the path when its end is nearer than its start. A KD-tree over all endpoints keeps this near `O(n log n)`. Yields a frame about every 5 percent of paths with the ordered paths so far. Endpoint merging is spec 2.
+**OrderStage** (`name="order"`, requires `paths`, `canvas`; provides `paths`). It needs the canvas for the drawing rect's corner, where ordering starts. Settings: `optimize` default true; `min_length_mm` default 0.0, range 0..10, with help text saying dots have zero length and are dropped by any positive value. Drops paths shorter than `min_length_mm`. When `optimize` is on, orders paths greedily: start at the drawing rect's top-left corner, repeatedly move to the nearest unvisited path endpoint, reversing the path when its end is nearer than its start. A KD-tree over all endpoints keeps this near `O(n log n)`. Yields a frame about every 5 percent of paths with the ordered paths so far. Endpoint merging is spec 2.
 
 **The `grid` style:** `tone`, `points`, `render`, `order`. Label "Grid dots". Registered as a built-in.
 
@@ -319,7 +319,7 @@ State:
 - `image: np.ndarray | None`, float32 RGB. `load_image(path)` uses Pillow, converts to RGB, and downsizes so the long edge is at most 4000 px. `set_image(array)` accepts an array directly.
 - `canvas: Canvas`, default 210 by 297 mm with a 10 mm margin and `fit`.
 - `pens: tuple[Pen, ...]`, default one pen named "Black 0.3", 0.3 mm, `#000000`.
-- `style: Style`, `settings: dict[str, Settings]`. `set_style(name)` resets settings to that style's defaults and keeps the cache. `update(stage, **values)` validates and replaces that stage's settings.
+- `style: Style`, `settings: dict[str, Settings]`. `set_style(name_or_style)` accepts a registered name or a `Style` object, resets settings to that style's defaults and keeps the cache. `update(stage, **values)` validates and replaces that stage's settings.
 - `speeds`: `draw_mm_s` 50, `travel_mm_s` 100, `pen_lift_s` 0.2, used by stats only.
 - `cache: StageCache`, `result: Result | None`, `state: RunState` in `idle`, `running`, `done`, `cancelled`, `error`.
 
@@ -370,7 +370,7 @@ plotline mcp
 
 ## 13. Testing
 
-`tests/synthetic.py` generates float32 RGB images in code: a horizontal gradient, a checkerboard, a radial falloff and seeded uniform noise, each at a requested size. No image files are committed except tiny golden JSON outputs.
+`tests/synthetic.py` generates float32 RGB images in code: a horizontal gradient, a checkerboard, a radial falloff, seeded uniform noise and a flat grey, each at a requested size. No image files are committed except tiny golden JSON outputs.
 
 Tests:
 
