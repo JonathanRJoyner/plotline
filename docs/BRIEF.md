@@ -38,7 +38,7 @@ The same workflow must also work through the CLI and the MCP.
 
 ## 4. Non-goals (for now)
 
-- **Machine-specific output**, such as G-code for one particular printer or firmware quirks. plotline outputs plain vector data, and adapting it to a machine is the downstream user's job. Generic G-code export is an open question (§12).
+- **Machine-specific output**, such as G-code for one particular printer or firmware quirks. plotline outputs plain vector data, and adapting it to a machine is the downstream user's job. Generic G-code export belongs in an adapter, not the core (§14).
 - **Driving plotters directly** (serial control, job queues).
 - **Image editing** beyond what tone mapping needs (crop, levels, contrast, gamma, blur, invert).
 - **Generative art from nothing.** plotline is image-driven.
@@ -47,12 +47,12 @@ The same workflow must also work through the CLI and the MCP.
 ## 5. Core concepts
 
 - **Source image:** the raster input. Internally it becomes a **tone map**, a 2D float array where 0 is white and 1 is full ink, after the user's adjustments.
-- **Canvas:** the physical drawing area in millimetres, plus how the image fits it (fit, fill or crop).
+- **Canvas:** the physical drawing area in millimetres, plus how the image fits it (fit or fill; a crop offset is planned, see §14).
 - **Pen:** a named physical pen with a stroke width in mm and a colour. Pens affect both the preview and how styles space marks.
 - **Layer:** the paths for one pen. A result is an ordered list of layers.
 - **Path:** a polyline, an N×2 array of mm coordinates. A single dot is a very short path or a small circle, decided per style. Pen-down along the path, pen-up between paths.
 - **Style:** a named recipe, defined as a pipeline of stages with default settings (e.g. "Voronoi Stipple").
-- **Stage:** one step in a pipeline (tone mapping, point placement, rendering, path ordering…). Each stage declares its settings, takes the previous stage's output and produces its own.
+- **Stage:** one step in a pipeline (tone mapping, point placement, rendering, path ordering…). Each stage declares its settings, the kinds of artifact it requires (such as the tone map and the points) and the kind it produces.
 - **Frame:** an intermediate snapshot a stage produces while it runs, for the preview.
 - **Session:** one working context: a source image, a canvas, pens, a chosen style, settings, cached stage outputs and the latest result.
 
@@ -84,8 +84,9 @@ image → tone map → point placement → renderer → path ordering → result
 ```
 
 - **Stages are generators.** Each stage yields frames as it works (e.g. "points after relaxation pass 12 of 50") and finishes with its final output. The GUI streams frames; the CLI and MCP can ignore them and wait for the end.
+- **Stages declare their inputs by kind.** A stage names the artifact kinds it requires (image, canvas, pens, tone, points, paths…) and the kind it provides. Each requirement resolves to the nearest upstream provider, so a renderer can read both the points and the tone map, and a hatching style can read the tone map alone.
 - **Settings are declared, not implicit.** Each stage declares its settings: name, type, range, default, help text and whether it is "advanced". The GUI's controls, the CLI flags and the MCP tool schemas are all generated from that one declaration.
-- **Caching.** The session stores each stage's output, keyed by a hash of that stage's settings plus the upstream key. Changing a setting reruns only that stage and the ones after it. Switching between styles that share their early stages (e.g. Voronoi stipple to Voronoi continuous line) reuses the shared outputs.
+- **Caching.** The session stores each stage's output, keyed by a hash of that stage's name, version and settings plus the keys of its inputs. Changing a setting reruns only that stage and the ones after it. Switching between styles that share their early stages (e.g. Voronoi stipple to Voronoi continuous line) reuses the shared outputs.
 - **Cancellation.** A new run cancels an unfinished one. Stages must check for cancellation between iterations.
 - **Determinism.** Any randomness comes from a seed in the settings. The same input and settings must give the same output, which tests rely on.
 - **Styles that don't split into stages** (e.g. Sketch Lines) are a single stage. That's fine.
@@ -101,7 +102,7 @@ The session owns state and side effects: loading images, managing the canvas and
 - **CLI:** `plotline run <style> image.png --out drawing.svg --set key=value …`, `plotline styles`, `plotline describe <style>`, `plotline gui`, `plotline mcp`.
 - **GUI:** see §8.
 - **MCP:** see §9.
-- **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. Which ones is an open question (§12).
+- **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. None ship in 0.1; which come first is open (§12).
 
 ## 7. Styles
 
@@ -150,7 +151,7 @@ What the preview should do:
 - **Presets:** save and load full settings as a small file. They should be shareable.
 - **Export:** layered SVG, plus the other formats in §10.
 
-The frontend stack (vanilla TypeScript vs a framework, and canvas vs WebGL for very large path counts) is open (§12). The built assets must ship inside the Python package so `pip install plotline` is all a user needs.
+The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D versus WebGL for very large path counts is open (§12). The built assets must ship inside the Python package so `pip install plotline` is all a user needs.
 
 ## 9. MCP server (decided: yes, kept thin)
 
@@ -194,16 +195,12 @@ The repo starts private and will go public, so treat every commit as public from
 
 Decide these during design, write the decision and reason into this brief, or ask the project owner if it's a matter of taste.
 
-1. **Frontend stack** for the GUI, and how assets are built and bundled into the Python package.
-2. **Performance strategy** for large point counts (tens of thousands): pure numpy/scipy, an optional JIT, or a compiled extension. Set target timings, e.g. 10k-point relaxation on a 1000-px image in a few seconds on a laptop.
-3. **The continuous-line solver:** which construction heuristic and improvement passes, and how to stream intermediate tours to the preview.
-4. **Dot geometry:** how a dot is drawn (tiny circle, short tick or spiral), and whether that is a renderer setting.
-5. **Settings schema format:** a dataclass, a schema library or a custom declaration. It must generate the GUI controls, CLI flags and MCP schema.
-6. **The cache:** in memory only, or optionally on disk across sessions, and how large.
-7. **Toolchain adapters:** which existing plotter toolchains to support first, and whether generic G-code export belongs in core or in an adapter.
-8. **Third-party styles:** an entry-point plugin mechanism, and when.
-9. **Python version floor and packaging tooling.** The working assumption is Python 3.11+ with `uv`, `pytest` and `ruff`; confirm or change.
-10. **Preset file format** and versioning, so old presets keep working.
+The ten questions the brief opened with (frontend stack, performance strategy, continuous-line solver, dot geometry, settings schema, cache, toolchain adapters, third-party styles, Python and tooling, preset format) were settled on 2026-10-11. Each decision and its reason is in §14, and the core ones are detailed in [the spec for the first sub-project](superpowers/specs/2026-10-11-core-engine-design.md). Still open:
+
+1. **Scope of the naming rule.** The rule not to name other tools conflicts with vendor-namespaced SVG layer attributes that some plotter software reads, and with adapters that by nature target a named toolchain. The working reading is that the rule covers prose, identifiers and commit messages, and that standard format names are fine. The owner should confirm before the adapter milestone. Until then SVG export uses plain groups only.
+2. **Which toolchains to adapt first.** Driven by the owner's own setup.
+3. **Canvas 2D or WebGL** for very large path counts in the GUI. Decide in the GUI spec after measuring.
+4. **Disk cache.** Whether and when. Cache keys already support it.
 
 ## 13. Suggested milestones
 
@@ -215,6 +212,8 @@ Decide these during design, write the decision and reason into this brief, or as
 6. **GUI:** server, frame streaming, preview features (§8), presets.
 7. **MCP server.**
 8. **0.1 release prep:** docs, examples with project-owned images, a check before making the repo public.
+
+Each milestone, or pair of milestones, gets its own spec under `docs/superpowers/specs/` before it is built. Milestones 1 and 2 share the first spec, which also pulls in a minimal ordering stage, the preview PNG, stats and presets so results can be checked visually before the GUI exists.
 
 ## 14. Decision log
 
@@ -228,3 +227,21 @@ Decide these during design, write the decision and reason into this brief, or as
 | MCP | Yes, a thin layer over the session | Lets an assistant run the try, look, adjust loop. No logic duplicated. |
 | First styles | Voronoi stipple, continuous line, dashes, plus Sketch Lines | Point placement underpins the largest group of future styles. Sketch Lines is a contrasting, simple baseline. |
 | Scope boundary | Machine-agnostic | Machine-specific output belongs downstream or in adapters, which keeps the core reusable. |
+| Stage inputs | Stages declare the artifact kinds they require and provide; a requirement resolves to the nearest upstream provider | Renderers need both the points and the tone map, and future styles need only the tone map, so "previous stage's output" was too narrow. |
+| Settings schema | One frozen pydantic v2 model per stage, declared through a `setting()` helper; its JSON Schema feeds the GUI, CLI and MCP | Validation and JSON Schema come free, the licence is MIT, and the MCP SDK already uses it. Unknown keys are rejected, so typos fail loudly. |
+| Cache | In memory, bounded by estimated bytes, least-recently-used; keys are content hashes of stage name, version, settings and input keys | Enough for one session. Content-hash keys let a disk cache be added later without changing them. |
+| Concurrency | The pipeline runs in a worker thread; cancellation is a flag checked after every frame | numpy and numba release the interpreter lock, so a thread suffices. Frame granularity is fine enough for the preview. |
+| Determinism | Every stage that uses randomness has its own `seed` setting feeding a numpy generator; no global random state | Per-stage seeds keep cache keys correct and make tests simple. |
+| Python and tooling | Python 3.11+, uv, hatchling, ruff for lint and format, mypy, pytest; CI on Windows, macOS and Linux for 3.11 to 3.13; a licence allow-list check in CI | Confirms the working assumption. uv installs the interpreter, so the developer's system Python does not matter. |
+| Performance | numpy and scipy baseline, optional numba extra (`plotline[fast]`) for hot kernels, no compiled extension in 0.x; relaxation runs on the raster, coarse to fine; targets for 10k points on a 1000 px image over 50 passes: under 5 s with numba, under 30 s without | The baseline always installs. numba is BSD and speeds up the few hot loops. Multi-platform wheels for an extension cost more than this project can carry. |
+| Continuous-line solver | Nearest-neighbour construction, then 2-opt and Or-opt with candidate neighbour lists and don't-look bits (Johnson and McGeoch, 1997); frames after construction and then every few hundred improving moves | Standard and well documented. A 2-opt local optimum in the plane has no crossings, so the single line is non-crossing by construction. |
+| Dot geometry | A stipple renderer setting: point (one-vertex path), circle outline or spiral fill; default automatic, point when the dot is no wider than the pen, spiral above | Dots stay paths, so export and preview need no special case. |
+| Canvas modes | `fit` and `fill` in the first release; `crop` is `fill` plus an offset and comes later | Keeps the canvas type small until someone needs the offset. |
+| Presets | JSON with a format name and an integer version, holding style, canvas, pens and per-stage settings; a migration chain per version bump | Same wire format as the GUI and MCP. Unknown keys warn and are dropped; missing keys take defaults. |
+| Third-party styles | The registry discovers an entry-point group from day one; the stage API is documented as unstable until 0.2 | Discovery is cheap. Promising stability before the Voronoi family and GUI exist would be premature. |
+| Toolchain adapters | None in 0.1; output is SVG and JSON. Generic G-code goes in an adapter module later, not the core | Keeps the core machine-agnostic. The owner's own toolchain decides which adapters come first. |
+| Frontend stack | TypeScript, Vite and Preact; the bundle is built in CI and shipped in the wheel; a dev flag on `plotline gui` proxies to the Vite server | Type checking suits a UI generated from a schema. Preact is tiny, MIT and familiar. Python-only contributors get the GUI from the wheel; only frontend work needs Node. |
+| Frame transport (GUI) | HTTP for commands, a WebSocket carrying frames as binary float32 arrays, throttled server-side | Path data for tens of thousands of points is too heavy as JSON at preview frame rates. |
+| Preview rasterizer | Pillow with 4x supersampling | The usual vector rasterizers for Python are LGPL. Pillow is permissive and already a dependency. |
+| Session model | One session per server process; the API carries a session id | Simplest GUI and MCP. Tabs can come later without a rewrite. |
+| First sub-project scope | Spec 1 covers milestones 1 and 2 plus a minimal ordering stage, preview PNG, stats and presets | Results can be checked visually before the GUI exists, and the pipeline is realistic enough to test ordering. |
