@@ -14,13 +14,15 @@ class Style:
     """A named recipe: stages that run in order, each reading artifacts by kind.
 
     Each kind in a stage's ``requires`` resolves to the nearest earlier stage that ``provides``
-    it, or else to the root kind of that name, which the caller supplies (``ROOT_KINDS``).
-    ``sources`` holds the result as ``{stage name: {kind: source name}}``, where a source name is
-    a stage name or a root kind name. That is why a stage may not be named like a root kind.
+    it, or else to the root kind of that name, which the caller supplies (``ROOT_KINDS``). A
+    stage that provides a root kind, such as ``image``, replaces the root as the source of that
+    kind for every later stage. ``sources`` holds the result as
+    ``{stage name: {kind: source name}}``, where a source name is a stage name or a root kind
+    name. That is why a stage may not be named like a root kind.
 
     Construction raises ``ValueError`` when a stage name repeats, a stage is named like a root
-    kind, a requirement has no provider, or the last stage does not provide ``paths`` or
-    ``layers``.
+    kind, a requirement has no provider, there are no stages, or the last stage does not provide
+    ``paths`` or ``layers``.
     """
 
     name: str

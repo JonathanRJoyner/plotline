@@ -28,6 +28,13 @@ def test_resolves_nearest_upstream_provider():
     }
 
 
+def test_stage_providing_a_root_kind_shadows_it():
+    st = Style(
+        "t", "T", "d", (spy("crop", ("image",), "image"), spy("b", ("image", "pens"), "paths"))
+    )
+    assert st.sources == {"crop": {"image": "image"}, "b": {"image": "crop", "pens": "pens"}}
+
+
 @pytest.mark.parametrize(
     "stages",
     [
