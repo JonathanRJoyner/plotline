@@ -15,7 +15,7 @@ It has four parts:
 
 ## 2. Who it's for
 
-- People with pen plotters (purpose-built plotters, converted 3D printers, drawing robots) who want good tonal drawings from images without paying for closed tools.
+- People with pen plotters (purpose-built plotters, converted 3D printers, drawing robots) who want good tonal drawings from images.
 - Generative and plotter artists who want styles they can combine and extend in code.
 - People who work with an AI assistant and want it to handle the "try settings, look, adjust" loop.
 
@@ -182,6 +182,7 @@ The repo starts private and will go public, so treat every commit as public from
 
 - **License:** MIT. Every runtime dependency must be permissively licensed (MIT, BSD, Apache-2.0 or similar). Check before adding one, and do not add copyleft dependencies.
 - **Original implementations:** build algorithms from published descriptions (papers, textbooks, well-known techniques). Cite the source in the module docstring. Do not copy code from other projects unless their license is compatible, and credit them if you do.
+- **Other products:** don't borrow names, UI, presets or marketing claims from other products, and don't compare against or disparage them. This avoids trademark use and implied affiliation. Citing papers and published descriptions is expected.
 - **No third-party images:** tests, examples and docs use images that are generated in code, made for this project, or clearly public domain or CC0, with the source noted.
 - **No personal details:** no machine-specific paths, credentials or private notes in the repo.
 - **Tests and CI from the first commit:**
@@ -227,6 +228,7 @@ Each milestone, or pair of milestones, gets its own spec under `docs/superpowers
 | MCP | Yes, a thin layer over the session | Lets an assistant run the try, look, adjust loop. No logic duplicated. |
 | First styles | Voronoi stipple, continuous line, dashes, plus Sketch Lines | Point placement underpins the largest group of future styles. Sketch Lines is a contrasting, simple baseline. |
 | Scope boundary | Machine-agnostic | Machine-specific output belongs downstream or in adapters, which keeps the core reusable. |
+| Other products | Cite published sources; never borrow product names, UI or presets; no comparisons | Avoids trademark use, implied affiliation and disparagement, and keeps a later paid tier from looking hypocritical. |
 | Stage inputs | Stages declare the artifact kinds they require and provide; a requirement resolves to the nearest upstream provider | Renderers need both the points and the tone map, and future styles need only the tone map, so "previous stage's output" was too narrow. |
 | Settings schema | One frozen pydantic v2 model per stage, declared through a `setting()` helper; its JSON Schema feeds the GUI, CLI and MCP | Validation and JSON Schema come free, the licence is MIT, and the MCP SDK already uses it. Unknown keys are rejected, so typos fail loudly. |
 | Cache | In memory, bounded by estimated bytes, least-recently-used; keys are content hashes of stage name, version, settings and input keys | Enough for one session. Content-hash keys let a disk cache be added later without changing them. |

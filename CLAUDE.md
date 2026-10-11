@@ -5,7 +5,7 @@ Read [docs/BRIEF.md](docs/BRIEF.md) before doing anything. It holds the goals, a
 Rules (the repo will become public, so treat every commit as public):
 - Every runtime dependency must be permissively licensed (MIT/BSD/Apache-2.0). Check before adding one.
 - Write algorithms from published descriptions and cite them in docstrings. Don't copy code from other projects unless their license allows it.
-- Don't name or compare against other specific tools or products in code, docs or commit messages.
+- Cite papers and published algorithm descriptions. Don't borrow names, UI, presets or marketing claims from other products, and don't compare against or disparage them. This avoids trademark use and implied affiliation.
 - No third-party images in the repo. Test images are generated in code or made for this project.
 - No personal paths, credentials or private notes.
 - Keep algorithm code in the core. The CLI, GUI and MCP only call the session layer.
