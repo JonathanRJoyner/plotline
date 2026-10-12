@@ -202,18 +202,22 @@ const MACHINE_FIELDS: [NumberKey, string, string][] = [
   ["settle_ms", "Settle", "ms"],
 ];
 const AREA_KEYS: (keyof Area)[] = ["x_min", "x_max", "y_min", "y_max"];
-const same = (a: Machine, b: Machine) => JSON.stringify(a) === JSON.stringify(b);
+// A starting point to edit, not a real machine: its values must be replaced with the machine's own.
+const NEW_MACHINE: Machine = {
+  name: "My machine", bed_mm: [200, 200], area: { x_min: 0, x_max: 200, y_min: 0, y_max: 200 },
+  z_down_mm: 0, z_up_mm: 5, z_safe_mm: 10, draw_feed: 1500, travel_feed: 3000, z_feed: 600, settle_ms: 0,
+  start_gcode: "", end_gcode: "",
+};
 
 type MachineProps = {
-  machine: Machine | null; builtins: Machine[]; error?: string;
+  machine: Machine | null; error?: string;
   onPick: (machine: Machine | null) => void; onEdit: (machine: Machine) => void;
 };
 
-// A select of the built-in machines, then the chosen machine's fields. Picking is told apart from
-// editing because a pick also sets the page to the machine's area.
-export function MachinePanel({ machine, builtins, error, onPick, onEdit }: MachineProps): JSX.Element {
-  const picked = machine ? builtins.findIndex((b) => same(b, machine)) : -1;
-  const value = machine === null ? "none" : picked >= 0 ? String(picked) : "custom";
+// A select to drop the machine or start a new one, then the machine's fields. Picking is told apart
+// from editing because a pick also sets the page to the machine's area.
+export function MachinePanel({ machine, error, onPick, onEdit }: MachineProps): JSX.Element {
+  const value = machine === null ? "none" : "current";
   const num = (label: string, unit: string, v: number, set: (v: number) => void) => (
     <label>
       {label}{" "}
@@ -234,12 +238,12 @@ export function MachinePanel({ machine, builtins, error, onPick, onEdit }: Machi
           onChange={(e) => {
             const v = e.currentTarget.value;
             if (v === "none") onPick(null);
-            else if (v !== "custom") onPick(builtins[Number(v)]);
+            else if (v === "new") onPick(NEW_MACHINE);
           }}
         >
           <option value="none">None (SVG only)</option>
-          {builtins.map((b, i) => <option value={String(i)}>{b.name}</option>)}
-          {value === "custom" && <option value="custom">custom</option>}
+          {machine && <option value="current">{machine.name}</option>}
+          <option value="new">New machine</option>
         </select>
       </label>
       {error && <p class="error">{error}</p>}

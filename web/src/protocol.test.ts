@@ -127,14 +127,18 @@ test("listPens gives the bank", () => {
   expect(pens.find((p) => p.name === "Sakura Pigma Micron 005")?.width_mm).toBe(0.2);
 });
 
+const MACHINE: Machine = {
+  name: "Test printer", bed_mm: [256, 256], area: { x_min: 28, x_max: 228, y_min: 42, y_max: 216 },
+  z_down_mm: 4, z_up_mm: 9, z_safe_mm: 20, draw_feed: 3600, travel_feed: 6000, z_feed: 1200, settle_ms: 50,
+  start_gcode: "", end_gcode: "",
+};
+
 test("setMachine sets the speeds and starts no run", async () => {
   const { posted, ok, ended } = setup();
   ok("setImage", ...image());
   await ended(1);
-  const machines = ok("listMachines").value as Machine[];
-  expect(machines[0].name).toContain("A1");
-  const { state } = ok("setMachine", machines[0]);
-  expect(state.machine?.name).toBe(machines[0].name);
+  const { state } = ok("setMachine", MACHINE);
+  expect(state.machine?.name).toBe(MACHINE.name);
   expect(state.speeds.pen_lift_s).toBeCloseTo(0.6);
   expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
   expect(ok("setMachine", null).state.machine).toBeNull();
@@ -142,7 +146,7 @@ test("setMachine sets the speeds and starts no run", async () => {
 
 test("gcode needs a drawing, whose layers the state lists", async () => {
   const { call, ok, ended } = setup();
-  ok("setMachine", (ok("listMachines").value as Machine[])[0]);
+  ok("setMachine", MACHINE);
   ok("setCanvas", { width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" });
   expect(call("gcode", 0).ok).toBe(false);
   expect(ok("preset").state.layers).toEqual([]);

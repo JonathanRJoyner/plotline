@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::cache::StageCache;
+use crate::machine::{Area, Machine};
 use crate::runner::{Run, Shared};
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
@@ -191,6 +192,30 @@ pub(crate) fn bounds(schema: &Value, key: &str) -> (f64, f64, f64) {
         p["maximum"].as_f64().unwrap(),
         p["default"].as_f64().unwrap(),
     )
+}
+
+/// A pen-fitted printer: a 256 mm bed, a 200 by 174 mm area, the pen down at Z 4, up at 9 and
+/// safe at 20, and feeds of 3600, 6000 and 1200 mm/min.
+pub(crate) fn machine() -> Machine {
+    Machine {
+        name: "Test printer".to_string(),
+        bed_mm: [256.0, 256.0],
+        area: Area {
+            x_min: 28.0,
+            x_max: 228.0,
+            y_min: 42.0,
+            y_max: 216.0,
+        },
+        z_down_mm: 4.0,
+        z_up_mm: 9.0,
+        z_safe_mm: 20.0,
+        draw_feed: 3600.0,
+        travel_feed: 6000.0,
+        z_feed: 1200.0,
+        settle_ms: 50,
+        start_gcode: "M104 S0\nM140 S0".to_string(),
+        end_gcode: "G1 Z20 F600\nG1 Y250 F3600".to_string(),
+    }
 }
 
 /// The [`Spy`]'s settings; the one knob does nothing but take part in validation and cache keys.

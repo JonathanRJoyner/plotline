@@ -117,12 +117,7 @@ pub fn to_gcode(d: &Drawing, layer: usize, m: &Machine) -> Result<String, GcodeE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machine::builtin;
-    use crate::test_util::{drawing_100, drawing_with};
-
-    fn a1() -> Machine {
-        builtin().remove(0)
-    }
+    use crate::test_util::{drawing_100, drawing_with, machine};
 
     /// Walk `gcode` the way a strict downstream checker does and panic at the first unsafe line:
     /// only the allowed commands, G21 and G90 before any move, no line moving X/Y and Z together,
@@ -202,7 +197,7 @@ mod tests {
         let g = to_gcode(
             &drawing_100(vec![vec![[10.0, 20.0]]], 0.3, "#000000"),
             0,
-            &a1(),
+            &machine(),
         )
         .unwrap();
         assert!(
@@ -215,7 +210,7 @@ mod tests {
             g.starts_with("; plotline: Pen, 1 paths, pen 1 of 1\n"),
             "{g}"
         );
-        check(&g, &a1());
+        check(&g, &machine());
     }
 
     #[test]
@@ -224,13 +219,13 @@ mod tests {
             vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
             vec![[10.0, 10.0], [20.0, 10.0]],
         ];
-        let g = to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &a1()).unwrap();
+        let g = to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &machine()).unwrap();
         assert!(
             g.contains("G1 F3600\nG1 X88 Y179\nG1 X88 Y169\nG1 Z9 F1200\n"),
             "{g}"
         );
         assert_eq!(g.matches("G0 X").count(), 1, "{g}");
-        check(&g, &a1());
+        check(&g, &machine());
     }
 
     #[test]
@@ -240,7 +235,7 @@ mod tests {
             vec![[50.0, 50.0]],
             vec![[100.0, 0.0], [0.0, 100.0]],
         ];
-        let g = to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &a1()).unwrap();
+        let g = to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &machine()).unwrap();
         let lift = g.find("G1 Z20 F1200\n").unwrap();
         assert!(g.find("G0 X").unwrap() > lift, "{g}");
         assert!(
@@ -251,25 +246,25 @@ mod tests {
             g.ends_with("G1 Z20 F1200\nG1 Z20 F600\nG1 Y250 F3600\n"),
             "{g}"
         );
-        check(&g, &a1());
+        check(&g, &machine());
     }
 
     #[test]
     fn a_page_larger_than_the_area_is_refused() {
-        let err = to_gcode(&drawing_with(vec![vec![[1.0, 1.0]]]), 0, &a1()).unwrap_err();
+        let err = to_gcode(&drawing_with(vec![vec![[1.0, 1.0]]]), 0, &machine()).unwrap_err();
         assert!(err.to_string().contains("larger"), "{err}");
     }
 
     #[test]
     fn a_missing_layer_is_named() {
-        let err = to_gcode(&drawing_100(vec![], 0.3, "#000000"), 1, &a1()).unwrap_err();
+        let err = to_gcode(&drawing_100(vec![], 0.3, "#000000"), 1, &machine()).unwrap_err();
         assert_eq!(err.to_string(), "no layer 1; the drawing has 1");
     }
 
     #[test]
     fn a_vertex_off_the_page_is_refused() {
         let paths = vec![vec![[5.0, 5.0]], vec![[5.0, 5.0], [-1.0, 5.0]]];
-        let err = to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &a1()).unwrap_err();
+        let err = to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &machine()).unwrap_err();
         assert_eq!(err.to_string(), "path 1 leaves the page at (-1, 5)");
     }
 }

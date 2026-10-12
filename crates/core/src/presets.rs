@@ -207,8 +207,8 @@ pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machine::{builtin, Machine};
-    use crate::test_util::{a4, black};
+    use crate::machine::Machine;
+    use crate::test_util::{a4, black, machine};
     use serde_json::json;
 
     #[test]
@@ -397,17 +397,17 @@ mod tests {
 
     #[test]
     fn the_machine_round_trips() {
-        let a1: Machine = builtin().remove(0);
-        let v = to_value("grid", &a4(), &[black()], Some(&a1), &json!({}));
+        let m: Machine = machine();
+        let v = to_value("grid", &a4(), &[black()], Some(&m), &json!({}));
         assert_eq!(v["machine"]["area"]["x_min"], 28.0);
-        assert_eq!(parse(&v).unwrap().machine, Some(a1));
+        assert_eq!(parse(&v).unwrap().machine, Some(m));
     }
 
     #[test]
     fn a_bad_machine_names_the_field() {
-        let mut a1 = builtin().remove(0);
-        a1.z_up_mm = 1.0;
-        let v = to_value("grid", &a4(), &[black()], Some(&a1), &json!({}));
+        let mut m = machine();
+        m.z_up_mm = 1.0;
+        let v = to_value("grid", &a4(), &[black()], Some(&m), &json!({}));
         let err = parse(&v).unwrap_err().to_string();
         assert!(
             err.starts_with("machine: ") && err.contains("z_up_mm"),
