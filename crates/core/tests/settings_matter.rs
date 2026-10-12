@@ -9,12 +9,26 @@ use plotline_core::{Canvas, Fit, Session};
 use serde_json::{json, Value};
 
 /// Settings that leave the drawing alone on purpose: style, stage, key and why.
-const NO_OPS: &[(&str, &str, &str, &str)] = &[(
-    "grid",
-    "tone",
-    "contrast",
-    "contrast pivots on mid-grey, which is where grid's default threshold sits",
-)];
+const NO_OPS: &[(&str, &str, &str, &str)] = &[
+    (
+        "grid",
+        "tone",
+        "contrast",
+        "contrast pivots on mid-grey, which is where grid's default threshold sits",
+    ),
+    (
+        "hatch",
+        "tone",
+        "contrast",
+        "contrast pivots on mid-grey, which is where hatch's default threshold sits",
+    ),
+    (
+        "waves",
+        "order",
+        "min_length_mm",
+        "every wave line crosses the whole drawing, far longer than the 10 mm limit",
+    ),
+];
 
 /// A legal value of `prop` other than `default`: the other boolean, the number halfway to the
 /// farther bound, or the next enum variant.

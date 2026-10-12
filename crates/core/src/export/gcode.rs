@@ -5,7 +5,8 @@
 //! X/Y and Z together, and numbers with at most three decimals and no trailing zeros. Each layer
 //! is its own file with no pause, because a printer that pauses by reheating makes each pen its own
 //! job. The page is centred in the machine's drawable area by [`Machine::mapping`], which refuses
-//! a page that does not fit, so no move can leave the area.
+//! a page that does not fit, and every vertex is checked to lie on the page, so no move can leave
+//! the area.
 
 use thiserror::Error;
 
@@ -21,6 +22,9 @@ pub enum GcodeError {
     /// The drawing has no layer with this index; the count follows.
     #[error("no layer {0}; the drawing has {1}")]
     NoLayer(usize, usize),
+    /// A vertex lies off the page, so it could land outside the machine's area.
+    #[error("path {path} leaves the page at ({x}, {y})")]
+    OffPage { path: usize, x: String, y: String },
 }
 
 /// `v` with at most three decimals and no trailing zeros; `-0` is written as `0`.
@@ -70,7 +74,19 @@ pub fn to_gcode(d: &Drawing, layer: usize, m: &Machine) -> Result<String, GcodeE
     out.extend(m.start_gcode.lines().map(str::to_string));
     out.push(z_move(m.z_safe_mm));
     let mut pen: Option<[f64; 2]> = None;
-    for path in l.paths.iter() {
+    let (w, h) = (d.canvas.width_mm, d.canvas.height_mm);
+    for (i, path) in l.paths.iter().enumerate() {
+        // The mapping keeps the page inside the area, so a vertex on the page is inside it too.
+        if let Some(&[x, y]) = path
+            .iter()
+            .find(|[x, y]| !(-1e-6..=w + 1e-6).contains(x) || !(-1e-6..=h + 1e-6).contains(y))
+        {
+            return Err(GcodeError::OffPage {
+                path: i,
+                x: num(x),
+                y: num(y),
+            });
+        }
         let Some(&first) = path.first() else {
             continue;
         };
@@ -248,5 +264,12 @@ mod tests {
     fn a_missing_layer_is_named() {
         let err = to_gcode(&drawing_100(vec![], 0.3, "#000000"), 1, &a1()).unwrap_err();
         assert_eq!(err.to_string(), "no layer 1; the drawing has 1");
+    }
+
+    #[test]
+    fn a_vertex_off_the_page_is_refused() {
+        let paths = vec![vec![[5.0, 5.0]], vec![[5.0, 5.0], [-1.0, 5.0]]];
+        let err = to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &a1()).unwrap_err();
+        assert_eq!(err.to_string(), "path 1 leaves the page at (-1, 5)");
     }
 }

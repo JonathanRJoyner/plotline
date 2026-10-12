@@ -134,6 +134,65 @@ pub(crate) fn run_to_drawing(style: &Arc<Style>, image: Image) -> Arc<Drawing> {
     drawing.unwrap_or_else(|| panic!("style {:?} gave no drawing", style.name))
 }
 
+/// A `w` by `h` tone map with `ink(x, y)` per pixel, 2 mm per pixel, its corner at (10, 10) mm.
+pub(crate) fn tone_map(w: u32, h: u32, ink: impl Fn(u32, u32) -> f32) -> ToneMap {
+    let ink = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| ink(x, y));
+    ToneMap {
+        width: w,
+        height: h,
+        ink: ink.collect(),
+        mm_per_px: 2.0,
+        origin_mm: [10.0, 10.0],
+    }
+}
+
+/// Run a stage that turns a tone map into paths, with `patch` over its defaults; returns the
+/// frames and the paths.
+pub(crate) fn run_tone_stage(
+    stage: &dyn Stage,
+    tone: ToneMap,
+    patch: Value,
+) -> (Vec<Frame>, Arc<Paths>) {
+    let settings = crate::settings::merge(&stage.defaults(), &patch);
+    let inputs = Inputs::new(std::collections::HashMap::from([(
+        Kind::Tone,
+        Artifact::Tone(Arc::new(tone)),
+    )]));
+    let mut run = stage
+        .start(inputs, &settings, RunContext::new(Arc::default()))
+        .unwrap();
+    let mut frames = Vec::new();
+    loop {
+        match run.step().unwrap() {
+            Step::Frame(f) => frames.push(f),
+            Step::Done(Artifact::Paths(p)) => return (frames, p),
+            Step::Done(a) => panic!("expected paths, got {}", a.kind().name()),
+        }
+    }
+}
+
+/// Panic unless every vertex of `paths` lies in `rect` (`[x, y, w, h]`).
+pub(crate) fn assert_inside(paths: &Paths, rect: [f64; 4]) {
+    let [x, y, w, h] = rect;
+    for p in paths.coords() {
+        let ok =
+            x - 1e-9 <= p[0] && p[0] <= x + w + 1e-9 && y - 1e-9 <= p[1] && p[1] <= y + h + 1e-9;
+        assert!(ok, "{p:?} is outside {rect:?}");
+    }
+}
+
+/// The minimum, maximum and default of setting `key` in `schema`.
+pub(crate) fn bounds(schema: &Value, key: &str) -> (f64, f64, f64) {
+    let p = &schema["properties"][key];
+    (
+        p["minimum"].as_f64().unwrap(),
+        p["maximum"].as_f64().unwrap(),
+        p["default"].as_f64().unwrap(),
+    )
+}
+
 /// The [`Spy`]'s settings; the one knob does nothing but take part in validation and cache keys.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
