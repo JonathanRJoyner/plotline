@@ -17,8 +17,10 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::cache::{CacheStats, StageCache};
+use crate::export::gcode::{self, GcodeError};
 use crate::export::{json, svg};
 use crate::image::{self, ImageError};
+use crate::machine::{Machine, MachineError};
 use crate::presets::{self, PresetError};
 use crate::preview::{self, PreviewError};
 use crate::registry::get_style;
@@ -47,6 +49,18 @@ pub enum SessionError {
     /// An image could not be decoded.
     #[error(transparent)]
     Image(#[from] ImageError),
+    /// A machine was not well formed.
+    #[error("machine: {0}")]
+    Machine(#[from] MachineError),
+    /// A layer could not be written as G-code.
+    #[error(transparent)]
+    Gcode(#[from] GcodeError),
+    /// G-code was asked for with no machine set.
+    #[error("no machine is set")]
+    NoMachine,
+    /// An export was asked for before any run finished.
+    #[error("no drawing has been made yet")]
+    NoDrawing,
     /// No style has this name.
     #[error("unknown style {0:?}")]
     UnknownStyle(String),
@@ -75,6 +89,8 @@ pub struct Session {
     image: Option<Arc<Image>>,
     canvas: Canvas,
     pens: Vec<Pen>,
+    /// The machine the G-code export writes for, if one is set.
+    machine: Option<Machine>,
     style: Arc<Style>,
     /// Every stage's full settings object, keyed by stage name.
     settings: Value,
@@ -95,6 +111,7 @@ impl Session {
             image: None,
             canvas: Canvas::new(210.0, 297.0, 10.0, Fit::Fit).expect("A4 is a valid canvas"),
             pens: vec![Pen::new("Black 0.3", 0.3, "#000000").expect("the default pen is valid")],
+            machine: None,
             settings: style.defaults(),
             style,
             speeds: Speeds::default(),
@@ -142,6 +159,22 @@ impl Session {
             return Err(SessionError::NoPens);
         }
         self.pens = pens;
+        Ok(())
+    }
+
+    /// The machine the G-code export writes for, if one is set.
+    pub fn machine(&self) -> Option<&Machine> {
+        self.machine.as_ref()
+    }
+
+    /// Use `m` as the machine, or none. A machine also sets the speeds the stats time plots at
+    /// to the ones it implies. A machine that fails [`Machine::validate`] changes nothing.
+    pub fn set_machine(&mut self, m: Option<Machine>) -> Result<(), SessionError> {
+        if let Some(m) = &m {
+            m.validate()?;
+            self.speeds = m.speeds();
+        }
+        self.machine = m;
         Ok(())
     }
 
@@ -246,6 +279,15 @@ impl Session {
         self.drawing().map(|d| json::to_value(&d))
     }
 
+    /// Layer `layer` of the last finished drawing as G-code for the machine. Fails without a
+    /// machine, without a drawing, for a layer the drawing lacks, and when the page does not fit
+    /// the machine's area.
+    pub fn gcode(&self, layer: usize) -> Result<String, SessionError> {
+        let m = self.machine.as_ref().ok_or(SessionError::NoMachine)?;
+        let d = self.drawing().ok_or(SessionError::NoDrawing)?;
+        Ok(gcode::to_gcode(&d, layer, m)?)
+    }
+
     /// The stats of the last finished drawing at the session's speeds.
     pub fn stats(&self) -> Option<Stats> {
         self.drawing().map(|d| stats::compute(&d, self.speeds))
@@ -264,7 +306,13 @@ impl Session {
 
     /// The style, canvas, pens and settings as a preset.
     pub fn preset(&self) -> Value {
-        presets::to_value(&self.style.name, &self.canvas, &self.pens, &self.settings)
+        presets::to_value(
+            &self.style.name,
+            &self.canvas,
+            &self.pens,
+            self.machine.as_ref(),
+            &self.settings,
+        )
     }
 
     /// Apply the preset `v`: its style, which resets every stage to its defaults, its canvas, its
@@ -280,6 +328,7 @@ impl Session {
         self.set_style(&data.style)?;
         self.set_canvas(data.canvas);
         self.set_pens(data.pens)?;
+        self.set_machine(data.machine)?;
         let mut warnings = Vec::new();
         for stage in self.style.stages.clone() {
             let Some(Value::Object(values)) = data.settings.get(stage.name()) else {
@@ -427,5 +476,47 @@ mod tests {
                 "ignoring unknown stage \"nostage\""
             ]
         );
+    }
+
+    #[test]
+    fn a_machine_sets_the_speeds_and_rides_in_the_preset() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.machine().is_none());
+        let a1 = crate::machine::builtin().remove(0);
+        s.set_machine(Some(a1.clone())).unwrap();
+        assert_eq!(s.speeds().draw_mm_s, 60.0);
+        assert_eq!(s.preset()["machine"]["name"], a1.name);
+        let mut t = Session::new(1 << 20);
+        t.load_preset(&s.preset()).unwrap();
+        assert_eq!(t.machine(), Some(&a1));
+        let mut bad = a1.clone();
+        bad.z_up_mm = 1.0;
+        assert!(s.set_machine(Some(bad)).is_err());
+        assert_eq!(s.machine(), Some(&a1));
+        s.set_machine(None).unwrap();
+        assert!(s.machine().is_none());
+    }
+    #[test]
+    fn gcode_needs_a_machine_and_a_drawing() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.gcode(0).unwrap_err().to_string().contains("machine"));
+        s.set_machine(Some(crate::machine::builtin().remove(0)))
+            .unwrap();
+        assert!(s.gcode(0).unwrap_err().to_string().contains("drawing"));
+        s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.set_image(gradient(64, 48));
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+        let g = s.gcode(0).unwrap();
+        assert!(
+            g.contains("G1 Z4 F1200")
+                && g.ends_with(
+                    "G1 Y250 F3600
+"
+                ),
+            "{g}"
+        );
+        assert!(s.gcode(1).unwrap_err().to_string().contains("no layer 1"));
     }
 }

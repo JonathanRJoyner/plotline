@@ -1,15 +1,16 @@
 //! Presets: the style, canvas, pens and settings of a session as a small, versioned JSON value.
 //!
 //! A preset is an object with the format name `plotline-preset`, an integer `version`, the `style`
-//! name, the `canvas`, the `pens` and the `settings` of each stage (an object of objects). It is
-//! the wire format a front end sends and the file format a preset is saved in.
+//! name, the `canvas`, the `pens`, the `machine` (an object, or null for none) and the `settings`
+//! of each stage (an object of objects). It is the wire format a front end sends and the file
+//! format a preset is saved in.
 //!
 //! [`parse`] checks the format, brings a value of an older version up to [`PRESET_VERSION`]
 //! through the `MIGRATIONS` chain, checks that each section has the right shape and builds the
 //! canvas and pens through their validating constructors. Whoever raises [`PRESET_VERSION`] adds
 //! the function for the version it leaves behind, so `MIGRATIONS[v]` upgrades a value of version
 //! `v` to `v + 1`, and a value of version `v` goes through `MIGRATIONS[v]` up to
-//! `MIGRATIONS[PRESET_VERSION - 1]`. The settings are not checked here: the session validates
+//! `MIGRATIONS[PRESET_VERSION - 1]`. Entry 0 stays `None`: there was no version 0. The settings are not checked here: the session validates
 //! them stage by stage, drops a stage or key the style does not have with a warning, and lets a
 //! key the preset leaves out keep its default.
 
@@ -17,16 +18,26 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::machine::Machine;
 use crate::types::{Canvas, Fit, Pen};
 
 /// The `format` of every preset.
 pub const PRESET_FORMAT: &str = "plotline-preset";
 
 /// The version this build writes and the newest it reads.
-pub const PRESET_VERSION: u64 = 1;
+pub const PRESET_VERSION: u64 = 2;
+
+/// A step of the chain: a preset of one version as the next.
+type Migration = fn(Value) -> Value;
 
 /// `MIGRATIONS[v]` upgrades a preset of version `v` to version `v + 1`.
-const MIGRATIONS: &[fn(Value) -> Value] = &[];
+const MIGRATIONS: &[Option<Migration>] = &[None, Some(v1_to_v2)];
+
+/// Version 2 added the machine; a version 1 preset has none.
+fn v1_to_v2(mut v: Value) -> Value {
+    v["machine"] = Value::Null;
+    v
+}
 
 /// A value that is not a preset this build can read.
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -58,18 +69,27 @@ pub struct PresetData {
     pub canvas: Canvas,
     /// The pens, in order.
     pub pens: Vec<Pen>,
+    /// The machine, if the preset names one.
+    pub machine: Option<Machine>,
     /// The settings of each stage by stage name, an object of objects; not yet validated.
     pub settings: Value,
 }
 
-/// The preset of a session with this `style`, `canvas`, `pens` and `settings`.
-pub fn to_value(style: &str, canvas: &Canvas, pens: &[Pen], settings: &Value) -> Value {
+/// The preset of a session with this `style`, `canvas`, `pens`, `machine` and `settings`.
+pub fn to_value(
+    style: &str,
+    canvas: &Canvas,
+    pens: &[Pen],
+    machine: Option<&Machine>,
+    settings: &Value,
+) -> Value {
     json!({
         "format": PRESET_FORMAT,
         "version": PRESET_VERSION,
         "style": style,
         "canvas": canvas,
         "pens": pens,
+        "machine": machine,
         "settings": settings,
     })
 }
@@ -79,11 +99,13 @@ fn upgrade(
     mut value: Value,
     version: u64,
     target: u64,
-    chain: &[fn(Value) -> Value],
+    chain: &[Option<Migration>],
 ) -> Result<Value, PresetError> {
     for from in version..target {
         let migrate = chain
             .get(from as usize)
+            .copied()
+            .flatten()
             .ok_or(PresetError::NoMigration { version, from })?;
         value = migrate(value);
     }
@@ -114,8 +136,9 @@ struct RawPen {
 ///
 /// Fails when the format is not `plotline-preset`, when the version is not a whole number up to
 /// [`PRESET_VERSION`] or has no migration, when `style`, `canvas`, `pens` or `settings` is missing
-/// or the wrong shape (the message names the field), and when the canvas or a pen is refused by
-/// [`Canvas::new`] or [`Pen::new`].
+/// or the wrong shape (the message names the field), and when the canvas, a pen or the machine is
+/// refused by [`Canvas::new`], [`Pen::new`] or [`Machine::validate`]. A missing or null `machine`
+/// is none.
 pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
     if value.get("format") != Some(&json!(PRESET_FORMAT)) {
         return Err(PresetError::NotAPreset);
@@ -163,16 +186,28 @@ pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
             Pen::new(&p.name, p.width_mm, &p.color).map_err(|e| PresetError::Invalid(e.to_string()))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let machine = match value.get("machine") {
+        None | Some(Value::Null) => None,
+        Some(m) => {
+            let m: Machine = serde_json::from_value(m.clone())
+                .map_err(|e| PresetError::Invalid(format!("machine: {e}")))?;
+            m.validate()
+                .map_err(|e| PresetError::Invalid(format!("machine: {e}")))?;
+            Some(m)
+        }
+    };
     Ok(PresetData {
         style: style.to_string(),
         canvas,
         pens,
+        machine,
         settings: Value::Object(settings.clone()),
     })
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machine::{builtin, Machine};
     use crate::test_util::{a4, black};
     use serde_json::json;
 
@@ -182,10 +217,11 @@ mod tests {
             "grid",
             &a4(),
             &[black()],
+            None,
             &json!({"tone": {"resolution": 500}}),
         );
         assert_eq!(v["format"], "plotline-preset");
-        assert_eq!(v["version"], 1);
+        assert_eq!(v["version"], 2);
         let p = parse(&v).unwrap();
         assert_eq!(p.style, "grid");
         assert_eq!(p.settings["tone"]["resolution"], 500);
@@ -193,7 +229,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_shapes_with_named_fields() {
-        let good = to_value("grid", &a4(), &[black()], &json!({}));
+        let good = to_value("grid", &a4(), &[black()], None, &json!({}));
         let mut v = good.clone();
         v["format"] = json!("x");
         assert!(parse(&v)
@@ -201,8 +237,8 @@ mod tests {
             .to_string()
             .starts_with("not a preset"));
         let mut v = good.clone();
-        v["version"] = json!(2);
-        assert!(parse(&v).unwrap_err().to_string().contains("reads up to 1"));
+        v["version"] = json!(3);
+        assert!(parse(&v).unwrap_err().to_string().contains("reads up to 2"));
         let mut v = good.clone();
         v["version"] = json!(0);
         assert!(parse(&v)
@@ -219,7 +255,7 @@ mod tests {
 
     /// The message that `parse` gives for a good preset with `key` set to `value`.
     fn error_with(key: &str, value: Value) -> String {
-        let mut v = to_value("grid", &a4(), &[black()], &json!({}));
+        let mut v = to_value("grid", &a4(), &[black()], None, &json!({}));
         v[key] = value;
         parse(&v).unwrap_err().to_string()
     }
@@ -255,7 +291,7 @@ mod tests {
     #[test]
     fn a_version_that_is_not_a_whole_number_up_to_the_current_one_is_unsupported() {
         for (given, shown) in [
-            (json!(2), "2"),
+            (json!(3), "3"),
             (json!(1.0), "1.0"),
             (json!("1"), "\"1\""),
             (json!(-1), "-1"),
@@ -263,10 +299,10 @@ mod tests {
         ] {
             assert_eq!(
                 error_with("version", given),
-                format!("unsupported preset version {shown}: this build reads up to 1")
+                format!("unsupported preset version {shown}: this build reads up to 2")
             );
         }
-        let mut v = to_value("grid", &a4(), &[black()], &json!({}));
+        let mut v = to_value("grid", &a4(), &[black()], None, &json!({}));
         v.as_object_mut().unwrap().remove("version");
         assert!(parse(&v).unwrap_err().to_string().contains("version null"));
     }
@@ -274,9 +310,9 @@ mod tests {
     #[test]
     fn canvas_and_pens_come_back_as_they_went_in() {
         let pens = [black(), Pen::new("Red", 0.5, "#FF0000").unwrap()];
-        let p = parse(&to_value("grid", &a4(), &pens, &json!({}))).unwrap();
+        let p = parse(&to_value("grid", &a4(), &pens, None, &json!({}))).unwrap();
         assert_eq!((p.canvas, p.pens), (a4(), pens.to_vec()));
-        let v = to_value("grid", &a4(), &[], &json!({}));
+        let v = to_value("grid", &a4(), &[], None, &json!({}));
         assert_eq!(v["canvas"]["fit"], "fit");
     }
 
@@ -323,15 +359,15 @@ mod tests {
 
     #[test]
     fn the_chain_applies_each_step_from_the_version_on() {
-        let chain: &[fn(Value) -> Value] = &[
-            |mut v| {
+        let chain: &[Option<Migration>] = &[
+            Some(|mut v| {
                 v["steps"] = json!(format!("{}a", v["steps"].as_str().unwrap_or("")));
                 v
-            },
-            |mut v| {
+            }),
+            Some(|mut v| {
                 v["steps"] = json!(format!("{}b", v["steps"].as_str().unwrap_or("")));
                 v
-            },
+            }),
         ];
         assert_eq!(upgrade(json!({}), 0, 2, chain).unwrap()["steps"], "ab");
         assert_eq!(upgrade(json!({}), 1, 2, chain).unwrap()["steps"], "b");
@@ -343,5 +379,40 @@ mod tests {
                 from: 2
             })
         );
+    }
+
+    #[test]
+    fn a_version_1_preset_parses_with_no_machine() {
+        let p = parse(&json!({
+            "format": "plotline-preset", "version": 1, "style": "grid", "pens": [], "settings": {},
+            "canvas": {"width_mm": 100, "height_mm": 50},
+        }))
+        .unwrap();
+        assert_eq!(p.machine, None);
+        let mut v = to_value("grid", &a4(), &[black()], None, &json!({}));
+        assert_eq!(v["machine"], Value::Null);
+        v.as_object_mut().unwrap().remove("machine");
+        assert_eq!(parse(&v).unwrap().machine, None);
+    }
+
+    #[test]
+    fn the_machine_round_trips() {
+        let a1: Machine = builtin().remove(0);
+        let v = to_value("grid", &a4(), &[black()], Some(&a1), &json!({}));
+        assert_eq!(v["machine"]["area"]["x_min"], 28.0);
+        assert_eq!(parse(&v).unwrap().machine, Some(a1));
+    }
+
+    #[test]
+    fn a_bad_machine_names_the_field() {
+        let mut a1 = builtin().remove(0);
+        a1.z_up_mm = 1.0;
+        let v = to_value("grid", &a4(), &[black()], Some(&a1), &json!({}));
+        let err = parse(&v).unwrap_err().to_string();
+        assert!(
+            err.starts_with("machine: ") && err.contains("z_up_mm"),
+            "{err}"
+        );
+        assert!(error_with("machine", json!(5)).contains("machine"));
     }
 }

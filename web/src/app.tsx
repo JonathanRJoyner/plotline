@@ -4,9 +4,9 @@
 // an input the user is typing into.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
-import type { FrameEvent, Pen, ResultEvent } from "./events";
+import type { FrameEvent, Machine, Pen, ResultEvent } from "./events";
 import { imageFile } from "./files";
-import { ExportPanel, PagePanel, PensPanel, PresetsPanel, SpeedsPanel, StatsPanel, StatusBar } from "./panels";
+import { ExportPanel, MachinePanel, PagePanel, PensPanel, PresetsPanel, SpeedsPanel, StatsPanel, StatusBar } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
@@ -43,9 +43,10 @@ function remembered(): unknown {
   }
 }
 
-type Status = Pick<State, "run" | "stats">;
+type Status = Pick<State, "run" | "stats" | "layers">;
 
-// The run state and stats, which both replies and run ends change, for the parts that show them.
+// The run state, stats and layers, which both replies and run events change, for the parts that
+// show them.
 class StatusStore {
   readonly subs = new Set<(s: Status) => void>();
   constructor(public value: Status) {}
@@ -69,9 +70,12 @@ const Stop = ({ status, onStop }: { status: StatusStore; onStop: () => void }) =
   <button type="button" disabled={useStatus(status).run.state !== "running"} onClick={onStop}>Stop</button>
 );
 
-const Export = ({ status, onExport }: { status: StatusStore; onExport: (format: "svg" | "json") => void }) => (
-  <ExportPanel drawing={useStatus(status).stats !== null} onExport={onExport} />
-);
+type ExportProps = { status: StatusStore; machine: boolean; onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void };
+
+function Export({ status, machine, onExport, onGcode }: ExportProps) {
+  const { stats, layers } = useStatus(status);
+  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onGcode={onGcode} />;
+}
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "running"> & {
   engine: Engine; status: StatusStore; stages: Stage[];
@@ -98,8 +102,9 @@ function RunView({ engine, status, stages, ...view }: RunViewProps) {
         setProgress((p) => ({ ...p, [e.stage]: { label: e.label, progress: e.progress } }));
       } else if (e.type === "result") {
         setResult(e);
+        status.set({ ...status.value, layers: e.layers.map((l) => l.pen) });
       } else {
-        status.set({ run: { id: e.id, state: e.state, error: e.error }, stats: e.stats });
+        status.set({ run: { id: e.id, state: e.state, error: e.error }, stats: e.stats, layers: status.value.layers });
       }
     };
   }, []);
@@ -123,8 +128,9 @@ export function App() {
   });
   const [styles, setStyles] = useState<Style[] | null>(null);
   const [bank, setBank] = useState<Pen[]>([]);
+  const [machines, setMachines] = useState<Machine[]>([]);
   const [state, setState] = useState<State | null>(null);
-  const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null }));
+  const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [] }));
   const [stages, setStages] = useState<Stage[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({}); // per stage; "" for the rest
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -138,7 +144,7 @@ export function App() {
   const save = useRef<ReturnType<typeof setTimeout>>();
   const take = (s: State) => {
     setState(s);
-    status.set({ run: s.run, stats: s.stats });
+    status.set({ run: s.run, stats: s.stats, layers: s.layers });
     clearTimeout(save.current);
     save.current = setTimeout(() => engine.call("preset").then((r) => remember(JSON.stringify(r.value)), () => {}), 500);
   };
@@ -159,6 +165,7 @@ export function App() {
 
   useEffect(() => {
     engine.call<Pen[]>("listPens").then((r) => setBank(r.value), () => {});
+    engine.call<Machine[]>("listMachines").then((r) => setMachines(r.value), () => {});
     engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
       setStyles(value);
       const saved = remembered();
@@ -230,6 +237,21 @@ export function App() {
     if (text !== undefined) download(`drawing.${format}`, text, format === "svg" ? "image/svg+xml" : "application/json");
   }
 
+  async function exportGcode(layer: number) {
+    const text = await call<string>("gcode", [layer]);
+    const pen = (status.value.layers[layer]?.name ?? String(layer + 1)).replace(/[^\w.-]+/g, "_");
+    if (text !== undefined) download(`plot_${layer + 1}_${pen}.gcode`, text, "text/plain");
+  }
+
+  // A picked machine also makes the page its drawable area; an edited one changes only itself.
+  async function pickMachine(machine: Machine | null) {
+    await call("setMachine", [machine], "machine");
+    if (machine && state) {
+      const { x_min, x_max, y_min, y_max } = machine.area;
+      await call("setCanvas", [{ ...state.canvas, width_mm: x_max - x_min, height_mm: y_max - y_min }]);
+    }
+  }
+
   if (fatal) return <p class="loading">{fatal}</p>;
   if (!styles || !state) return <p class="loading">Loading the engine</p>;
 
@@ -280,6 +302,10 @@ export function App() {
         />
       </main>
       <aside>
+        <MachinePanel
+          machine={state.machine} builtins={machines} error={errors.machine}
+          onPick={pickMachine} onEdit={(m) => call("setMachine", [m], "machine")}
+        />
         <PagePanel canvas={state.canvas} onChange={(c) => call("setCanvas", [c])} />
         <PensPanel
           pens={state.pens} bank={bank} hidden={hidden} onChange={(p) => call("setPens", [p])}
@@ -291,7 +317,7 @@ export function App() {
         />
         <SpeedsPanel speeds={state.speeds} onChange={(s) => call("setSpeeds", [s])} />
         <PresetsPanel warnings={warnings} onSave={savePreset} onLoad={loadPreset} />
-        <Export status={status} onExport={exportAs} />
+        <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
       </aside>
     </div>
   );

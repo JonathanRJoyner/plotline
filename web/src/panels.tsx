@@ -1,7 +1,7 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4. Each shows a
 // slice of the state and hands changes back; the app sends them to the engine.
 import type { JSX } from "preact";
-import type { Canvas, Pen, Stats } from "./events";
+import type { Area, Canvas, Machine, Pen, Stats } from "./events";
 import type { Speeds, State } from "./protocol";
 
 const SIZES: [string, number, number][] = [
@@ -175,14 +175,84 @@ export function PresetsPanel({ warnings, onSave, onLoad }: PresetsProps): JSX.El
   );
 }
 
-type ExportProps = { drawing: boolean; onExport: (format: "svg" | "json") => void };
+type ExportProps = {
+  drawing: boolean; layers: Pen[]; machine: boolean;
+  onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void;
+};
 
-export function ExportPanel({ drawing, onExport }: ExportProps): JSX.Element {
+// One G-code file per layer of the drawing, once a machine is set.
+export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: ExportProps): JSX.Element {
   return (
     <fieldset>
       <legend>Export</legend>
       <button type="button" disabled={!drawing} onClick={() => onExport("svg")}>SVG</button>{" "}
       <button type="button" disabled={!drawing} onClick={() => onExport("json")}>JSON</button>
+      {machine && layers.map((p, i) => (
+        <div><button type="button" disabled={!drawing} onClick={() => onGcode(i)}>G-code: {p.name}</button></div>
+      ))}
+    </fieldset>
+  );
+}
+
+type NumberKey = "z_down_mm" | "z_up_mm" | "z_safe_mm" | "draw_feed" | "travel_feed" | "z_feed" | "settle_ms";
+const MACHINE_FIELDS: [NumberKey, string, string][] = [
+  ["z_down_mm", "Pen down Z", "mm"], ["z_up_mm", "Pen up Z", "mm"], ["z_safe_mm", "Safe Z", "mm"],
+  ["draw_feed", "Draw feed", "mm/min"], ["travel_feed", "Travel feed", "mm/min"], ["z_feed", "Z feed", "mm/min"],
+  ["settle_ms", "Settle", "ms"],
+];
+const AREA_KEYS: (keyof Area)[] = ["x_min", "x_max", "y_min", "y_max"];
+const same = (a: Machine, b: Machine) => JSON.stringify(a) === JSON.stringify(b);
+
+type MachineProps = {
+  machine: Machine | null; builtins: Machine[]; error?: string;
+  onPick: (machine: Machine | null) => void; onEdit: (machine: Machine) => void;
+};
+
+// A select of the built-in machines, then the chosen machine's fields. Picking is told apart from
+// editing because a pick also sets the page to the machine's area.
+export function MachinePanel({ machine, builtins, error, onPick, onEdit }: MachineProps): JSX.Element {
+  const picked = machine ? builtins.findIndex((b) => same(b, machine)) : -1;
+  const value = machine === null ? "none" : picked >= 0 ? String(picked) : "custom";
+  const num = (label: string, unit: string, v: number, set: (v: number) => void) => (
+    <label>
+      {label}{" "}
+      <input
+        type="number" step="any" value={v}
+        onChange={(e) => { const n = e.currentTarget.valueAsNumber; if (Number.isFinite(n)) set(n); else e.currentTarget.value = String(v); }}
+      />{" "}
+      {unit}
+    </label>
+  );
+  return (
+    <fieldset>
+      <legend>Machine</legend>
+      <label>
+        Machine{" "}
+        <select
+          value={value}
+          onChange={(e) => {
+            const v = e.currentTarget.value;
+            if (v === "none") onPick(null);
+            else if (v !== "custom") onPick(builtins[Number(v)]);
+          }}
+        >
+          <option value="none">None (SVG only)</option>
+          {builtins.map((b, i) => <option value={String(i)}>{b.name}</option>)}
+          {value === "custom" && <option value="custom">custom</option>}
+        </select>
+      </label>
+      {error && <p class="error">{error}</p>}
+      {machine && (
+        <>
+          <label>Name <input type="text" value={machine.name} onChange={(e) => onEdit({ ...machine, name: e.currentTarget.value })} /></label>
+          {num("Bed width", "mm", machine.bed_mm[0], (v) => onEdit({ ...machine, bed_mm: [v, machine.bed_mm[1]] }))}
+          {num("Bed height", "mm", machine.bed_mm[1], (v) => onEdit({ ...machine, bed_mm: [machine.bed_mm[0], v] }))}
+          {AREA_KEYS.map((k) => num(`Area ${k.replace("_", " ")}`, "mm", machine.area[k], (v) => onEdit({ ...machine, area: { ...machine.area, [k]: v } })))}
+          {MACHINE_FIELDS.map(([k, label, unit]) => num(label, unit, machine[k], (v) => onEdit({ ...machine, [k]: v })))}
+          <label>Start G-code <textarea rows={2} value={machine.start_gcode} onChange={(e) => onEdit({ ...machine, start_gcode: e.currentTarget.value })} /></label>
+          <label>End G-code <textarea rows={2} value={machine.end_gcode} onChange={(e) => onEdit({ ...machine, end_gcode: e.currentTarget.value })} /></label>
+        </>
+      )}
     </fieldset>
   );
 }

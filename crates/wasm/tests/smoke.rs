@@ -60,3 +60,26 @@ fn the_pen_bank_is_listed() {
     assert_eq!(pens[1]["name"], "Sakura Pigma Micron 005");
     assert_eq!(pens[1]["width_mm"], 0.2);
 }
+#[wasm_bindgen_test]
+fn machines_and_gcode() {
+    let machines: serde_json::Value =
+        serde_json::from_str(&plotline_wasm::list_machines()).unwrap();
+    assert!(machines[0]["name"].as_str().unwrap().contains("A1"));
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(64, 48, &plotline_wasm::synthetic_gradient(64, 48))
+        .unwrap();
+    s.set_canvas(r#"{"width_mm":100,"height_mm":75,"margin_mm":5,"fit":"fit"}"#)
+        .unwrap();
+    s.update("tone", r#"{"resolution":64}"#).unwrap();
+    assert!(s.gcode(0).is_err());
+    s.set_machine(&machines[0].to_string()).unwrap();
+    assert!(s.machine().unwrap().contains("A1"));
+    let speeds: serde_json::Value = serde_json::from_str(&s.speeds()).unwrap();
+    assert!((speeds["pen_lift_s"].as_f64().unwrap() - 0.6).abs() < 1e-9);
+    let mut run = s.start().unwrap();
+    while run.next_frame().is_some() {}
+    let g = s.gcode(0).unwrap();
+    assert!(g.contains("G1 Z4 F1200") && g.contains("G1 Z20 F1200"));
+    s.set_machine("null").unwrap();
+    assert!(s.machine().is_none());
+}

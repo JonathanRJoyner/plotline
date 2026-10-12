@@ -3,6 +3,7 @@
 pub mod cache;
 pub mod export;
 pub mod image;
+pub mod machine;
 pub mod math;
 pub mod pens;
 pub mod presets;

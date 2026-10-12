@@ -32,8 +32,12 @@ pub fn session_error(e: SessionError) -> PyErr {
         | SessionError::Image(_)
         | SessionError::UnknownStyle(_)
         | SessionError::UnknownStage { .. }
+        | SessionError::Machine(_)
+        | SessionError::Gcode(_)
         | SessionError::NoPens => value_error(e),
-        SessionError::NoImage => runtime_error(e),
+        SessionError::NoImage | SessionError::NoMachine | SessionError::NoDrawing => {
+            runtime_error(e)
+        }
     }
 }
 

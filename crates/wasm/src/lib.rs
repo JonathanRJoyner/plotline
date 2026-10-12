@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
+use plotline_core::machine::{self, Machine};
 use plotline_core::{
     image, pens, registry, synthetic, Canvas, Drawing, Frame, Layer, Pen, RunState, SessionError,
     DEFAULT_CACHE_BYTES,
@@ -76,6 +77,24 @@ impl Session {
             .map(|p| Pen::new(&p.name, p.width_mm, &p.color))
             .collect::<Result<_, _>>()?;
         Ok(self.inner.set_pens(pens)?)
+    }
+
+    /// Use the machine in `json` for G-code export, or `null` for none. A machine also sets the
+    /// speeds the stats time plots at.
+    #[wasm_bindgen(js_name = setMachine)]
+    pub fn set_machine(&mut self, json: &str) -> Result<(), JsError> {
+        let m: Option<Machine> = serde_json::from_str(json)?;
+        Ok(self.inner.set_machine(m)?)
+    }
+
+    /// The machine as JSON, or `undefined` when none is set.
+    pub fn machine(&self) -> Option<String> {
+        self.inner.machine().map(|m| json!(m).to_string())
+    }
+
+    /// Layer `layer` of the last finished drawing as G-code for the machine.
+    pub fn gcode(&self, layer: usize) -> Result<String, JsError> {
+        Ok(self.inner.gcode(layer)?)
     }
 
     /// Switch to the built-in style `name` with every stage at its defaults.
@@ -358,4 +377,10 @@ pub fn synthetic_checkerboard(w: u32, h: u32, cells: u32) -> Result<Vec<f32>, Js
 #[wasm_bindgen(js_name = listPens)]
 pub fn list_pens() -> String {
     json!(pens::bank()).to_string()
+}
+
+/// The built-in machines as a JSON list.
+#[wasm_bindgen(js_name = listMachines)]
+pub fn list_machines() -> String {
+    json!(machine::builtin()).to_string()
 }

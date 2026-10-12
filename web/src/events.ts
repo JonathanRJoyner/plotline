@@ -8,3 +8,8 @@ export type FrameEvent = { type: "frame"; id: number; stage: string; progress: n
 export type ResultEvent = { type: "result"; id: number; canvas: Canvas; layers: Layer[]; tone: Tone | null };
 export type EndEvent = { type: "end"; id: number; state: "done" | "cancelled" | "error"; error: string | null; stats: Stats | null };
 export type Event = RunEvent | FrameEvent | ResultEvent | EndEvent;
+export type Area = { x_min: number; x_max: number; y_min: number; y_max: number };
+export type Machine = {
+  name: string; bed_mm: [number, number]; area: Area; z_down_mm: number; z_up_mm: number; z_safe_mm: number;
+  draw_feed: number; travel_feed: number; z_feed: number; settle_ms: number; start_gcode: string; end_gcode: string;
+};

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
 import init, { Session, syntheticGradient } from "../pkg/plotline_wasm.js";
 import { macrotask } from "./driver";
-import type { Pen } from "./events";
+import type { Machine, Pen } from "./events";
 import { Protocol, type Reply, type State } from "./protocol";
 
 beforeAll(async () => { await init({ module_or_path: readFileSync(new URL("../pkg/plotline_wasm_bg.wasm", import.meta.url)) }); });
@@ -125,4 +125,30 @@ test("listPens gives the bank", () => {
   const pens = ok("listPens").value as Pen[];
   expect(pens.length).toBeGreaterThan(30);
   expect(pens.find((p) => p.name === "Sakura Pigma Micron 005")?.width_mm).toBe(0.2);
+});
+
+test("setMachine sets the speeds and starts no run", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const machines = ok("listMachines").value as Machine[];
+  expect(machines[0].name).toContain("A1");
+  const { state } = ok("setMachine", machines[0]);
+  expect(state.machine?.name).toBe(machines[0].name);
+  expect(state.speeds.pen_lift_s).toBeCloseTo(0.6);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+  expect(ok("setMachine", null).state.machine).toBeNull();
+});
+
+test("gcode needs a drawing, whose layers the state lists", async () => {
+  const { call, ok, ended } = setup();
+  ok("setMachine", (ok("listMachines").value as Machine[])[0]);
+  ok("setCanvas", { width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" });
+  expect(call("gcode", 0).ok).toBe(false);
+  expect(ok("preset").state.layers).toEqual([]);
+  ok("update", "tone", { resolution: 64 });
+  ok("setImage", ...image());
+  await ended(1);
+  expect(ok("preset").state.layers.map((p) => p.name)).toEqual(["Black 0.3"]);
+  expect(ok("gcode", 0).value as string).toContain("G1 Z4 F1200");
 });
