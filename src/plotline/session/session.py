@@ -7,8 +7,11 @@ below it.
 """
 
 import json
+import math
 import os
-from collections.abc import Sequence
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -38,14 +41,69 @@ class RunState(StrEnum):
     error = "error"
 
 
+class RunHandle:
+    """One run of a style, as ``Session.run`` or ``Session.run_blocking`` makes it.
+
+    ``state`` starts as ``running`` and ends as ``done``, ``cancelled`` or ``error``. ``result``
+    is set when the run is ``done`` and ``error`` holds the exception when it ended in ``error``.
+    All of them can be read from any thread. A handle from ``run_blocking`` has no thread, so it
+    is finished by the time the caller has it.
+    """
+
+    def __init__(self) -> None:
+        self._token = CancelToken()
+        self._thread: threading.Thread | None = None
+        self._state = RunState.running
+        self._result: Result | None = None
+        self._error: BaseException | None = None
+
+    @property
+    def state(self) -> RunState:
+        return self._state
+
+    @property
+    def result(self) -> Result | None:
+        return self._result
+
+    @property
+    def error(self) -> BaseException | None:
+        return self._error
+
+    def cancel(self) -> None:
+        """Ask the run to stop at its next frame. A run that has already finished stays as it
+        ended."""
+        self._token.set()
+
+    def wait(self, timeout: float | None = None) -> RunState:
+        """Block until the run has ended, or for ``timeout`` seconds at most, and return
+        ``state``, which is still ``running`` after a timeout. A subscriber runs on the worker
+        thread, which cannot wait for itself, so it must not call this."""
+        if self._thread is not None:
+            self._thread.join(timeout)
+        return self._state
+
+    def _end(
+        self,
+        state: RunState,
+        result: Result | None = None,
+        error: BaseException | None = None,
+    ) -> None:
+        # The state goes last, so a reader that sees the end state sees the result or error too.
+        self._result = result
+        self._error = error
+        self._state = state
+
+
 class Session:
     """One working context: an image, a canvas, pens, a style with its settings, the stage cache
     and the latest result.
 
     The attributes can be read at any time. Change them through the ``set_*`` methods and
     ``update``, which check their input. ``cache_bytes`` bounds the stage cache and ``max_fps``
-    caps how often frames are delivered. A session is not safe for concurrent changes, so a front
-    end should call it from one thread.
+    caps how often frames are delivered to the subscribers. ``run`` works on a worker thread and
+    ``run_blocking`` in the caller's. Starting either one stops the run before it, so at most one
+    is active. A session is not safe for concurrent changes, so a front end should call it from
+    one thread.
     """
 
     def __init__(self, cache_bytes: int = 512 * 2**20, max_fps: float = 15.0) -> None:
@@ -56,8 +114,15 @@ class Session:
         self.settings: dict[str, Settings] = self.style.defaults()
         self.cache = StageCache(cache_bytes)
         self.result: Result | None = None
-        self.state = RunState.idle
         self.max_fps = max_fps
+        self._handle: RunHandle | None = None
+        self._subscribers: dict[object, Callable[[Frame], None]] = {}
+        self._last_delivery = -math.inf
+
+    @property
+    def state(self) -> RunState:
+        """The state of the latest run, or ``idle`` before any run."""
+        return RunState.idle if self._handle is None else self._handle.state
 
     def load_image(self, path: str | os.PathLike[str]) -> None:
         """Read the image file at ``path`` as the source image. See ``images.load_image``."""
@@ -110,17 +175,90 @@ class Session:
         """Run the style in the calling thread and return the result, which is also kept in
         ``result``.
 
-        Each frame goes through ``_deliver`` as it arrives. A stage error sets ``state`` to
-        ``error`` and ``Cancelled`` sets it to ``cancelled``, and both are raised again with
-        ``result`` as it was. Raises ``RuntimeError`` when no image is loaded.
+        A run under way on a worker is cancelled and waited for first. Each frame goes through
+        ``_deliver`` as it arrives. A stage error sets ``state`` to ``error`` and ``Cancelled``
+        sets it to ``cancelled``, and both are raised again with ``result`` as it was. Raises
+        ``RuntimeError`` when no image is loaded.
         """
+        return self._execute(*self._start())
+
+    def run(self) -> RunHandle:
+        """Run the style on a worker thread and return its handle at once.
+
+        A run under way is cancelled and waited for first, so two runs never use the cache at
+        the same time. The style, settings, canvas, pens and image are taken now, so later
+        changes do not reach the run. The subscribers get its frames on the worker thread. Unlike
+        ``run_blocking`` it raises no stage error: the run ends in ``error`` and the handle keeps
+        the exception. Raises ``RuntimeError`` when no image is loaded.
+        """
+        handle, style, settings, roots = self._start()
+        thread = threading.Thread(
+            target=self._work, args=(handle, style, settings, roots), daemon=True
+        )
+        handle._thread = thread
+        thread.start()
+        return handle
+
+    def cancel(self) -> None:
+        """Ask the latest run to stop at its next frame, which ends it in ``cancelled``. Nothing
+        happens when there has been no run, and a run that has ended stays as it ended."""
+        if self._handle is not None:
+            self._handle.cancel()
+
+    def subscribe(self, callback: Callable[[Frame], None]) -> Callable[[], None]:
+        """Call ``callback(frame)`` for the frames of every later run, and return a function that
+        removes it again.
+
+        ``max_fps`` caps the rate, see ``_deliver``. The callback runs on the thread that drives
+        the style, the worker for ``run`` and the caller for ``run_blocking``, so it should
+        return quickly. An exception from it ends the run in ``error``, as one from a stage does.
+        """
+        key = object()
+        self._subscribers[key] = callback
+
+        def unsubscribe() -> None:
+            self._subscribers.pop(key, None)
+
+        return unsubscribe
+
+    def _start(self) -> tuple[RunHandle, Style, dict[str, Settings], dict[str, Any]]:
+        """Stop the latest run and make the handle of the next one, along with the snapshot it
+        reads: the style, a copy of the settings and the roots. Raises ``RuntimeError`` when no
+        image is loaded."""
         if self.image is None:
             raise RuntimeError("no image is loaded")
+        if self._handle is not None:
+            self._handle.cancel()
+            self._handle.wait()
         roots = {"image": self.image, "canvas": self.canvas, "pens": self.pens}
-        frames = run_style(
-            self.style, dict(self.settings), roots, self.cache, RunContext(CancelToken())
-        )
-        self.state = RunState.running
+        self._handle = handle = RunHandle()
+        return handle, self.style, dict(self.settings), roots
+
+    def _work(
+        self,
+        handle: RunHandle,
+        style: Style,
+        settings: Mapping[str, Settings],
+        roots: Mapping[str, Any],
+    ) -> None:
+        """The body of a worker thread."""
+        try:
+            self._execute(handle, style, settings, roots)
+        except Exception:
+            pass  # the handle keeps it, and a thread has no caller to raise to
+
+    def _execute(
+        self,
+        handle: RunHandle,
+        style: Style,
+        settings: Mapping[str, Settings],
+        roots: Mapping[str, Any],
+    ) -> Result:
+        """Drive the style to its end in the current thread, passing each frame to ``_deliver``,
+        and record how it ended on ``handle``. This is the one place that moves a run through its
+        states. ``Cancelled`` and any other error are raised again, with ``result`` as it was."""
+        self._last_delivery = -math.inf
+        frames = run_style(style, settings, roots, self.cache, RunContext(handle._token))
         try:
             while True:
                 try:
@@ -130,17 +268,28 @@ class Session:
                     break
                 self._deliver(frame)
         except Cancelled:
-            self.state = RunState.cancelled
+            handle._end(RunState.cancelled)
             raise
-        except BaseException:
-            self.state = RunState.error
+        except BaseException as error:
+            handle._end(RunState.error, error=error)
             raise
         self.result = result
-        self.state = RunState.done
+        handle._end(RunState.done, result)
         return result
 
     def _deliver(self, frame: Frame) -> None:
-        """Pass ``frame`` on to whoever watches the run. Nothing receives frames yet."""
+        """Pass ``frame`` to the subscribers, unless less than ``1 / max_fps`` seconds have
+        passed since the last delivery. The first frame of a run and every frame with ``progress``
+        of 1 or more are always passed on, so a throttled preview still ends on the finished
+        state of each stage."""
+        # Not time.monotonic: before Python 3.13 it ticks every 15.6 ms on Windows, so a fast stage
+        # would lose frames even when max_fps asks for all of them.
+        now = time.perf_counter()
+        if frame.progress < 1 and now - self._last_delivery < 1 / self.max_fps:
+            return
+        self._last_delivery = now
+        for callback in list(self._subscribers.values()):
+            callback(frame)
 
     def _require_result(self) -> Result:
         if self.result is None:
