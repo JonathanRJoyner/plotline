@@ -1,0 +1,43 @@
+# The hosted page and `plotline gui` serve the same files: both come from the Vite bundle in src/plotline/web.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  pages: write
+  id-token: write
+  contents: read
+
+# One deploy at a time, so two quick pushes cannot race; a queued deploy waits instead of cancelling.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Deploy only once the repository is public; until then the job is skipped.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    environment: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run wasm
+        working-directory: web
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: src/plotline/web
+      - uses: actions/deploy-pages@v4

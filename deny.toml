@@ -1,0 +1,20 @@
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "CC0-1.0",
+    "Unicode-3.0",
+]
+
+[licenses.private]
+ignore = true
+
+# A build-time dependency of pyo3's build script. The LLVM exception only adds a permission to
+# Apache-2.0, so the crate is at least as permissive as Apache-2.0 alone.
+[[licenses.exceptions]]
+crate = "target-lexicon"
+allow = ["Apache-2.0 WITH LLVM-exception"]

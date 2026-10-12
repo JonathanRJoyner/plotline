@@ -3,33 +3,23 @@
 import threading
 import time
 
-import numpy as np
 import pytest
-from doubles import Spy
-from synthetic import gradient
 
-from plotline.core.pipeline import Style
-from plotline.session.session import RunState, Session
-
-PATHS = [np.array([[1.0, 1.0], [2.0, 2.0]])]
+from plotline import RunState, Session, _core
 
 
-def slow(frames=100, delay=0.01):
-    a = Spy("a", ("image",), "points", value=np.zeros((1, 2)))
-    b = Spy("b", ("points",), "paths", value=PATHS, frames=frames, delay_s=delay)
-    return Style("slow", "Slow", "d", (a, b)), a, b
-
-
-def session(style, max_fps=1e9):
+def session(frames=100, delay_ms=10, max_fps=1e9, **values):
+    """A session on the hidden ``_slow`` style, whose stage ``b`` gives ``frames`` frames with a
+    pause of ``delay_ms`` before each."""
     s = Session(max_fps=max_fps)
-    s.set_image(gradient(8, 8))
-    s.set_style(style)
+    s.set_image(_core.synthetic_gradient(8, 8))
+    s.set_style("_slow")
+    s.update("b", frames=frames, delay_ms=delay_ms, **values)
     return s
 
 
 def test_run_completes_and_delivers_every_frame_when_unthrottled():
-    style, a, b = slow(frames=20, delay=0)
-    s = session(style)
+    s = session(frames=20, delay_ms=0)
     seen = []
     s.subscribe(seen.append)
     h = s.run()
@@ -38,8 +28,7 @@ def test_run_completes_and_delivers_every_frame_when_unthrottled():
 
 
 def test_throttle_always_delivers_final_frames():
-    style, _, _ = slow(frames=20, delay=0)
-    s = session(style, max_fps=1e-6)
+    s = session(frames=20, delay_ms=0, max_fps=1e-6)
     seen = []
     s.subscribe(seen.append)
     s.run().wait(5)
@@ -47,8 +36,7 @@ def test_throttle_always_delivers_final_frames():
 
 
 def test_cancel_from_another_thread():
-    style, a, b = slow()
-    s = session(style)
+    s = session()
     third = threading.Event()
     n = [0]
 
@@ -62,12 +50,11 @@ def test_cancel_from_another_thread():
     assert third.wait(5)
     s.cancel()
     assert h.wait(5) == RunState.cancelled and s.state == RunState.cancelled and s.result is None
-    assert len(s.cache) == 1 and b.runs == 1
+    assert s.cache_stats()["entries"] == 1  # stage a, but nothing from the cancelled stage b
 
 
 def test_new_run_cancels_the_previous_one():
-    style, _, _ = slow()
-    s = session(style)
+    s = session()
     h1 = s.run()
     time.sleep(0.05)
     h2 = s.run()
@@ -75,15 +62,14 @@ def test_new_run_cancels_the_previous_one():
 
 
 def test_error_is_stored_on_the_handle():
-    style = Style("f", "F", "d", (Spy("a", ("image",), "paths", fail=RuntimeError("boom")),))
-    s = session(style)
+    s = session(fail_after=1)
     h = s.run()
-    assert h.wait(5) == RunState.error and isinstance(h.error, RuntimeError) and s.result is None
+    assert h.wait(5) == RunState.error and isinstance(h.error, RuntimeError)
+    assert "slow failed" in str(h.error) and s.result is None
 
 
 def test_unsubscribe_and_blocking_delivery():
-    style, _, _ = slow(frames=3, delay=0)
-    s = session(style)
+    s = session(frames=3, delay_ms=0)
     seen = []
     unsub = s.subscribe(seen.append)
     s.run_blocking()
@@ -95,8 +81,7 @@ def test_unsubscribe_and_blocking_delivery():
 
 
 def test_a_subscriber_error_ends_the_run_in_error():
-    style, _, _ = slow(frames=3, delay=0)
-    s = session(style)
+    s = session(frames=3, delay_ms=0)
     s.subscribe(lambda frame: 1 / 0)
     h = s.run()
     assert h.wait(5) == RunState.error and isinstance(h.error, ZeroDivisionError)
@@ -106,34 +91,31 @@ def test_a_subscriber_error_ends_the_run_in_error():
 
 
 def test_run_blocking_stops_a_running_worker_first():
-    style, _, _ = slow()
-    s = session(style)
+    s = session()
     started = threading.Event()
     s.subscribe(lambda frame: started.set())
     h = s.run()
     assert started.wait(5)
-    s.set_style(Style("q", "Q", "d", (Spy("q", ("image",), "paths", value=PATHS),)))
+    s.update("b", frames=1, delay_ms=0)
     s.run_blocking()
     assert h.state == RunState.cancelled and s.state == RunState.done
 
 
 def test_handle_cancel_and_wait_timeout():
-    style, _, _ = slow()
-    h = session(style).run()
+    h = session().run()
     assert h.wait(0) == RunState.running
     h.cancel()
     assert h.wait(5) == RunState.cancelled
 
 
+def test_run_requires_an_image():
+    with pytest.raises(RuntimeError, match="no image"):
+        Session().run()
+
+
 def test_a_subscriber_that_starts_a_run_gets_an_error_instead_of_a_hang():
-    style, _, _ = slow(frames=3, delay=0)
-    s = session(style)
+    s = session(frames=3, delay_ms=0)
     s.subscribe(lambda frame: s.run())  # would wait for the worker it runs on
     h = s.run()
     assert h.wait(5) == RunState.error and isinstance(h.error, RuntimeError)
     assert "own thread" in str(h.error)
-
-
-def test_run_requires_an_image():
-    with pytest.raises(RuntimeError):
-        Session().run()

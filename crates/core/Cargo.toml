@@ -1,0 +1,17 @@
+[package]
+name = "plotline-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+rand = { version = "0.9", default-features = false }
+rand_pcg = "0.9"
+libm = "0.2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+tiny-skia = { version = "0.11", features = ["png-format"] }
+blake3 = "1"
+thiserror = "2"
