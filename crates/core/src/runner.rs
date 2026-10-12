@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 
 use crate::cache::StageCache;
 use crate::settings::merge;
-use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageRun, Step};
+use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
 use crate::style::{Source, Style};
 use crate::types::{Canvas, Drawing, Layer, Paths};
 
@@ -144,7 +144,8 @@ impl Run {
 
     /// Do work until there is a frame to show, and return it. Returns `None` once the run has
     /// ended, after writing the end state, the drawing on success, and the message on failure to
-    /// the shared slot. The cancel flag is checked before every stage step.
+    /// the shared slot. The cancel flag is checked before every stage step and before the run
+    /// ends, and a stage that returns [`StageError::Cancelled`] also ends the run as cancelled.
     pub fn next_frame(&mut self) -> Option<Frame> {
         match self.state {
             RunState::Idle => self.write(RunState::Running, None, None),
@@ -152,6 +153,10 @@ impl Run {
             RunState::Done | RunState::Cancelled | RunState::Error => return None,
         }
         loop {
+            if self.cancel.load(Ordering::Relaxed) {
+                self.write(RunState::Cancelled, None, None);
+                return None;
+            }
             let index = self.done.len();
             let Some(stage) = self.style.stages.get(index).cloned() else {
                 match self.drawing() {
@@ -160,10 +165,6 @@ impl Run {
                 }
                 return None;
             };
-            if self.cancel.load(Ordering::Relaxed) {
-                self.write(RunState::Cancelled, None, None);
-                return None;
-            }
             if self.active.is_none() {
                 let defaults = stage.defaults();
                 let settings = match self.settings.get(stage.name()) {
@@ -196,7 +197,7 @@ impl Run {
                 match stage.start(Inputs::new(inputs), &settings, ctx) {
                     Ok(run) => self.active = Some((run, key)),
                     Err(e) => {
-                        self.write(RunState::Error, Some(e.to_string()), None);
+                        self.fail(e);
                         return None;
                     }
                 }
@@ -213,7 +214,7 @@ impl Run {
                     self.done.push((artifact, key));
                 }
                 Err(e) => {
-                    self.write(RunState::Error, Some(e.to_string()), None);
+                    self.fail(e);
                     return None;
                 }
             }
@@ -270,6 +271,14 @@ impl Run {
             layers,
             tone,
         })
+    }
+
+    /// End the run on a stage error. A stage that saw the cancel flag ends it as cancelled.
+    fn fail(&mut self, e: StageError) {
+        match e {
+            StageError::Cancelled => self.write(RunState::Cancelled, None, None),
+            e => self.write(RunState::Error, Some(e.to_string()), None),
+        }
     }
 
     /// Set the run's state and error and copy them to the shared slot, with the drawing if there
@@ -424,7 +433,65 @@ mod tests {
             ("a", "cached")
         );
         assert_eq!((a.runs(), b.runs()), (1, 2));
-        assert!(shared.lock().unwrap().drawing.is_some());
+        let before = shared.lock().unwrap().drawing.clone().unwrap();
+        // A cancel after the last stage's cached frame still ends the run cancelled.
+        let mut third = Run::new(
+            style.clone(),
+            style.defaults(),
+            roots(),
+            cache.clone(),
+            shared.clone(),
+            Arc::default(),
+        );
+        assert_eq!(third.next_frame().unwrap().label, "cached");
+        let last = third.next_frame().unwrap();
+        assert_eq!((last.stage.as_str(), last.label.as_str()), ("b", "cached"));
+        third.cancel();
+        assert!(third.next_frame().is_none());
+        assert_eq!(third.state(), RunState::Cancelled);
+        let after = shared.lock().unwrap().drawing.clone().unwrap();
+        assert!(Arc::ptr_eq(&before, &after));
+    }
+
+    #[test]
+    fn a_stage_that_sees_the_cancel_flag_ends_the_run_cancelled() {
+        let a = Arc::new(Spy::new("a", &[Kind::Image], Kind::Points, points(1)));
+        let b = Arc::new(
+            Spy::new("b", &[Kind::Points], Kind::Paths, paths(1)).with_cooperative_cancel(),
+        );
+        let style = Arc::new(Style::new("s", "S", "d", vec![a, b.clone()]).unwrap());
+        let cache = Arc::new(Mutex::new(StageCache::new(1 << 20)));
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut run = Run::new(
+            style.clone(),
+            style.defaults(),
+            roots(),
+            cache.clone(),
+            shared.clone(),
+            cancel.clone(),
+        );
+        let worker = std::thread::spawn(move || {
+            let frames = drain(&mut run);
+            (run, frames)
+        });
+        // b starts after the runner's own flag check, so only b's step can see this cancel.
+        while b.runs() == 0 && !worker.is_finished() {
+            std::thread::yield_now();
+        }
+        cancel.store(true, Ordering::Relaxed);
+        let (run, frames) = worker.join().unwrap();
+        assert_eq!(frames.len(), 1); // a's frame
+        assert_eq!(b.runs(), 1);
+        assert_eq!(run.state(), RunState::Cancelled);
+        assert_eq!(run.error(), None);
+        let slot = shared.lock().unwrap();
+        assert_eq!(
+            (slot.state, slot.error.clone()),
+            (RunState::Cancelled, None)
+        );
+        assert!(slot.drawing.is_none());
+        assert_eq!(cache.lock().unwrap().len(), 1); // only a
     }
 
     #[test]

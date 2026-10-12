@@ -68,7 +68,8 @@ pub(crate) struct SpySettings {
 }
 
 /// A stage with a chosen name, kinds and output. It reports `frames` frames, then gives `value`,
-/// and counts its starts, so runner tests can tell what ran.
+/// and counts its starts, so runner tests can tell what ran. Its frames leave `stage` empty for
+/// the runner to fill in.
 pub(crate) struct Spy {
     name: &'static str,
     label: &'static str,
@@ -77,6 +78,7 @@ pub(crate) struct Spy {
     value: Artifact,
     frames: usize,
     fail_after: Option<usize>,
+    cooperative_cancel: bool,
     runs: Arc<AtomicUsize>,
 }
 
@@ -99,6 +101,7 @@ impl Spy {
             value,
             frames: 1,
             fail_after: None,
+            cooperative_cancel: false,
             runs: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -112,6 +115,14 @@ impl Spy {
     /// Fail with [`StageError::Failed`] at step `k`, counting steps from 1.
     pub(crate) fn with_fail_after(mut self, k: usize) -> Spy {
         self.fail_after = Some(k);
+        self
+    }
+
+    /// Make every step a long chunk that ends only once `ctx.cancelled()` is set, then returns
+    /// [`StageError::Cancelled`], as a stage that checks the flag mid-chunk does. A test sets the
+    /// flag from another thread after the spy has started. Panics after 10 s without a cancel.
+    pub(crate) fn with_cooperative_cancel(mut self) -> Spy {
+        self.cooperative_cancel = true;
         self
     }
 
@@ -147,25 +158,26 @@ impl Stage for Spy {
         &self,
         _inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         validate::<SpySettings>(self.name, &self.schema(), settings)?;
         self.runs.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(SpyRun {
-            name: self.name,
             value: self.value.clone(),
             frames: self.frames,
             fail_after: self.fail_after,
+            cancel: self.cooperative_cancel.then_some(ctx),
             step: 0,
         }))
     }
 }
 
 struct SpyRun {
-    name: &'static str,
     value: Artifact,
     frames: usize,
     fail_after: Option<usize>,
+    /// The context to wait on, when the spy cancels cooperatively.
+    cancel: Option<RunContext>,
     /// Steps taken so far.
     step: usize,
 }
@@ -173,6 +185,15 @@ struct SpyRun {
 impl StageRun for SpyRun {
     fn step(&mut self) -> Result<Step, StageError> {
         self.step += 1;
+        if let Some(ctx) = &self.cancel {
+            let start = std::time::Instant::now();
+            while !ctx.cancelled() {
+                let waited = start.elapsed();
+                assert!(waited.as_secs() < 10, "spy waited 10 s for a cancel");
+                std::thread::yield_now();
+            }
+            return Err(StageError::Cancelled);
+        }
         if self.fail_after == Some(self.step) {
             return Err(StageError::Failed("spy failed".into()));
         }
@@ -180,7 +201,7 @@ impl StageRun for SpyRun {
             return Ok(Step::Done(self.value.clone()));
         }
         Ok(Step::Frame(Frame {
-            stage: self.name.to_string(),
+            stage: String::new(),
             progress: self.step as f32 / self.frames as f32,
             label: format!("{}/{}", self.step, self.frames),
             points: None,
@@ -209,7 +230,7 @@ mod tests {
             let Step::Frame(f) = run.step().unwrap() else {
                 panic!("expected a frame");
             };
-            assert_eq!((f.stage.as_str(), f.label.as_str()), ("spy", label));
+            assert_eq!((f.stage.as_str(), f.label.as_str()), ("", label));
             assert_eq!(f.progress, (i + 1) as f32 / 2.0);
         }
         let Step::Done(a) = run.step().unwrap() else {
