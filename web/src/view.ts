@@ -14,6 +14,9 @@ export function zoomAt(view: View, factor: number, px: number, py: number): View
   return { scale: view.scale * factor, x: px - (px - view.x) * factor, y: py - (py - view.y) * factor };
 }
 
+// The scale as a percentage of true size, taking CSS's 96 pixels to the inch.
+export const zoomPercent = (scale: number): number => Math.round((scale * 25.4 * 100) / 96);
+
 export function toMm(view: View, px: number, py: number): [number, number] {
   return [(px - view.x) / view.scale, (py - view.y) / view.scale];
 }

@@ -2,15 +2,16 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
-import { Image as ImageIcon, ImageUp, Monitor, Moon, Play, Route, Sparkles, Spline, Square, Sun } from "lucide-preact";
+import { Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Sparkles, Spline, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { FrameEvent, Machine, Pen, ResultEvent } from "./events";
-import { imageFile } from "./files";
+import { ACCEPT, imageFile } from "./files";
 import { ExportPanel, MachinePanel, PagePanel, PensPanel, PresetsPanel, SpeedsPanel, StatsPanel, StatusBar } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
+import { zoomPercent, type View } from "./view";
 
 type Style = { name: string; label: string; description: string };
 type Stage = { name: string; label: string; schema: Record<string, unknown> };
@@ -68,7 +69,7 @@ function ThemeButton() {
   return <button type="button" class="icon" title={label} aria-label={label} onClick={next}><Icon /></button>;
 }
 
-type Status = Pick<State, "run" | "stats" | "layers">;
+type Status =Pick<State, "run" | "stats" | "layers">;
 
 // The run state, stats and layers, which both replies and run events change, for the parts that
 // show them.
@@ -91,9 +92,21 @@ function useStatus(store: StatusStore): Status {
   return s;
 }
 
-const Stop = ({ status, onStop }: { status: StatusStore; onStop: () => void }) => (
-  <button type="button" disabled={useStatus(status).run.state !== "running"} onClick={onStop}><Square /> Stop</button>
-);
+// Whether the help paragraphs show under the controls; off by default, since the labels carry
+// the help as tooltips. Missing storage is ignored as for the preset.
+const HELP = "plotline.help";
+function helpShown(): boolean {
+  try {
+    return localStorage.getItem(HELP) === "1";
+  } catch {
+    return false;
+  }
+}
+function keepHelp(on: boolean) {
+  try {
+    localStorage.setItem(HELP, on ? "1" : "0");
+  } catch { /* ignored */ }
+}
 
 type ExportProps = { status: StatusStore; machine: boolean; onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void };
 
@@ -102,16 +115,22 @@ function Export({ status, machine, onExport, onGcode }: ExportProps) {
   return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onGcode={onGcode} />;
 }
 
-type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "running"> & {
-  engine: Engine; status: StatusStore; stages: Stage[];
+type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
+  engine: Engine; status: StatusStore; stages: Stage[]; error?: string;
+  onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
 };
 
-// The preview and the status bar, which hold the run events themselves.
-function RunView({ engine, status, stages, ...view }: RunViewProps) {
+// The toolbar, the preview and the status bar, which hold the run events and the view themselves.
+// None of them has an input that can be half typed, so a re-render per frame resets nothing.
+function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, ...preview }: RunViewProps) {
   const { run, stats } = useStatus(status);
   const [frame, setFrame] = useState<FrameEvent | null>(null);
   const [result, setResult] = useState<ResultEvent | null>(null);
   const [progress, setProgress] = useState<Record<string, { label: string; progress: number }>>({});
+  const [showSource, setShowSource] = useState(false);
+  const [showTravel, setShowTravel] = useState(false);
+  const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
+  const [fits, setFits] = useState(0);
   const latest = useRef(0);
   useEffect(() => {
     engine.onEvent = (e) => {
@@ -135,7 +154,52 @@ function RunView({ engine, status, stages, ...view }: RunViewProps) {
   }, []);
   return (
     <>
-      <div class="preview"><Preview {...view} frame={frame} result={result} running={run.state === "running"} /></div>
+      {/* Grouped, so a narrow window wraps whole groups. */}
+      <div class="toolbar">
+        <span class="group">
+          <label class="button">
+            <ImageUp /> Open image
+            <input
+              class="visually-hidden" type="file" accept={ACCEPT}
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                e.currentTarget.value = ""; // so the same file can be opened again
+                onOpen(file);
+              }}
+            />
+          </label>
+          <button type="button" onClick={onSample}><Sparkles /> Sample image</button>
+        </span>
+        <span class="group">
+          <button type="button" class="primary" disabled={!preview.hasImage} onClick={onRun}><Play /> Run</button>
+          <button type="button" disabled={run.state !== "running"} onClick={onStop}><Square /> Stop</button>
+        </span>
+        <span class="group">
+          <label class="chip">
+            <input class="visually-hidden" type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} />
+            <ImageIcon /> Source
+          </label>
+          <label class="chip">
+            <input class="visually-hidden" type="checkbox" checked={showTravel} onChange={(e) => setShowTravel(e.currentTarget.checked)} />
+            <Route /> Travel
+          </label>
+        </span>
+        <span class="group">
+          <button type="button" onClick={() => setFits((n) => n + 1)}><Maximize /> Fit</button>
+          <span class="zoom" title="The preview's size against the paper's">{zoomPercent(view.scale)}%</span>
+        </span>
+        <span class="group end">
+          <button type="button" disabled={stats === null} onClick={onSvg}><Download /> Export SVG</button>
+          <ThemeButton />
+        </span>
+      </div>
+      {error && <p class="error">{error}</p>}
+      <div class="preview">
+        <Preview
+          {...preview} frame={frame} result={result} running={run.state === "running"} showSource={showSource}
+          showTravel={showTravel} view={view} onView={setView} fits={fits}
+        />
+      </div>
       <footer>
         <StatusBar stages={stages} progress={progress} run={run} />
         <StatsPanel stats={stats} />
@@ -160,8 +224,7 @@ export function App() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
   const [hidden, setHidden] = useState(new Set<number>());
-  const [showSource, setShowSource] = useState(false);
-  const [showTravel, setShowTravel] = useState(false);
+  const [help, setHelp] = useState(helpShown);
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -289,57 +352,29 @@ export function App() {
     >
       <aside>
         <h1 class="brand"><Spline /> plotline</h1>
+        <label>
+          <input type="checkbox" checked={help} onChange={(e) => { setHelp(e.currentTarget.checked); keepHelp(e.currentTarget.checked); }} /> Show help
+        </label>
         <fieldset>
           <legend>Style</legend>
           <label>
             Style{" "}
             <select value={state.style} onChange={(e) => call("setStyle", [e.currentTarget.value])}>
-              {styles.map((s) => <option value={s.name} title={s.description}>{s.label}</option>)}
+              {styles.map((s) => <option value={s.name}>{s.label}</option>)}
             </select>
           </label>
+          <p class="help">{styles.find((s) => s.name === state.style)?.description}</p>
         </fieldset>
-        <Settings stages={stages} values={settings} errors={errors} onChange={onSetting} />
+        <Settings stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
       </aside>
       <main>
-        <div class="toolbar">
-          <label class="button">
-            <ImageUp /> Open image
-            <input
-              class="visually-hidden" type="file" accept="image/png,image/jpeg"
-              onChange={(e) => {
-                const file = e.currentTarget.files?.[0];
-                e.currentTarget.value = ""; // so the same file can be opened again
-                openImage(file);
-              }}
-            />
-          </label>
-          <button type="button" onClick={() => call("sample")}><Sparkles /> Sample image</button>
-          <span class="divider" />
-          <button type="button" class="primary" disabled={!state.image} onClick={() => call("run")}><Play /> Run</button>
-          <Stop status={status} onStop={() => call("cancel")} />
-          <span class="divider" />
-          <label class="chip">
-            <input class="visually-hidden" type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} />
-            <ImageIcon /> Source
-          </label>
-          <label class="chip">
-            <input class="visually-hidden" type="checkbox" checked={showTravel} onChange={(e) => setShowTravel(e.currentTarget.checked)} />
-            <Route /> Travel
-          </label>
-          <span class="spacer" />
-          <ThemeButton />
-        </div>
-        {errors[""] && <p class="error">{errors[""]}</p>}
         <RunView
-          engine={engine} status={status} stages={stages} canvas={state.canvas} showSource={showSource}
-          showTravel={showTravel} hidden={hidden} firstPen={state.pens[0]} hasImage={state.image}
+          engine={engine} status={status} stages={stages} canvas={state.canvas} hidden={hidden}
+          firstPen={state.pens[0]} hasImage={state.image} error={errors[""]} onOpen={openImage}
+          onSample={() => call("sample")} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
         />
       </main>
       <aside>
-        <MachinePanel
-          machine={state.machine} error={errors.machine}
-          onPick={pickMachine} onEdit={(m) => call("setMachine", [m], "machine")}
-        />
         <PagePanel canvas={state.canvas} onChange={(c) => call("setCanvas", [c])} />
         <PensPanel
           pens={state.pens} bank={bank} hidden={hidden} onChange={(p) => call("setPens", [p])}
@@ -349,9 +384,14 @@ export function App() {
             return next;
           })}
         />
+        <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
         <SpeedsPanel speeds={state.speeds} onChange={(s) => call("setSpeeds", [s])} />
         <PresetsPanel warnings={warnings} onSave={savePreset} onLoad={loadPreset} />
-        <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
+        {/* Last and collapsed: a plotter driven from SVG never needs it. */}
+        <MachinePanel
+          machine={state.machine} error={errors.machine}
+          onPick={pickMachine} onEdit={(m) => call("setMachine", [m], "machine")}
+        />
       </aside>
     </div>
   );

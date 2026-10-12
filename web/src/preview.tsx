@@ -1,4 +1,3 @@
-import { Maximize } from "lucide-preact";
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
@@ -15,6 +14,10 @@ type Props = {
   hidden: Set<number>;
   firstPen: Pen;
   hasImage: boolean;
+  // The view lives with the toolbar, which shows its zoom; `fits` counts the toolbar's Fit clicks.
+  view: View;
+  onView: (update: (view: View) => View) => void;
+  fits: number;
 };
 
 // A path object past about a million subpaths draws nothing, so long layers stroke in chunks.
@@ -113,18 +116,18 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
 }
 
 export function Preview(props: Props): JSX.Element {
-  const { canvas, result } = props;
+  const { canvas, result, view, onView: setView, fits } = props;
   const box = useRef<HTMLDivElement>(null);
   const cvs = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [tone, setTone] = useState<{ result: ResultEvent; bitmap: ImageBitmap } | null>(null);
   const bitmap = tone?.result === result ? tone.bitmap : null; // a closed bitmap never matches the new result
 
-  const fit = (w = size.w, h = size.h) => setView(fitView(canvas.width_mm, canvas.height_mm, w, h));
+  const fit = (w: number, h: number) => setView(() => fitView(canvas.width_mm, canvas.height_mm, w, h));
 
-  // The observer fires on observe, so this also fits on mount and when the page size changes.
+  // The observer fires on observe, so this also fits on mount, when the page size changes and on
+  // every Fit click.
   useEffect(() => {
     const el = box.current!;
     const ro = new ResizeObserver(() => {
@@ -133,7 +136,7 @@ export function Preview(props: Props): JSX.Element {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [canvas.width_mm, canvas.height_mm]);
+  }, [canvas.width_mm, canvas.height_mm, fits]);
 
   // One bitmap per result: the tone's grey bytes as opaque RGBA.
   useEffect(() => {
@@ -167,7 +170,7 @@ export function Preview(props: Props): JSX.Element {
   }, [props.canvas, props.frame, props.result, props.running, props.showSource, props.showTravel, props.hidden, props.firstPen, props.hasImage, view, size, bitmap]);
 
   return (
-    <div ref={box} class="stage">
+    <div ref={box} style={{ position: "relative", height: "100%" }}>
       <canvas
         ref={cvs}
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", touchAction: "none", cursor: "grab" }}
@@ -195,7 +198,6 @@ export function Preview(props: Props): JSX.Element {
         onPointerUp={() => (drag.current = null)}
         onPointerCancel={() => (drag.current = null)}
       />
-      <button type="button" class="fit" onClick={() => fit()}><Maximize /> Fit</button>
     </div>
   );
 }

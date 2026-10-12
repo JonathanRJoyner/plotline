@@ -72,3 +72,15 @@ export function controlsFor(schema: Record<string, unknown>): Control[] {
   const props = (schema.properties ?? {}) as Record<string, Json>;
   return Object.entries(props).map(([key, prop]) => controlFor(key, prop, schema));
 }
+
+// The stages every style shares, in the order the form shows them after the style's own, each
+// with the label it is shown under: tone is where the image is prepared.
+const SHARED: [string, string | null][] = [["order", null], ["tone", "Image"]];
+
+// A style's own stages in run order, then the shared ones, so the settings that make the style
+// what it is come first.
+export function splitStages<S extends { name: string; label: string }>(stages: S[]): { own: S[]; shared: S[] } {
+  const own = stages.filter((s) => !SHARED.some(([name]) => name === s.name));
+  const shared = SHARED.flatMap(([name, label]) => stages.filter((s) => s.name === name).map((s) => ({ ...s, label: label ?? s.label })));
+  return { own, shared };
+}

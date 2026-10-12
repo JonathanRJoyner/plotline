@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { controlsFor } from "./schema";
+import { controlsFor, splitStages } from "./schema";
 
 const properties = {
   invert: { type: "boolean", default: false, description: "Swap light and dark." },
@@ -55,4 +55,12 @@ test("definitions, enum and a default step", () => {
   expect(c[3]).toMatchObject({ kind: "number", integer: false, default: null });
   expect(c[4]).toMatchObject({ kind: "text" });
   expect(controlsFor({})).toEqual([]);
+});
+
+test("splitStages puts the style's own stages first, then order, then tone as Image", () => {
+  const st = (name: string) => ({ name, label: name.toUpperCase(), schema: {} });
+  const { own, shared } = splitStages([st("tone"), st("points"), st("render"), st("order")]);
+  expect(own.map((s) => s.name)).toEqual(["points", "render"]);
+  expect(shared.map((s) => [s.name, s.label])).toEqual([["order", "ORDER"], ["tone", "Image"]]);
+  expect(splitStages([st("a")])).toEqual({ own: [st("a")], shared: [] });
 });

@@ -1,6 +1,7 @@
-// The side panels and the status bar of spec 2026-10-12-gui-design section 6.4. Each shows a
-// slice of the state and hands changes back; the app sends them to the engine.
-import { ArrowLeftRight, Download, FolderOpen, Plus, Save, X } from "lucide-preact";
+// The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
+// 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
+// back; the app sends them to the engine.
+import { Download, FolderOpen, Plus, Save, X } from "lucide-preact";
 import type { JSX } from "preact";
 import type { Area, Canvas, Machine, Pen, Stats } from "./events";
 import type { Speeds, State } from "./protocol";
@@ -20,29 +21,38 @@ export function PagePanel({ canvas, onChange }: { canvas: Canvas; onChange: (can
     set(w > h ? { width_mm: b, height_mm: a } : { width_mm: a, height_mm: b });
   };
   const mm = (key: "width_mm" | "height_mm" | "margin_mm", label: string) => (
-    <label>{label} <input type="number" min="0" step="any" value={canvas[key]} onChange={(e) => set({ [key]: e.currentTarget.valueAsNumber })} /> mm</label>
+    <label>{label}<span><input type="number" min="0" step="any" value={canvas[key]} onChange={(e) => set({ [key]: e.currentTarget.valueAsNumber })} /> mm</span></label>
   );
   return (
     <fieldset>
       <legend>Page</legend>
-      <label>
-        Size{" "}
-        <select value={size?.[0] ?? "custom"} onChange={(e) => pick(e.currentTarget.value)}>
-          {SIZES.map(([name]) => <option value={name}>{name}</option>)}
-          {!size && <option value="custom">custom</option>}
-        </select>
-      </label>
-      {mm("width_mm", "Width")}
-      {mm("height_mm", "Height")}
-      {mm("margin_mm", "Margin")}
-      <label>
-        Fit{" "}
-        <select value={canvas.fit} onChange={(e) => set({ fit: e.currentTarget.value as Canvas["fit"] })}>
-          <option value="fit">fit</option>
-          <option value="fill">fill</option>
-        </select>
-      </label>
-      <button type="button" onClick={() => set({ width_mm: h, height_mm: w })}><ArrowLeftRight /> Swap width and height</button>
+      <div class="grid">
+        <label>
+          Size
+          <select value={size?.[0] ?? "custom"} onChange={(e) => pick(e.currentTarget.value)}>
+            {SIZES.map(([name]) => <option value={name}>{name}</option>)}
+            {!size && <option value="custom">custom</option>}
+          </select>
+        </label>
+        <label>
+          Orientation
+          {/* The select holds only the two, so any change turns the page. */}
+          <select value={w > h ? "landscape" : "portrait"} onChange={() => set({ width_mm: h, height_mm: w })}>
+            <option value="portrait">portrait</option>
+            <option value="landscape">landscape</option>
+          </select>
+        </label>
+        {mm("width_mm", "Width")}
+        {mm("height_mm", "Height")}
+        {mm("margin_mm", "Margin")}
+        <label>
+          Fit
+          <select value={canvas.fit} onChange={(e) => set({ fit: e.currentTarget.value as Canvas["fit"] })}>
+            <option value="fit">fit</option>
+            <option value="fill">fill</option>
+          </select>
+        </label>
+      </div>
     </fieldset>
   );
 }
@@ -56,18 +66,19 @@ export function PensPanel({ pens, bank, hidden, onChange, onToggle }: PensProps)
       <legend>Pens</legend>
       {pens.map((p, i) => (
         <div class="pen">
-          <label>Name <input type="text" value={p.name} onChange={(e) => set(i, { name: e.currentTarget.value })} /></label>
-          <label>Width <input type="number" min="0" step="0.05" value={p.width_mm} onChange={(e) => set(i, { width_mm: e.currentTarget.valueAsNumber })} /> mm</label>
-          <label>Colour <input type="color" value={p.color} onChange={(e) => set(i, { color: e.currentTarget.value })} /></label>
-          <label><input type="checkbox" checked={!hidden.has(i)} onChange={() => onToggle(i)} /> Show</label>
+          <input type="color" aria-label="Colour" value={p.color} onChange={(e) => set(i, { color: e.currentTarget.value })} />
+          <input type="text" aria-label="Name" value={p.name} onChange={(e) => set(i, { name: e.currentTarget.value })} />
+          <input type="number" aria-label="Width in mm" min="0" step="0.05" value={p.width_mm} onChange={(e) => set(i, { width_mm: e.currentTarget.valueAsNumber })} /> mm
+          <input type="checkbox" aria-label="Show" title="Show in the preview" checked={!hidden.has(i)} onChange={() => onToggle(i)} />
           {/* The session refuses an empty pen list. */}
-          <button type="button" disabled={pens.length === 1} onClick={() => onChange(pens.filter((_, j) => j !== i))}><X /> Remove</button>
+          <button type="button" class="icon" aria-label="Remove pen" title="Remove pen" disabled={pens.length === 1} onClick={() => onChange(pens.filter((_, j) => j !== i))}><X /></button>
         </div>
       ))}
       <button type="button" onClick={() => onChange([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }])}><Plus /> Add pen</button>
       <label>
-        Add from bank{" "}
+        Add from bank
         <select
+          class="wide"
           value=""
           onChange={(e) => {
             const pen = bank.find((p) => p.name === e.currentTarget.value);
@@ -89,7 +100,7 @@ const SPEEDS: [keyof Speeds, string, string, number][] = [
 export function SpeedsPanel({ speeds, onChange }: { speeds: Speeds; onChange: (speeds: Speeds) => void }): JSX.Element {
   return (
     <fieldset>
-      <legend>Speeds</legend>
+      <legend>Plot time</legend>
       {SPEEDS.map(([key, label, unit, min]) => (
         <label>
           {label}{" "}
@@ -111,18 +122,12 @@ export function SpeedsPanel({ speeds, onChange }: { speeds: Speeds; onChange: (s
 
 export function StatsPanel({ stats }: { stats: Stats | null }): JSX.Element {
   const t = Math.round(stats?.estimated_seconds ?? 0);
+  if (!stats) return <p class="stats">No drawing yet</p>;
   return (
-    <fieldset>
-      <legend>Stats</legend>
-      {stats ? (
-        <dl>
-          <dt>Paths</dt><dd>{stats.path_count}</dd>
-          <dt>Pen down</dt><dd>{stats.pen_down_mm.toFixed(1)} mm</dd>
-          <dt>Pen up</dt><dd>{stats.pen_up_mm.toFixed(1)} mm</dd>
-          <dt>Time</dt><dd>{Math.floor(t / 60)} min {t % 60} s</dd>
-        </dl>
-      ) : <p>No drawing yet</p>}
-    </fieldset>
+    <p class="stats">
+      {stats.path_count} paths · pen down {stats.pen_down_mm.toFixed(1)} mm · pen up {stats.pen_up_mm.toFixed(1)} mm
+      · about {Math.floor(t / 60)} min {t % 60} s to plot
+    </p>
   );
 }
 
@@ -138,18 +143,17 @@ export function StatusBar({ stages, progress, run }: StatusProps): JSX.Element {
   const done = (name: string) => (progress[name]?.progress ?? 0) >= 1;
   const current = run.state === "running" ? stages.find((s) => !done(s.name)) : undefined;
   return (
-    <fieldset class="status">
-      <legend>Run</legend>
+    <div class="status">
+      <span class={run.error ? "error" : undefined}>{run.id > 0 ? `Run ${run.id}: ` : ""}{run.state}{run.error ? `: ${run.error}` : ""}</span>
       <ol>
         {stages.map((s) => {
           const p = progress[s.name];
-          if (done(s.name)) return <li data-state="done">{s.label}: done ({p.label})</li>;
+          if (done(s.name)) return <li data-state="done" title={p.label}>{s.label}: done</li>;
           if (s === current) return <li data-state="running">{s.label}: {p?.label ?? "running"} <progress value={p?.progress ?? 0} max={1} /></li>;
           return <li>{s.label}: waiting</li>;
         })}
       </ol>
-      <p>{run.id > 0 ? `Run ${run.id}: ` : ""}{run.state}{run.error ? `: ${run.error}` : ""}</p>
-    </fieldset>
+    </div>
   );
 }
 
@@ -229,11 +233,12 @@ export function MachinePanel({ machine, error, onPick, onEdit }: MachineProps): 
     </label>
   );
   return (
-    <fieldset>
-      <legend>Machine</legend>
+    <details class="panel">
+      <summary>G-code (optional)</summary>
       <label>
-        Machine{" "}
+        Machine
         <select
+          class="wide"
           value={value}
           onChange={(e) => {
             const v = e.currentTarget.value;
@@ -241,7 +246,7 @@ export function MachinePanel({ machine, error, onPick, onEdit }: MachineProps): 
             else if (v === "new") onPick(NEW_MACHINE);
           }}
         >
-          <option value="none">None (SVG only)</option>
+          <option value="none">None: export SVG for your plotter's software</option>
           {machine && <option value="current">{machine.name}</option>}
           <option value="new">New machine</option>
         </select>
@@ -258,6 +263,6 @@ export function MachinePanel({ machine, error, onPick, onEdit }: MachineProps): 
           <label>End G-code <textarea rows={2} value={machine.end_gcode} onChange={(e) => onEdit({ ...machine, end_gcode: e.currentTarget.value })} /></label>
         </>
       )}
-    </fieldset>
+    </details>
   );
 }
