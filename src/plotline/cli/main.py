@@ -119,7 +119,10 @@ def describe(style: str, as_json: bool) -> None:
     multiple=True,
     callback=lambda ctx, param, values: [parse_pen(v) for v in values],
     metavar="NAME:WIDTH_MM:COLOR",
-    help="A pen, such as 'Red:0.5:#ff0000'. Repeat it for more pens, which draw in that order.",
+    help=(
+        "A pen, such as 'Red:0.5:#ff0000'. The current style draws with the first pen. "
+        "Repeat the option to give more pens, which are kept for multi-pen styles to come."
+    ),
 )
 @click.option(
     "--set",

@@ -2,11 +2,11 @@
 
 Turn images into drawings for pen plotters.
 
-plotline converts raster images into vector line art, such as stippling, single continuous lines, dashes and sketched strokes. It will come with a live preview that shows the algorithm at work, so you can see what a setting does before you commit ink to paper.
+plotline is built to convert raster images into vector line art, such as stippling, single continuous lines, dashes and sketched strokes. It will come with a live preview that shows the algorithm at work, so you can see what a setting does before you commit ink to paper.
 
 ## What works now
 
-plotline is early software. The command line runs one style, `grid`: dots on a regular grid, one wherever the image is dark enough, ordered to keep the pen's travel short. A run writes a layered SVG in millimetres with one group per pen. It can also write the paths as JSON and a PNG preview that draws each mark at its real pen width. You can set the page size and margin, choose the pens, and change a setting with `--set stage.key=value`, such as `--set points.spacing_mm=3`. `plotline describe grid` lists the settings.
+plotline is early software. The command line runs one style, `grid`: dots on a regular grid, one wherever the image is dark enough, ordered to keep the pen's travel short. A run writes an SVG in millimetres that holds the drawing in one layer, labelled with the name of its pen. It can also write the paths as JSON and a PNG preview that draws each mark at its real pen width. You can set the page size and margin, choose the pen, and change a setting with `--set stage.key=value`, such as `--set points.spacing_mm=3`. `plotline describe grid` lists the settings.
 
 The Voronoi styles, Sketch Lines, the live preview GUI and the MCP server are planned but not built yet. `plotline gui` and `plotline mcp` print a message saying so. The goals, architecture, decisions and everything still planned are in [docs/BRIEF.md](docs/BRIEF.md).
 
