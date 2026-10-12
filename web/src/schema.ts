@@ -1,0 +1,74 @@
+// Turns one stage's JSON Schema (schemars 1.x: definitions under `$defs`) into the
+// form controls the settings panel renders.
+
+type Json = Record<string, unknown>;
+type Base = { key: string; label: string; help: string; advanced: boolean };
+type Option = { value: string; label: string; title: string | null };
+
+export type Control =
+  | (Base & { kind: "checkbox"; default: boolean })
+  | (Base & { kind: "slider"; min: number; max: number; step: number; integer: boolean; unit: string | null; default: number })
+  | (Base & { kind: "number"; integer: boolean; unit: string | null; default: number | null })
+  | (Base & { kind: "select"; options: Option[]; default: string | null })
+  | (Base & { kind: "text"; default: string | null });
+
+const REF = /^#\/(\$defs|definitions)\/(.+)$/;
+
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+
+// The definition a property's `$ref` (or the one in a one-element `allOf`) points at.
+function referenced(prop: Json, root: Json): Json | null {
+  const wrapped = Array.isArray(prop.allOf) && prop.allOf.length === 1 ? (prop.allOf[0] as Json).$ref : undefined;
+  const m = REF.exec(str(prop.$ref) ?? str(wrapped) ?? "");
+  if (!m) return null;
+  const table = root[m[1]] as Json | undefined;
+  return (table?.[m[2]] as Json | undefined) ?? null;
+}
+
+// Options from an `enum`, or from a `oneOf` of `const` entries; null when neither.
+function optionsOf(schema: Json): Option[] | null {
+  if (Array.isArray(schema.enum)) {
+    return schema.enum.map((v) => ({ value: String(v), label: String(v), title: null }));
+  }
+  const entries = schema.oneOf;
+  if (Array.isArray(entries) && entries.every((e: Json) => "const" in e)) {
+    return entries.map((e: Json) => ({ value: String(e.const), label: String(e.const), title: str(e.description) }));
+  }
+  return null;
+}
+
+function controlFor(key: string, prop: Json, root: Json): Control {
+  const base: Base = {
+    key,
+    label: str(prop["x-label"]) ?? key.replaceAll("_", " "),
+    help: str(prop.description) ?? "",
+    advanced: prop["x-advanced"] === true,
+  };
+  const unit = str(prop["x-unit"]);
+  const def = prop.default;
+
+  const target = referenced(prop, root);
+  const options = optionsOf(prop) ?? (target && optionsOf(target));
+  if (options) return { ...base, kind: "select", options, default: def == null ? null : String(def) };
+
+  if (prop.type === "boolean") return { ...base, kind: "checkbox", default: def === true };
+
+  if (prop.type === "integer" || prop.type === "number") {
+    const integer = prop.type === "integer";
+    const min = num(prop.minimum);
+    const max = num(prop.maximum);
+    if (min !== null && max !== null) {
+      const step = num(prop["x-step"]) ?? (integer ? 1 : (max - min) / 100);
+      return { ...base, kind: "slider", min, max, step, integer, unit, default: num(def) ?? min };
+    }
+    return { ...base, kind: "number", integer, unit, default: num(def) };
+  }
+
+  return { ...base, kind: "text", default: str(def) };
+}
+
+export function controlsFor(schema: Record<string, unknown>): Control[] {
+  const props = (schema.properties ?? {}) as Record<string, Json>;
+  return Object.entries(props).map(([key, prop]) => controlFor(key, prop, schema));
+}
