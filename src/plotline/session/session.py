@@ -28,6 +28,7 @@ from plotline.core.settings import Settings
 from plotline.core.stage import Cancelled, CancelToken, Frame, RunContext
 from plotline.core.types import Canvas, Pen, Result
 from plotline.session import images
+from plotline.session.preview import render_png
 from plotline.session.stats import Speeds, Stats, compute_stats
 
 
@@ -323,3 +324,11 @@ class Session:
         """The path count, pen-down and pen-up distances and estimated plot time of the result at
         ``speeds``. Raises ``RuntimeError`` when there is no result."""
         return compute_stats(self._require_result(), self.speeds)
+
+    def preview_png(
+        self, width_px: int = 1000, travel: bool = False, source: bool = False
+    ) -> bytes:
+        """The result drawn at true pen width as PNG bytes that are ``width_px`` wide, with the
+        pen-up moves when ``travel`` is set and the tone map under the paths when ``source`` is.
+        See ``preview.render_png``. Raises ``RuntimeError`` when there is no result."""
+        return render_png(self._require_result(), width_px, travel, source)
