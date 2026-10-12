@@ -5,7 +5,9 @@ pub mod math;
 pub mod runner;
 pub mod settings;
 pub mod stage;
+pub mod stages;
 pub mod style;
+pub mod synthetic;
 pub mod types;
 
 #[cfg(test)]
