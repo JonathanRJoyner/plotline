@@ -1,0 +1,43 @@
+# The hosted page and `plotline gui` serve the same files: both come from the Vite bundle in web/dist.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  pages: write
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    # Deploy only once the repository is public; until then the job is skipped.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    environment: github-pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - run: wasm-pack build --release --target web --out-dir ../../web/pkg
+        working-directory: crates/wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The steps below stay inert until the GUI spec adds web/package.json.
+      - run: npm ci
+        working-directory: web
+        if: hashFiles('web/package.json') != ''
+      - run: npm run build
+        working-directory: web
+        if: hashFiles('web/package.json') != ''
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+        if: hashFiles('web/package.json') != ''
+      - uses: actions/deploy-pages@v4
+        if: hashFiles('web/package.json') != ''
