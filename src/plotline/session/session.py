@@ -79,7 +79,10 @@ class RunHandle:
     def wait(self, timeout: float | None = None) -> RunState:
         """Block until the run has ended, or for ``timeout`` seconds at most, and return
         ``state``, which is still ``running`` after a timeout. A subscriber runs on the worker
-        thread, which cannot wait for itself, so it must not call this."""
+        thread, which cannot wait for itself, so a call from there raises ``RuntimeError``
+        instead of hanging."""
+        if self._thread is threading.current_thread():
+            raise RuntimeError("a run cannot wait for itself: wait() was called on its own thread")
         if self._thread is not None:
             self._thread.join(timeout)
         return self._state
@@ -133,18 +136,20 @@ class Session:
 
     def set_image(self, image: NDArray[Any]) -> None:
         """Use ``image`` as the source image. It must have shape ``(H, W, 3)`` or ``(H, W)``,
-        where a grey image is repeated into three channels, else ``ValueError`` is raised. A
-        ``uint8`` array is divided by 255; any other dtype is taken to be in 0..1 already. A
-        ``float32`` array of shape ``(H, W, 3)`` is kept as it is, not copied, so the caller must
-        not change it afterwards."""
+        where a grey image is repeated into three channels, else ``ValueError`` is raised. An
+        integer array is divided by the largest value of its type, so ``uint8`` by 255 and
+        ``uint16`` by 65535; a float array is taken to be in 0..1 already. A ``float32`` array of
+        shape ``(H, W, 3)`` is kept as it is, not copied, so the caller must not change it
+        afterwards."""
         pixels = np.asarray(image)
         if pixels.ndim == 2:
             pixels = np.repeat(pixels[:, :, None], 3, axis=2)
         elif pixels.ndim != 3 or pixels.shape[2] != 3:
             raise ValueError(f"image must have shape (H, W) or (H, W, 3), got {pixels.shape}")
         rgb = np.asarray(pixels, dtype=np.float32)
-        if pixels.dtype == np.uint8:
-            rgb /= 255  # a new array, since the dtype changed, so the caller's is untouched
+        if np.issubdtype(pixels.dtype, np.integer):
+            # rgb is a new array, since the dtype changed, so the caller's is untouched.
+            rgb /= np.iinfo(pixels.dtype).max
         self.image = rgb
 
     def set_canvas(self, canvas: Canvas) -> None:

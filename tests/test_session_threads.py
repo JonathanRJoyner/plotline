@@ -125,6 +125,15 @@ def test_handle_cancel_and_wait_timeout():
     assert h.wait(5) == RunState.cancelled
 
 
+def test_a_subscriber_that_starts_a_run_gets_an_error_instead_of_a_hang():
+    style, _, _ = slow(frames=3, delay=0)
+    s = session(style)
+    s.subscribe(lambda frame: s.run())  # would wait for the worker it runs on
+    h = s.run()
+    assert h.wait(5) == RunState.error and isinstance(h.error, RuntimeError)
+    assert "own thread" in str(h.error)
+
+
 def test_run_requires_an_image():
     with pytest.raises(RuntimeError):
         Session().run()

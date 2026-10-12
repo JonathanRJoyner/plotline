@@ -28,10 +28,12 @@ def test_defaults():
     assert s.state == RunState.idle and s.result is None and s.image is None
 
 
-def test_set_image_accepts_uint8_and_grey():
+def test_set_image_scales_integers_by_their_type_and_accepts_grey():
     s = Session()
     s.set_image(np.full((4, 4, 3), 255, np.uint8))
     assert s.image.dtype == np.float32 and s.image.max() == 1.0
+    s.set_image(np.full((4, 4, 3), 65535, np.uint16))
+    assert s.image.max() == 1.0  # a 16-bit white is still white, not off the scale
     s.set_image(np.zeros((4, 4), np.float32))
     assert s.image.shape == (4, 4, 3)
 
