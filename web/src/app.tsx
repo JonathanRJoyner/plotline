@@ -1,5 +1,7 @@
 // The page (spec 2026-10-12-gui-design section 6): the engine client, the last state it replied
-// with, the run events for the preview and the status bar, and the three columns.
+// with, the run view that takes the run events, and the three columns. Only replies re-render the
+// page; a run's frames and its end re-render just the parts that show them, so they never reset
+// an input the user is typing into.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { FrameEvent, ResultEvent } from "./events";
@@ -23,43 +25,47 @@ function download(name: string, text: string, type: string) {
   setTimeout(() => URL.revokeObjectURL(url));
 }
 
-export function App() {
-  const [fatal, setFatal] = useState<string | null>(null);
-  const [engine] = useState(() => {
-    const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-    worker.addEventListener("error", (e) => setFatal(e.message || "the engine stopped"));
-    return new Engine(worker);
-  });
-  const [styles, setStyles] = useState<Style[] | null>(null);
-  const [state, setState] = useState<State | null>(null);
-  const [stages, setStages] = useState<Stage[]>([]);
+type Status = Pick<State, "run" | "stats">;
+
+// The run state and stats, which both replies and run ends change, for the parts that show them.
+class StatusStore {
+  readonly subs = new Set<(s: Status) => void>();
+  constructor(public value: Status) {}
+  set(value: Status) {
+    this.value = value;
+    for (const f of this.subs) f(value);
+  }
+}
+
+function useStatus(store: StatusStore): Status {
+  const [s, setS] = useState(store.value);
+  useEffect(() => {
+    store.subs.add(setS);
+    setS(store.value);
+    return () => { store.subs.delete(setS); };
+  }, []);
+  return s;
+}
+
+const Stop = ({ status, onStop }: { status: StatusStore; onStop: () => void }) => (
+  <button type="button" disabled={useStatus(status).run.state !== "running"} onClick={onStop}>Stop</button>
+);
+
+const Export = ({ status, onExport }: { status: StatusStore; onExport: (format: "svg" | "json") => void }) => (
+  <ExportPanel drawing={useStatus(status).stats !== null} onExport={onExport} />
+);
+
+type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "running"> & {
+  engine: Engine; status: StatusStore; stages: Stage[];
+};
+
+// The preview and the status bar, which hold the run events themselves.
+function RunView({ engine, status, stages, ...view }: RunViewProps) {
+  const { run, stats } = useStatus(status);
   const [frame, setFrame] = useState<FrameEvent | null>(null);
   const [result, setResult] = useState<ResultEvent | null>(null);
   const [progress, setProgress] = useState<Record<string, { label: string; progress: number }>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({}); // per stage; "" for the rest
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
-  const [hidden, setHidden] = useState(new Set<number>());
-  const [showSource, setShowSource] = useState(false);
-  const [showTravel, setShowTravel] = useState(false);
   const latest = useRef(0);
-  const unsent = useRef<State["settings"]>({});
-  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
-  // Sends a command and takes the state from its reply. A refusal shows the message under
-  // `where` and asks for the state again.
-  async function call<T = unknown>(method: string, args: unknown[] = [], where = "", transfer?: Transferable[]): Promise<T | undefined> {
-    try {
-      const reply = await engine.call<T>(method, args, transfer);
-      setState(reply.state);
-      setErrors((es) => ({ ...es, [where]: "" }));
-      return reply.value;
-    } catch (e) {
-      setErrors((es) => ({ ...es, [where]: message(e) }));
-      engine.call("preset").then((r) => setState(r.state), () => {});
-    }
-  }
-
   useEffect(() => {
     engine.onEvent = (e) => {
       if (e.type === "run") {
@@ -75,11 +81,63 @@ export function App() {
       } else if (e.type === "result") {
         setResult(e);
       } else {
-        setState((s) => s && { ...s, run: { id: e.id, state: e.state, error: e.error }, stats: e.stats });
+        status.set({ run: { id: e.id, state: e.state, error: e.error }, stats: e.stats });
       }
     };
+  }, []);
+  return (
+    <>
+      <div class="preview"><Preview {...view} frame={frame} result={result} running={run.state === "running"} /></div>
+      <footer>
+        <StatusBar stages={stages} progress={progress} run={run} />
+        <StatsPanel stats={stats} />
+      </footer>
+    </>
+  );
+}
+
+export function App() {
+  const [fatal, setFatal] = useState<string | null>(null);
+  const [engine] = useState(() => {
+    const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+    worker.addEventListener("error", (e) => setFatal(e.message || "the engine stopped"));
+    return new Engine(worker);
+  });
+  const [styles, setStyles] = useState<Style[] | null>(null);
+  const [state, setState] = useState<State | null>(null);
+  const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null }));
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({}); // per stage; "" for the rest
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
+  const [hidden, setHidden] = useState(new Set<number>());
+  const [showSource, setShowSource] = useState(false);
+  const [showTravel, setShowTravel] = useState(false);
+  const unsent = useRef<State["settings"]>({});
+  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const take = (s: State) => {
+    setState(s);
+    status.set({ run: s.run, stats: s.stats });
+  };
+
+  // Sends a command and takes the state from its reply. A refusal shows the message under
+  // `where` and asks for the state again.
+  async function call<T = unknown>(method: string, args: unknown[] = [], where = "", transfer?: Transferable[]): Promise<T | undefined> {
+    try {
+      const reply = await engine.call<T>(method, args, transfer);
+      take(reply.state);
+      setErrors((es) => ({ ...es, [where]: "" }));
+      return reply.value;
+    } catch (e) {
+      setErrors((es) => ({ ...es, [where]: message(e) }));
+      engine.call("preset").then((r) => take(r.state), () => {});
+    }
+  }
+
+  useEffect(() => {
     engine.call<Style[]>("listStyles").then(({ state, value }) => {
-      setState(state);
+      take(state);
       setStyles(value);
     }, (e) => setFatal(message(e)));
   }, []);
@@ -88,6 +146,10 @@ export function App() {
   useEffect(() => {
     if (style) call<{ stages: Stage[] }>("describe", [style]).then((v) => v && setStages(v.stages));
   }, [style]);
+
+  // Hiding goes by layer index, so a changed pen list starts with every pen shown.
+  const pens = JSON.stringify(state?.pens);
+  useEffect(() => setHidden(new Set()), [pens]);
 
   // Shows a setting at once and sends the stage's changes once 150 ms pass without another.
   function onSetting(stage: string, key: string, value: unknown) {
@@ -133,7 +195,6 @@ export function App() {
   if (fatal) return <p class="loading">{fatal}</p>;
   if (!styles || !state) return <p class="loading">Loading the engine</p>;
 
-  const running = state.run.state === "running";
   const settings = { ...state.settings };
   for (const k in draft) settings[k] = { ...settings[k], ...draft[k] };
 
@@ -156,21 +217,15 @@ export function App() {
           <label>Open image <input type="file" accept="image/png,image/jpeg" onChange={(e) => openImage(e.currentTarget.files?.[0])} /></label>
           <button type="button" onClick={() => call("sample")}>Sample image</button>
           <button type="button" disabled={!state.image} onClick={() => call("run")}>Run</button>
-          <button type="button" disabled={!running} onClick={() => call("cancel")}>Stop</button>
+          <Stop status={status} onStop={() => call("cancel")} />
           <label><input type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} /> Source</label>
           <label><input type="checkbox" checked={showTravel} onChange={(e) => setShowTravel(e.currentTarget.checked)} /> Travel</label>
         </div>
         {errors[""] && <p class="error">{errors[""]}</p>}
-        <div class="preview">
-          <Preview
-            canvas={state.canvas} frame={frame} result={result} running={running} showSource={showSource}
-            showTravel={showTravel} hidden={hidden} firstPen={state.pens[0]} hasImage={state.image}
-          />
-        </div>
-        <footer>
-          <StatusBar stages={stages} progress={progress} run={state.run} />
-          <StatsPanel stats={state.stats} />
-        </footer>
+        <RunView
+          engine={engine} status={status} stages={stages} canvas={state.canvas} showSource={showSource}
+          showTravel={showTravel} hidden={hidden} firstPen={state.pens[0]} hasImage={state.image}
+        />
       </main>
       <aside>
         <PagePanel canvas={state.canvas} onChange={(c) => call("setCanvas", [c])} />
@@ -184,7 +239,7 @@ export function App() {
         />
         <SpeedsPanel speeds={state.speeds} onChange={(s) => call("setSpeeds", [s])} />
         <PresetsPanel warnings={warnings} onSave={savePreset} onLoad={loadPreset} />
-        <ExportPanel drawing={state.stats !== null} onExport={exportAs} />
+        <Export status={status} onExport={exportAs} />
       </aside>
     </div>
   );
