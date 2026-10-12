@@ -153,8 +153,10 @@ impl StageRun for OrderRun {
         let n = self.kept.len();
         if let Some(index) = &self.index {
             for _ in 0..self.every.min(n - ordered.len()) {
+                // With no endpoint at a finite distance, as with NaN ones, take the first left.
                 let j = index
                     .nearest(self.pen, &self.alive)
+                    .or_else(|| self.alive.iter().position(|&a| a))
                     .expect("a path is still to be drawn");
                 let (i, reversed) = (j % n, j >= n);
                 self.alive[i] = false;
@@ -275,6 +277,13 @@ mod tests {
     fn starts_at_the_drawing_rect_corner() {
         let (_, out) = order(vec![vec![[2.0, 2.0]], vec![[12.0, 12.0]]], json!({}));
         assert_eq!(out.get(0), &[[12.0, 12.0]]);
+    }
+    #[test]
+    fn paths_with_non_finite_endpoints_are_kept() {
+        let (_, out) = order(vec![vec![[f64::NAN, 0.0]], vec![[20.0, 20.0]]], json!({}));
+        assert_eq!(out.len(), 2);
+        assert_eq!(out.get(0), &[[20.0, 20.0]]);
+        assert!(out.get(1)[0][0].is_nan());
     }
     #[test]
     fn empty_input() {

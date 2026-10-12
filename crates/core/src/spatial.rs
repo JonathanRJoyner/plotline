@@ -1,5 +1,8 @@
 //! A uniform grid bucket index over points, for nearest-point queries that skip dead points.
 //!
+//! The cell method follows Bentley, Weide and Yao, "Optimal Expected-Time Algorithms for Closest
+//! Point Problems", ACM Transactions on Mathematical Software 6(4), 1980.
+//!
 //! Squared distances are plain `dx * dx + dy * dy`, so every target computes the same bits.
 
 /// Points bucketed into square cells over their bounding box.
@@ -62,8 +65,8 @@ impl GridIndex {
     }
 
     /// The index of the alive point nearest `from`, comparing `(squared distance, index)` so that
-    /// exact ties go to the lowest index; `None` when no point is alive. `alive` has one entry per
-    /// point.
+    /// exact ties go to the lowest index; `None` when no alive point lies at a finite distance.
+    /// `alive` has one entry per point.
     ///
     /// The search visits rings of cells around `from`'s cell, ring `r` being the cells `r` steps
     /// away in the larger of the two directions, and stops once a ring cannot hold anything as
@@ -100,6 +103,10 @@ impl GridIndex {
                         }
                         let (dx, dy) = (self.points[i][0] - from[0], self.points[i][1] - from[1]);
                         let d = dx * dx + dy * dy;
+                        // A NaN distance would stick as the best and keep the search going.
+                        if !d.is_finite() {
+                            continue;
+                        }
                         if best.is_none_or(|(bd, bi)| d < bd || (d == bd && i < bi)) {
                             best = Some((d, i));
                         }
@@ -115,6 +122,14 @@ impl GridIndex {
 mod tests {
     use super::*;
 
+    #[test]
+    fn points_at_no_finite_distance_are_never_returned() {
+        // The NaN point sits in the query's own cell, so it is the first candidate seen.
+        let pts = [[f64::NAN, 0.0], [3.0, 4.0]];
+        let idx = GridIndex::new(&pts, 1.0);
+        assert_eq!(idx.nearest([0.0, 0.0], &[true; 2]), Some(1));
+        assert_eq!(idx.nearest([0.0, 0.0], &[true, false]), None);
+    }
     #[test]
     fn nearest_alive_with_lowest_index_on_ties() {
         let pts = [[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [5.0, 5.0]];
