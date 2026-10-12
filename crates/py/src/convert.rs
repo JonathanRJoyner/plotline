@@ -20,8 +20,9 @@ pub fn runtime_error(e: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
-/// The Python exception for a session error. Every variant today is a refused input, so all are
-/// `ValueError`; the match is exhaustive so that a new variant has to be placed here.
+/// The Python exception for a session error: `ValueError` for a refused input, `RuntimeError` for
+/// a session that is not ready, such as a run started before an image was set. The match is
+/// exhaustive so that a new variant has to be placed here.
 pub fn session_error(e: SessionError) -> PyErr {
     match e {
         SessionError::Style(_)
@@ -31,8 +32,8 @@ pub fn session_error(e: SessionError) -> PyErr {
         | SessionError::Image(_)
         | SessionError::UnknownStyle(_)
         | SessionError::UnknownStage { .. }
-        | SessionError::NoPens
-        | SessionError::NoImage => value_error(e),
+        | SessionError::NoPens => value_error(e),
+        SessionError::NoImage => runtime_error(e),
     }
 }
 

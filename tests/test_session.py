@@ -102,7 +102,7 @@ def test_set_style_keeps_the_cache():
 
 
 def test_run_blocking_requires_an_image():
-    with pytest.raises(ValueError, match="no image"):
+    with pytest.raises(RuntimeError, match="no image"):
         Session().run_blocking()
 
 
@@ -144,16 +144,29 @@ def test_stats_use_the_speeds_edited_in_place():
     assert s.stats().estimated_seconds == pytest.approx(before.estimated_seconds + 1.0)
 
 
+def test_an_error_after_the_last_frame_ends_the_run_in_error(monkeypatch):
+    def broken(self):
+        raise OSError("drawing lost")
+
+    monkeypatch.setattr(_core.Session, "drawing", broken)
+    s = slow(Session(), frames=1)
+    with pytest.raises(OSError, match="drawing lost"):
+        s.run_blocking()
+    assert s.state == RunState.error and s.result is None
+    h = s.run()
+    assert h.wait(5) == RunState.error and isinstance(h.error, OSError) and h.result is None
+
+
 def test_exports_are_utf8_with_lf(tmp_path):
     s = Session()
     s.set_image(_core.synthetic_gradient(64, 48))
-    s.set_pens([Pen("Stift é", 0.3, "#000000")])
+    s.set_pens([Pen("Stift Ã©", 0.3, "#000000")])
     s.update("tone", resolution=64)
     s.run_blocking()
     s.export_svg(tmp_path / "o.svg")
     s.export_json(tmp_path / "o.json")
     svg = (tmp_path / "o.svg").read_bytes()
-    assert "é".encode() in svg and b"\r" not in svg
+    assert "Ã©".encode() in svg and b"\r" not in svg
     assert b"\r" not in (tmp_path / "o.json").read_bytes()
 
 

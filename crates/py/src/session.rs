@@ -130,7 +130,8 @@ impl Session {
         Ok(())
     }
 
-    /// Cancel the latest run and start a new one over a snapshot of the session.
+    /// Cancel the latest run and start a new one over a snapshot of the session. Raises
+    /// `RuntimeError` when no image is set.
     fn start(&mut self) -> PyResult<Run> {
         let run = self.inner.start().map_err(session_error)?;
         Ok(Run {

@@ -235,7 +235,7 @@ class Session:
         A run under way on a worker is cancelled and waited for first. Each frame goes through
         ``_deliver`` as it arrives. A failed stage raises ``RuntimeError`` with the engine's
         message and sets ``state`` to ``error``; a cancelled run raises ``Cancelled`` and sets it
-        to ``cancelled``. Either way ``result`` stays as it was. Raises ``ValueError`` when no
+        to ``cancelled``. Either way ``result`` stays as it was. Raises ``RuntimeError`` when no
         image is loaded.
         """
         return self._execute(self._start())
@@ -246,8 +246,8 @@ class Session:
         A run under way is cancelled and waited for first. The style, settings, canvas, pens and
         image are taken now, so later changes do not reach the run. The subscribers get its
         frames on the worker thread. Unlike ``run_blocking`` it raises no stage error: the run
-        ends in ``error`` and the handle keeps the exception. Raises ``ValueError`` when no image
-        is loaded.
+        ends in ``error`` and the handle keeps the exception. Raises ``RuntimeError`` when no
+        image is loaded.
         """
         handle = self._start()
         thread = threading.Thread(target=self._work, args=(handle,), daemon=True)
@@ -302,21 +302,23 @@ class Session:
         try:
             while (frame := run.next_frame()) is not None:
                 self._deliver(_frame(frame))
+            state = RunState(run.state())
+            if state is RunState.done:
+                # No newer run has started, so the engine's latest drawing is this run's.
+                self.result = result = _drawing(_have(self._core.drawing()))
+                handle._end(state, result)
+                return result
+            if state is RunState.cancelled:
+                handle._end(state)
+                raise Cancelled("the run was cancelled")
+            failure = RuntimeError(run.error())
+            handle._end(RunState.error, error=failure)
+            raise failure
         except BaseException as error:
-            handle._end(RunState.error, error=error)
+            # Anything raised before the handle ended, such as a subscriber's error, ends it here.
+            if handle.state is RunState.running:
+                handle._end(RunState.error, error=error)
             raise
-        state = RunState(run.state())
-        if state is RunState.done:
-            # No newer run has started, so the engine's latest drawing is this run's.
-            self.result = result = _drawing(_have(self._core.drawing()))
-            handle._end(state, result)
-            return result
-        if state is RunState.cancelled:
-            handle._end(state)
-            raise Cancelled("the run was cancelled")
-        failure = RuntimeError(run.error())
-        handle._end(RunState.error, error=failure)
-        raise failure
 
     def _deliver(self, frame: Frame) -> None:
         """Pass ``frame`` to the subscribers, unless less than ``1 / max_fps`` seconds have

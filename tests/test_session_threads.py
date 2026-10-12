@@ -109,5 +109,5 @@ def test_handle_cancel_and_wait_timeout():
 
 
 def test_run_requires_an_image():
-    with pytest.raises(ValueError, match="no image"):
+    with pytest.raises(RuntimeError, match="no image"):
         Session().run()
