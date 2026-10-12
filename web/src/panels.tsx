@@ -204,7 +204,7 @@ function num(label: string, unit: string, v: number, set: (v: number) => void) {
 }
 
 type SettingsProps = {
-  open: boolean; onClose: () => void;
+  opens: number;
   machine: Machine | null; error?: string; speeds: Speeds;
   onPick: (machine: Machine | null) => void; onEdit: (machine: Machine) => void; onSpeeds: (speeds: Speeds) => void;
 };
@@ -212,15 +212,14 @@ type SettingsProps = {
 // The setup that rarely changes, in a modal dialog: the machine, its pen lift and G-code, and the
 // speeds the time estimate uses (spec 2026-10-12-settings-dialog section 4). Changes apply as they
 // are made. Picking is told apart from editing because a pick also sets the page to the machine's
-// area.
-export function SettingsDialog({ open, onClose, machine, error, speeds, onPick, onEdit, onSpeeds }: SettingsProps): JSX.Element {
+// area. Each change of `opens` opens it; the dialog element alone knows whether it is open, so
+// nothing waits on its close event.
+export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, onSpeeds }: SettingsProps): JSX.Element {
   const ref = useRef<HTMLDialogElement>(null);
   const [section, setSection] = useState<(typeof SECTIONS)[number]>("Machine");
   useEffect(() => {
-    const d = ref.current!;
-    if (open && !d.open) d.showModal();
-    else if (!open && d.open) d.close();
-  }, [open]);
+    if (opens > 0 && !ref.current!.open) ref.current!.showModal();
+  }, [opens]);
   const value = machine === null ? "none" : "current";
   const choose = <p>Choose a machine first</p>;
   const fields = {
@@ -289,11 +288,10 @@ export function SettingsDialog({ open, onClose, machine, error, speeds, onPick, 
     ),
   }[section];
   return (
-    // Esc closes the dialog itself; its close event keeps the app's flag in step.
-    <dialog ref={ref} class="settings" aria-labelledby="settings-title" onClose={onClose}>
+    <dialog ref={ref} class="settings" aria-labelledby="settings-title">
       <header>
         <h2 id="settings-title"><Gear /> Settings</h2>
-        <button type="button" class="icon" title="Close" aria-label="Close" onClick={onClose}><X /></button>
+        <button type="button" class="icon" title="Close" aria-label="Close" onClick={() => ref.current!.close()}><X /></button>
       </header>
       <div class="body">
         <nav>

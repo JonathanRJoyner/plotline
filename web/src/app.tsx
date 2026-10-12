@@ -162,7 +162,7 @@ export function App() {
   const [hidden, setHidden] = useState(new Set<number>());
   const [showSource, setShowSource] = useState(false);
   const [showTravel, setShowTravel] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpens, setSettingsOpens] = useState(0);
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -271,7 +271,8 @@ export function App() {
   async function pickMachine(machine: Machine | null) {
     await call("setMachine", [machine], "machine");
     if (machine && state) {
-      await call("setCanvas", [{ ...state.canvas, width_mm: machine.area.width, height_mm: machine.area.height }]);
+      // Under "machine", so a refused page shows in the dialog rather than behind it.
+      await call("setCanvas", [{ ...state.canvas, width_mm: machine.area.width, height_mm: machine.area.height }], "machine");
     }
   }
 
@@ -327,7 +328,13 @@ export function App() {
             <Route /> Travel
           </label>
           <span class="spacer" />
-          <button type="button" onClick={() => setSettingsOpen(true)}><Gear /> Settings</button>
+          <button
+            type="button"
+            onClick={() => {
+              setErrors((es) => ({ ...es, machine: "" })); // an old refusal would show over a good machine
+              setSettingsOpens((n) => n + 1);
+            }}
+          ><Gear /> Settings</button>
           <ThemeButton />
         </div>
         {errors[""] && <p class="error">{errors[""]}</p>}
@@ -350,7 +357,7 @@ export function App() {
         <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
       </aside>
       <SettingsDialog
-        open={settingsOpen} onClose={() => setSettingsOpen(false)} machine={state.machine}
+        opens={settingsOpens} machine={state.machine}
         error={errors.machine} speeds={state.speeds} onPick={pickMachine}
         onEdit={(m) => call("setMachine", [m], "machine")} onSpeeds={(s) => call("setSpeeds", [s])}
       />

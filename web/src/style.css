@@ -142,6 +142,7 @@ button, .button, .chip {
 button:hover:not(:disabled), .button:hover, .chip:hover { background: var(--hover); }
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+input:disabled { opacity: 0.55; cursor: not-allowed; }
 button svg, .button svg, .chip svg { width: 15px; height: 15px; flex: none; }
 button.primary { color: var(--on-accent); background: var(--accent); border-color: transparent; }
 button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
