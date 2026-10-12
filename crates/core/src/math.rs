@@ -88,19 +88,23 @@ pub fn blur(values: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32>
 }
 
 /// Resample a non-empty row-major `sw x sh` grid to `tw x th` bilinearly. Target pixel `j` takes
-/// its value at source index `(j + 0.5) * s / t - 0.5` on each axis, so pixel centres line up;
-/// that index is computed in f64 and clamped into the source. The interpolation is in f64, as the
-/// sum over the four neighbours of value times row weight times column weight, where the lower
-/// weight is `1 - frac` and the upper is `1 - lower`; the result is cast to f32.
+/// its value at source index `c = (j + 0.5) * s / t - 0.5` on each axis, so pixel centres line
+/// up. Everything is f64 until the final cast to f32: the lower weight is `1 - (c - floor(c))` and
+/// the upper is `1 - lower`, both from the unclamped `c`; the two taps `floor(c)` and
+/// `floor(c) + 1` are clamped into the source, so past an edge both read the edge sample; the value
+/// is the sum over the four taps of sample times row weight times column weight. This matches
+/// the Python engine's resize bit for bit.
 pub fn resample(src: &[f32], sw: usize, sh: usize, tw: usize, th: usize) -> Vec<f32> {
-    // Per target index: the source index below, the one above, and their weights.
+    // Per target index: the two taps and their weights.
     let taps = |s: usize, t: usize| -> Vec<(usize, usize, f64, f64)> {
+        let last = (s - 1) as f64;
         (0..t)
             .map(|j| {
-                let c = ((j as f64 + 0.5) * s as f64 / t as f64 - 0.5).clamp(0.0, (s - 1) as f64);
-                let i0 = c.floor() as usize;
-                let w0 = 1.0 - (c - i0 as f64);
-                (i0, (i0 + 1).min(s - 1), w0, 1.0 - w0)
+                let c = (j as f64 + 0.5) * s as f64 / t as f64 - 0.5;
+                let f = c.floor();
+                let w0 = 1.0 - (c - f);
+                let (i0, i1) = (f.clamp(0.0, last), (f + 1.0).clamp(0.0, last));
+                (i0 as usize, i1 as usize, w0, 1.0 - w0)
             })
             .collect()
     };
@@ -123,19 +127,39 @@ pub fn resample(src: &[f32], sw: usize, sh: usize, tw: usize, th: usize) -> Vec<
 /// is one block, and pixels past the last whole block are dropped. Returns the averages and their
 /// width and height.
 ///
-/// Everything is f32, summed in the order the Python engine's float32 block mean uses, so the two
-/// engines agree bit for bit: each row of a block is summed with [`pairwise_sum`], the row sums are
-/// added in order starting from 0, and the total is divided by the block's pixel count.
+/// Everything is f32, summed in the order numpy's float32 mean over the block axes uses, so the
+/// result matches the Python engine bit for bit when it passes a contiguous array. A block is
+/// split into groups of whole rows; each group's values, in row-major order, are summed with
+/// [`pairwise_sum`], the group sums are added in order from 0, and the total is divided by the
+/// block's pixel count. The group is:
+/// - one row when there is more than one block across;
+/// - the whole block when there is one block across and it spans the source rows, since numpy
+///   then sums the block as one run;
+/// - `8192 / bx` rows when there is one block across but the source is wider (the ragged column
+///   is dropped), since numpy then reads the block through its 8192-value buffer in whole rows.
 pub fn block_average(src: &[f32], w: usize, h: usize, k: usize) -> (Vec<f32>, usize, usize) {
     let (by, bx) = (k.min(h), k.min(w));
     let (nh, nw) = (h / by, w / bx);
+    let group = if nw > 1 {
+        1
+    } else if bx == w {
+        by
+    } else {
+        (8192 / bx).max(1)
+    };
     let count = (by * bx) as f32;
     let mut out = Vec::with_capacity(nh * nw);
+    let mut run = Vec::with_capacity(group * bx);
     for row in 0..nh {
         for col in 0..nw {
+            let rows = row * by..(row + 1) * by;
             let mut sum = 0.0f32;
-            for y in row * by..(row + 1) * by {
-                sum += pairwise_sum(&src[y * w + col * bx..y * w + (col + 1) * bx]);
+            for start in rows.clone().step_by(group) {
+                run.clear();
+                for y in start..(start + group).min(rows.end) {
+                    run.extend_from_slice(&src[y * w + col * bx..y * w + (col + 1) * bx]);
+                }
+                sum += pairwise_sum(&run);
             }
             out.push(sum / count);
         }
@@ -190,17 +214,9 @@ mod tests {
             "asin", "acos", "tanh", "exp2", "exp_m1", "ln_1p", "log2", "log10", "hypot", "cbrt",
             "powi",
         ];
-        let qualified = [
-            "sin", "exp", "ln", "log", "powf", "hypot", "atan2", "cos", "tan",
-        ];
         let calls: Vec<String> = methods
             .iter()
-            .map(|name| format!(".{name}("))
-            .chain(
-                qualified
-                    .iter()
-                    .flat_map(|name| [format!("f64::{name}("), format!("f32::{name}(")]),
-            )
+            .flat_map(|name| [".", "f64::", "f32::"].map(|prefix| format!("{prefix}{name}(")))
             .collect();
         let mut bad = Vec::new();
         for entry in std::fs::read_dir(dir).unwrap() {
@@ -271,6 +287,44 @@ mod tests {
             1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
         ];
         assert_eq!(block_average(&src, 6, 2, 3), (vec![5.0, 8.0], 2, 1));
+    }
+    #[test]
+    fn resample_takes_weights_from_the_unclamped_coordinate() {
+        // 2 x 1 -> 4 x 10, upsampling; bits from the Python engine's resize. Every target row reads
+        // the one source row, but the row weights come from the unclamped row coordinate, so rows 3
+        // and 6 land 1 ulp lower in column 2; clamping the coordinate first gives 0x42c4edb8 there.
+        let src = [0.0, 919.0 / 7.0];
+        let mut want = [0x0_u32, 0x42034925, 0x42c4edb8, 0x43034925].repeat(10);
+        want[3 * 4 + 2] = 0x42c4edb7;
+        want[6 * 4 + 2] = 0x42c4edb7;
+        let got: Vec<u32> = resample(&src, 2, 1, 4, 10)
+            .iter()
+            .map(|v| v.to_bits())
+            .collect();
+        assert_eq!(got, want);
+    }
+    #[test]
+    fn block_average_sums_a_3x40_strip_with_k_20_as_one_run_per_block() {
+        // One block across spanning the rows: numpy sums each 20 x 3 block in one pairwise pass.
+        // Bits from the Python engine; a row-by-row sum gives 0x428d1861 for the first block.
+        let src: Vec<f32> = (0..120).map(|i| ((i * 7919) % 1000) as f32 / 7.0).collect();
+        let (out, w, h) = block_average(&src, 3, 40, 20);
+        assert_eq!((w, h), (1, 2));
+        assert_eq!(
+            out.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            [0x428d1862, 0x428f0000]
+        );
+    }
+    #[test]
+    fn block_average_reads_a_150x100_ragged_column_with_k_100_in_buffered_rows() {
+        // One 100 x 100 block across a 150-wide source: numpy reads it in runs of 81 whole rows.
+        // Bits from the Python engine; one pass over the whole block gives 0x428eb6dc.
+        let src: Vec<f32> = (0..15000)
+            .map(|i| ((i * 7919) % 1000) as f32 / 7.0)
+            .collect();
+        let (out, w, h) = block_average(&src, 150, 100, 100);
+        assert_eq!((w, h), (1, 1));
+        assert_eq!(out[0].to_bits(), 0x428eb6db);
     }
     #[test]
     fn block_average_matches_the_python_engine_bits() {
