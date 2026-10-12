@@ -192,8 +192,9 @@ impl Session {
     }
 
     /// Cancel the latest run and return a new one over a snapshot of the style, the settings, the
-    /// image, the canvas and the pens, sharing the cache and the result slot. Later changes to the
-    /// session do not reach the run. Fails when no image is set.
+    /// image, the canvas and the pens, sharing the cache and the result slot. The slot shows
+    /// [`RunState::Running`] with no error until the new run ends, and keeps the last drawing.
+    /// Later changes to the session do not reach the run. Fails when no image is set.
     pub fn start(&mut self) -> Result<Run, SessionError> {
         let image = self.image.clone().ok_or(SessionError::NoImage)?;
         self.cancel.store(true, Ordering::Relaxed);
@@ -201,6 +202,8 @@ impl Session {
         let generation = {
             let mut shared = self.shared.lock().unwrap();
             shared.generation += 1;
+            shared.state = RunState::Running;
+            shared.error = None;
             shared.generation
         };
         Ok(Run::new(
@@ -267,10 +270,11 @@ impl Session {
     /// Apply the preset `v`: its style, which resets every stage to its defaults, its canvas, its
     /// pens, then its settings stage by stage in the style's order, so a key the preset leaves out
     /// keeps its default. Returns one warning for each setting a stage does not have, then one for
-    /// each stage the style does not have, in the preset's key order; all of them are dropped.
+    /// each stage the style does not have, sorted by name; all of them are dropped.
     ///
     /// Fails before anything changes when [`presets::parse`] rejects `v`. An unknown style or a
     /// refused setting fails where it is found, after the earlier steps have been applied.
+    /// Warnings gathered before an error are dropped with the `Err`.
     pub fn load_preset(&mut self, v: &Value) -> Result<Vec<String>, SessionError> {
         let data = presets::parse(v)?;
         self.set_style(&data.style)?;
@@ -372,8 +376,24 @@ mod tests {
         let mut second = s.start().unwrap();
         assert!(first.next_frame().is_none());
         assert_eq!(first.state(), RunState::Cancelled);
+        assert_eq!(s.state(), RunState::Running); // the cancelled run left the slot alone
         while second.next_frame().is_some() {}
         assert_eq!(s.state(), RunState::Done);
+    }
+    #[test]
+    fn start_shows_running_with_no_error_before_the_first_frame() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(gradient(8, 8));
+        s.set_style("_slow").unwrap();
+        s.update("b", &json!({"frames": 3, "delay_ms": 0, "fail_after": 1}))
+            .unwrap();
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+        assert_eq!(s.state(), RunState::Error);
+        assert!(s.error().is_some());
+        let _run = s.start().unwrap();
+        assert_eq!(s.state(), RunState::Running);
+        assert!(s.error().is_none());
     }
     #[test]
     fn second_run_with_same_settings_is_all_cached() {
