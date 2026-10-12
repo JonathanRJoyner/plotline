@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use js_sys::{Array, Float64Array, Uint32Array};
+use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::{
     image, registry, synthetic, Canvas, Drawing, Frame, Layer, Pen, RunState, SessionError,
     DEFAULT_CACHE_BYTES,
@@ -93,6 +93,18 @@ impl Session {
     pub fn update(&mut self, stage: &str, json: &str) -> Result<(), JsError> {
         let patch: Value = serde_json::from_str(json)?;
         Ok(self.inner.update(stage, &patch)?)
+    }
+
+    /// Time plots at the `{"draw_mm_s", "travel_mm_s", "pen_lift_s"}` in `json`.
+    #[wasm_bindgen(js_name = setSpeeds)]
+    pub fn set_speeds(&mut self, json: &str) -> Result<(), JsError> {
+        self.inner.set_speeds(serde_json::from_str(json)?);
+        Ok(())
+    }
+
+    /// The speeds the stats time a plot at, as `{"draw_mm_s", "travel_mm_s", "pen_lift_s"}` JSON.
+    pub fn speeds(&self) -> String {
+        json!(self.inner.speeds()).to_string()
     }
 
     /// Cancel the latest run and start a new one over a snapshot of the session. Fails when no
@@ -274,6 +286,35 @@ impl DrawingHandle {
     #[wasm_bindgen(js_name = layerPen)]
     pub fn layer_pen(&self, i: usize) -> Result<String, JsError> {
         Ok(json!(self.layer(i)?.pen).to_string())
+    }
+
+    /// The page the drawing was made for, as `{"width_mm", "height_mm", "margin_mm", "fit"}` JSON.
+    pub fn canvas(&self) -> String {
+        json!(self.drawing.canvas).to_string()
+    }
+
+    /// The page area the tone map covers, as `{"x", "y", "w", "h", "width_px", "height_px"}` JSON
+    /// with the rect in mm, or `undefined` when the drawing has no tone map.
+    #[wasm_bindgen(js_name = toneRect)]
+    pub fn tone_rect(&self) -> Option<String> {
+        let tone = self.drawing.tone.as_ref()?;
+        let [x, y, w, h] = tone.rect_mm();
+        Some(
+            json!({"x": x, "y": y, "w": w, "h": h, "width_px": tone.width, "height_px": tone.height})
+                .to_string(),
+        )
+    }
+
+    /// The tone map as `width * height` grey bytes, row by row: 255 is no ink and 0 is full ink.
+    #[wasm_bindgen(js_name = toneInk)]
+    pub fn tone_ink(&self) -> Option<Uint8Array> {
+        let tone = self.drawing.tone.as_ref()?;
+        let bytes: Vec<u8> = tone
+            .ink
+            .iter()
+            .map(|ink| (255.0 * (1.0 - ink)).round().clamp(0.0, 255.0) as u8)
+            .collect();
+        Some(Uint8Array::from(&bytes[..]))
     }
 }
 

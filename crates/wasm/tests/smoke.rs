@@ -16,6 +16,29 @@ fn grid_matches_the_golden_file() {
         n += 1;
     }
     assert!(n >= 4);
+    s.set_speeds(r#"{"draw_mm_s":10,"travel_mm_s":20,"pen_lift_s":0.5}"#)
+        .unwrap();
+    let speeds: serde_json::Value = serde_json::from_str(&s.speeds()).unwrap();
+    assert_eq!(speeds["draw_mm_s"], 10.0);
+    let stats: serde_json::Value = serde_json::from_str(&s.stats().unwrap()).unwrap();
+    assert!(stats["estimated_seconds"].as_f64().unwrap() > 0.0);
+    let d = s.drawing().unwrap();
+    let canvas: serde_json::Value = serde_json::from_str(&d.canvas()).unwrap();
+    assert_eq!(canvas["width_mm"], 100.0);
+    let rect: serde_json::Value = serde_json::from_str(&d.tone_rect().unwrap()).unwrap();
+    assert_eq!(
+        (
+            rect["width_px"].as_u64().unwrap(),
+            rect["height_px"].as_u64().unwrap()
+        ),
+        (64, 48)
+    );
+    // The 4:3 picture fits the 90 by 65 mm drawing rect at 86.67 mm wide, centred.
+    assert!((rect["x"].as_f64().unwrap() - 20.0 / 3.0).abs() < 1e-9);
+    assert_eq!(rect["y"], 5.0);
+    let ink = d.tone_ink().unwrap();
+    assert_eq!(ink.length(), 64 * 48);
+    assert!(ink.get_index(0) < ink.get_index(63)); // the gradient is black at the left, white at the right
     let actual: serde_json::Value = serde_json::from_str(&s.json().unwrap()).unwrap();
     let (a, e) = (&actual["layers"][0]["paths"], &golden["layers"][0]["paths"]);
     assert_eq!(a.as_array().unwrap().len(), e.as_array().unwrap().len());
