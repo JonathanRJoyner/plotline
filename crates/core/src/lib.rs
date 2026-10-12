@@ -1,5 +1,6 @@
 //! Core engine for plotline.
 
+pub mod settings;
 pub mod types;
 
 /// The crate version, in Cargo's semver form.
