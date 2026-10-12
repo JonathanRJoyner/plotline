@@ -9,7 +9,9 @@ fn grid_matches_the_golden_file() {
     s.set_canvas(r#"{"width_mm":100,"height_mm":75,"margin_mm":5,"fit":"fit"}"#)
         .unwrap();
     s.update("tone", r#"{"resolution":64}"#).unwrap();
-    s.update("points", r#"{"threshold":0.6}"#).unwrap();
+    // The golden file pins the 2 mm spacing it was checked against the Python engine at.
+    s.update("points", r#"{"threshold":0.6,"spacing_mm":2}"#)
+        .unwrap();
     let mut run = s.start().unwrap();
     let mut n = 0;
     while run.next_frame().is_some() {
