@@ -28,6 +28,7 @@ from plotline.core.settings import Settings
 from plotline.core.stage import Cancelled, CancelToken, Frame, RunContext
 from plotline.core.types import Canvas, Pen, Result
 from plotline.session import images
+from plotline.session.stats import Speeds, Stats, compute_stats
 
 
 class RunState(StrEnum):
@@ -103,7 +104,7 @@ class Session:
     caps how often frames are delivered to the subscribers. ``run`` works on a worker thread and
     ``run_blocking`` in the caller's. Starting either one stops the run before it, so at most one
     is active. A session is not safe for concurrent changes, so a front end should call it from
-    one thread.
+    one thread. ``speeds``, which ``stats`` reads, has no setter and is edited in place.
     """
 
     def __init__(self, cache_bytes: int = 512 * 2**20, max_fps: float = 15.0) -> None:
@@ -114,6 +115,7 @@ class Session:
         self.settings: dict[str, Settings] = self.style.defaults()
         self.cache = StageCache(cache_bytes)
         self.result: Result | None = None
+        self.speeds = Speeds()
         self.max_fps = max_fps
         self._handle: RunHandle | None = None
         self._subscribers: dict[object, Callable[[Frame], None]] = {}
@@ -316,3 +318,8 @@ class Session:
         Raises ``RuntimeError`` when there is no result."""
         text = json.dumps(self.json_dict(), indent=0) + "\n"
         Path(path).write_text(text, encoding="utf-8", newline="\n")
+
+    def stats(self) -> Stats:
+        """The path count, pen-down and pen-up distances and estimated plot time of the result at
+        ``speeds``. Raises ``RuntimeError`` when there is no result."""
+        return compute_stats(self._require_result(), self.speeds)
