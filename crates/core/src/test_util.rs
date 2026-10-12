@@ -8,9 +8,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::runner::Run;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
-use crate::types::{Paths, Points, ToneMap};
+use crate::types::{Canvas, Fit, Image, Paths, Pen, Points, ToneMap};
 
 /// `n` points at the origin.
 pub(crate) fn points(n: usize) -> Artifact {
@@ -35,6 +36,27 @@ pub(crate) fn tone() -> Artifact {
         mm_per_px: 1.0,
         origin_mm: [0.0, 0.0],
     }))
+}
+
+/// Run roots: a 4 by 4 flat grey image, a 100 mm square page with no margin, and one black pen.
+pub(crate) fn roots() -> [Artifact; 3] {
+    let image = Image {
+        width: 4,
+        height: 4,
+        rgb: vec![0.5; 4 * 4 * 3],
+    };
+    let canvas = Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap();
+    let pen = Pen::new("Black 0.3", 0.3, "#000000").unwrap();
+    [
+        Artifact::Image(Arc::new(image)),
+        Artifact::Canvas(Arc::new(canvas)),
+        Artifact::Pens(Arc::new(vec![pen])),
+    ]
+}
+
+/// Every frame `run` gives until it stops.
+pub(crate) fn drain(run: &mut Run) -> Vec<Frame> {
+    std::iter::from_fn(|| run.next_frame()).collect()
 }
 
 /// The [`Spy`]'s settings; the one knob does nothing but take part in validation and cache keys.
