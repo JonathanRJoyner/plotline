@@ -17,6 +17,8 @@ Out of scope: machine options in the Python CLI and the MCP (the binding stays a
 
 ## 2. The machine
 
+Superseded in part by [spec 7](2026-10-12-settings-dialog-design.md): the area is now a corner and a size, and there is no bed.
+
 ```json
 {"name": "Test printer",
  "bed_mm": [256, 256],

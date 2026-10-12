@@ -1,8 +1,9 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { Download, FolderOpen, Plus, Save, X } from "lucide-preact";
+import { Download, FolderOpen, Plus, Save, Settings as Gear, X } from "lucide-preact";
 import type { JSX } from "preact";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { Area, Canvas, Machine, Pen, Stats } from "./events";
 import type { Speeds, State } from "./protocol";
 
@@ -106,33 +107,6 @@ export function PensPanel({ pens, bank, hidden, error, drawn, onChange, onToggle
   );
 }
 
-const SPEEDS: [keyof Speeds, string, string, number][] = [
-  ["draw_mm_s", "Draw", "mm/s", 0.1], ["travel_mm_s", "Travel", "mm/s", 0.1], ["pen_lift_s", "Pen lift", "s", 0],
-];
-
-export function SpeedsPanel({ speeds, onChange }: { speeds: Speeds; onChange: (speeds: Speeds) => void }): JSX.Element {
-  return (
-    <fieldset>
-      <legend>Plot time</legend>
-      {SPEEDS.map(([key, label, unit, min]) => (
-        <label>
-          {label}{" "}
-          <input
-            type="number" min={min} step="any" value={speeds[key]}
-            onChange={(e) => {
-              // The engine takes any number, but a speed at or below zero leaves no estimate.
-              const v = e.currentTarget.valueAsNumber;
-              if (Number.isFinite(v) && (min === 0 ? v >= 0 : v > 0)) onChange({ ...speeds, [key]: v });
-              else e.currentTarget.value = String(speeds[key]);
-            }}
-          />{" "}
-          {unit}
-        </label>
-      ))}
-    </fieldset>
-  );
-}
-
 export function StatsPanel({ stats }: { stats: Stats | null }): JSX.Element {
   const t = Math.round(stats?.estimated_seconds ?? 0);
   if (!stats) return <p class="stats">No drawing yet</p>;
@@ -218,29 +192,28 @@ export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: Exp
 }
 
 type NumberKey = "z_down_mm" | "z_up_mm" | "z_safe_mm" | "draw_feed" | "travel_feed" | "z_feed" | "settle_ms";
-const MACHINE_FIELDS: [NumberKey, string, string][] = [
-  ["z_down_mm", "Pen down Z", "mm"], ["z_up_mm", "Pen up Z", "mm"], ["z_safe_mm", "Safe Z", "mm"],
-  ["draw_feed", "Draw feed", "mm/min"], ["travel_feed", "Travel feed", "mm/min"], ["z_feed", "Z feed", "mm/min"],
-  ["settle_ms", "Settle", "ms"],
+const PEN_LIFT: [NumberKey, string, string, string][] = [
+  ["z_down_mm", "Pen down Z", "mm", "The Z the pen draws at."],
+  ["z_up_mm", "Pen up Z", "mm", "The Z it travels at between paths."],
+  ["z_safe_mm", "Safe Z", "mm", "The Z each file lifts to before its first move and before its end lines."],
+  ["z_feed", "Z feed", "mm/min", "How fast the pen moves up and down."],
+  ["settle_ms", "Settle", "ms", "The pause after each Z move."],
 ];
-const AREA_KEYS: (keyof Area)[] = ["x_min", "x_max", "y_min", "y_max"];
+const FEEDS: [NumberKey, string][] = [["draw_feed", "Draw"], ["travel_feed", "Travel"]];
+const AREA: [keyof Area, string][] = [["width", "Width"], ["height", "Height"], ["x", "Offset X"], ["y", "Offset Y"]];
+const SPEEDS: [keyof Speeds, string, string, number][] = [
+  ["draw_mm_s", "Draw", "mm/s", 0.1], ["travel_mm_s", "Travel", "mm/s", 0.1], ["pen_lift_s", "Pen lift", "s", 0],
+];
+const SECTIONS = ["Machine", "Pen lift", "G-code", "Plot time"] as const;
 // A starting point to edit, not a real machine: its values must be replaced with the machine's own.
 const NEW_MACHINE: Machine = {
-  name: "My machine", bed_mm: [200, 200], area: { x_min: 0, x_max: 200, y_min: 0, y_max: 200 },
+  name: "My machine", area: { x: 0, y: 0, width: 200, height: 200 },
   z_down_mm: 0, z_up_mm: 5, z_safe_mm: 10, draw_feed: 1500, travel_feed: 3000, z_feed: 600, settle_ms: 0,
   start_gcode: "", end_gcode: "",
 };
 
-type MachineProps = {
-  machine: Machine | null; error?: string;
-  onPick: (machine: Machine | null) => void; onEdit: (machine: Machine) => void;
-};
-
-// A select to drop the machine or start a new one, then the machine's fields. Picking is told apart
-// from editing because a pick also sets the page to the machine's area.
-export function MachinePanel({ machine, error, onPick, onEdit }: MachineProps): JSX.Element {
-  const value = machine === null ? "none" : "current";
-  const num = (label: string, unit: string, v: number, set: (v: number) => void) => (
+function num(label: string, unit: string, v: number, set: (v: number) => void) {
+  return (
     <label>
       {label}{" "}
       <input
@@ -250,37 +223,107 @@ export function MachinePanel({ machine, error, onPick, onEdit }: MachineProps): 
       {unit}
     </label>
   );
+}
+
+type SettingsProps = {
+  opens: number;
+  machine: Machine | null; error?: string; speeds: Speeds;
+  onPick: (machine: Machine | null) => void; onEdit: (machine: Machine) => void; onSpeeds: (speeds: Speeds) => void;
+};
+
+// The setup that rarely changes, in a modal dialog: the machine, its pen lift and G-code, and the
+// speeds the time estimate uses (spec 2026-10-12-settings-dialog section 4). Changes apply as they
+// are made. Picking is told apart from editing because a pick also sets the page to the machine's
+// area. Each change of `opens` opens it; the dialog element alone knows whether it is open, so
+// nothing waits on its close event.
+export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, onSpeeds }: SettingsProps): JSX.Element {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [section, setSection] = useState<(typeof SECTIONS)[number]>("Machine");
+  useEffect(() => {
+    if (opens > 0 && !ref.current!.open) ref.current!.showModal();
+  }, [opens]);
+  const value = machine === null ? "none" : "current";
+  const choose = <p>Choose a machine first</p>;
+  const fields = {
+    "Machine": (
+      <>
+        <label>
+          Machine{" "}
+          <select
+            value={value}
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              if (v === "none") onPick(null);
+              else if (v === "new") onPick(NEW_MACHINE);
+            }}
+          >
+            <option value="none">None: export SVG for your plotter's software</option>
+            {machine && <option value="current">{machine.name}</option>}
+            <option value="new">New machine</option>
+          </select>
+        </label>
+        {machine && (
+          <>
+            <label>Name <input type="text" value={machine.name} onChange={(e) => onEdit({ ...machine, name: e.currentTarget.value })} /></label>
+            <h3>Drawable area</h3>
+            {AREA.map(([k, label]) => num(label, "mm", machine.area[k], (v) => onEdit({ ...machine, area: { ...machine.area, [k]: v } })))}
+            <p class="help">Offset is the machine position of the area's corner with the smallest X and Y. The page is centred in the area.</p>
+            <h3>Feeds</h3>
+            {FEEDS.map(([k, label]) => num(label, "mm/min", machine[k], (v) => onEdit({ ...machine, [k]: v })))}
+          </>
+        )}
+      </>
+    ),
+    "Pen lift": machine ? PEN_LIFT.map(([k, label, unit, help]) => (
+      <>
+        {num(label, unit, machine[k], (v) => onEdit({ ...machine, [k]: v }))}
+        <p class="help">{help}</p>
+      </>
+    )) : choose,
+    "G-code": machine ? (
+      <>
+        <label>Start <textarea rows={6} value={machine.start_gcode} onChange={(e) => onEdit({ ...machine, start_gcode: e.currentTarget.value })} /></label>
+        <label>End <textarea rows={6} value={machine.end_gcode} onChange={(e) => onEdit({ ...machine, end_gcode: e.currentTarget.value })} /></label>
+        <p class="help">plotline writes G21 and G90 before the start lines, and lifts to safe Z before the end lines. Home the machine before mounting the pen: the files have no G28.</p>
+      </>
+    ) : choose,
+    "Plot time": (
+      <>
+        {SPEEDS.map(([key, label, unit, min]) => (
+          <label>
+            {label}{" "}
+            <input
+              type="number" min={min} step="any" disabled={machine !== null}
+              value={machine ? Number(speeds[key].toFixed(3)) : speeds[key]}
+              onChange={(e) => {
+                // The engine takes any number, but a speed at or below zero leaves no estimate.
+                const v = e.currentTarget.valueAsNumber;
+                if (Number.isFinite(v) && (min === 0 ? v >= 0 : v > 0)) onSpeeds({ ...speeds, [key]: v });
+                else e.currentTarget.value = String(speeds[key]);
+              }}
+            />{" "}
+            {unit}
+          </label>
+        ))}
+        {machine && <p class="help">From the machine's feeds and pen lift.</p>}
+      </>
+    ),
+  }[section];
   return (
-    <details class="panel">
-      <summary>G-code (optional)</summary>
-      <label>
-        Machine
-        <select
-          class="wide"
-          value={value}
-          onChange={(e) => {
-            const v = e.currentTarget.value;
-            if (v === "none") onPick(null);
-            else if (v === "new") onPick(NEW_MACHINE);
-          }}
-        >
-          <option value="none">None: export SVG for your plotter's software</option>
-          {machine && <option value="current">{machine.name}</option>}
-          <option value="new">New machine</option>
-        </select>
-      </label>
-      {error && <p class="error">{error}</p>}
-      {machine && (
-        <>
-          <label>Name <input type="text" value={machine.name} onChange={(e) => onEdit({ ...machine, name: e.currentTarget.value })} /></label>
-          {num("Bed width", "mm", machine.bed_mm[0], (v) => onEdit({ ...machine, bed_mm: [v, machine.bed_mm[1]] }))}
-          {num("Bed height", "mm", machine.bed_mm[1], (v) => onEdit({ ...machine, bed_mm: [machine.bed_mm[0], v] }))}
-          {AREA_KEYS.map((k) => num(`Area ${k.replace("_", " ")}`, "mm", machine.area[k], (v) => onEdit({ ...machine, area: { ...machine.area, [k]: v } })))}
-          {MACHINE_FIELDS.map(([k, label, unit]) => num(label, unit, machine[k], (v) => onEdit({ ...machine, [k]: v })))}
-          <label>Start G-code <textarea rows={2} value={machine.start_gcode} onChange={(e) => onEdit({ ...machine, start_gcode: e.currentTarget.value })} /></label>
-          <label>End G-code <textarea rows={2} value={machine.end_gcode} onChange={(e) => onEdit({ ...machine, end_gcode: e.currentTarget.value })} /></label>
-        </>
-      )}
-    </details>
+    <dialog ref={ref} class="settings" aria-labelledby="settings-title">
+      <header>
+        <h2 id="settings-title"><Gear /> Settings</h2>
+        <button type="button" class="icon" title="Close" aria-label="Close" onClick={() => ref.current!.close()}><X /></button>
+      </header>
+      <div class="body">
+        <nav>
+          {SECTIONS.map((s) => <button type="button" aria-current={s === section ? "true" : undefined} onClick={() => setSection(s)}>{s}</button>)}
+        </nav>
+        <div class="fields">
+          {error && <p class="error">{error}</p>}
+          {fields}
+        </div>
+      </div>
+    </dialog>
   );
 }

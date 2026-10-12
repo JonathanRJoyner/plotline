@@ -122,7 +122,7 @@ mod tests {
     /// Walk `gcode` the way a strict downstream checker does and panic at the first unsafe line:
     /// only the allowed commands, G21 and G90 before any move, no line moving X/Y and Z together,
     /// the first X/Y move only once Z is at the safe height, every X/Y below the safe height
-    /// inside the area, Z never below the pen-down height, and X/Y inside the bed.
+    /// inside the area, and Z never below the pen-down height.
     fn check(gcode: &str, m: &Machine) {
         const ALLOWED: [&str; 10] = [
             "G0", "G1", "G4", "G21", "G90", "M104", "M140", "M400", "M106", "M107",
@@ -168,10 +168,6 @@ mod tests {
                             "line {n}: first X/Y move before the lift: {raw}"
                         );
                         moved = true;
-                        assert!(
-                            0.0 <= x && x <= m.bed_mm[0] && 0.0 <= y && y <= m.bed_mm[1],
-                            "line {n}: outside the bed: {raw}"
-                        );
                         assert!(
                             safe || m.area.contains([x, y], 1e-6),
                             "line {n}: outside the area with the pen low: {raw}"

@@ -2,12 +2,12 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
-import { Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Sparkles, Spline, Square, Sun } from "lucide-preact";
+import { Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Spline, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { FrameEvent, Machine, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
-import { ExportPanel, MachinePanel, PagePanel, PensPanel, PresetsPanel, SpeedsPanel, StatsPanel, StatusBar } from "./panels";
+import { ExportPanel, PagePanel, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
@@ -124,11 +124,12 @@ function Pens({ status, ...props }: Omit<Parameters<typeof PensPanel>[0], "drawn
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
+  onSettings: () => void;
 };
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, ...preview }: RunViewProps) {
+function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, onSettings, ...preview }: RunViewProps) {
   const { run, stats } = useStatus(status);
   const [frame, setFrame] = useState<FrameEvent | null>(null);
   const [result, setResult] = useState<ResultEvent | null>(null);
@@ -201,6 +202,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
         </span>
         <span class="group end">
           <button type="button" disabled={stats === null} onClick={onSvg}><Download /> Export SVG</button>
+          <button type="button" onClick={onSettings}><Gear /> Settings</button>
           <ThemeButton />
         </span>
       </div>
@@ -237,6 +239,7 @@ export function App() {
   const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
   const [hidden, setHidden] = useState(new Set<number>());
   const [help, setHelp] = useState(helpShown);
+  const [settingsOpens, setSettingsOpens] = useState(0);
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -345,8 +348,8 @@ export function App() {
   async function pickMachine(machine: Machine | null) {
     await call("setMachine", [machine], "machine");
     if (machine && state) {
-      const { x_min, x_max, y_min, y_max } = machine.area;
-      await call("setCanvas", [{ ...state.canvas, width_mm: x_max - x_min, height_mm: y_max - y_min }], "page");
+      // Under "machine", so a refused page shows in the dialog rather than behind it.
+      await call("setCanvas", [{ ...state.canvas, width_mm: machine.area.width, height_mm: machine.area.height }], "machine");
     }
   }
 
@@ -386,6 +389,10 @@ export function App() {
           firstPen={state.pens[0]} hasImage={state.image} onOpen={openImage}
           error={errors[""] || (errors.image && `Could not open the image (${errors.image}).${state.image ? " The previous image is still open." : ""}`)}
           onSample={() => call("sample", [], "image")} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
+          onSettings={() => {
+            setErrors((es) => ({ ...es, machine: "" })); // an old refusal would show over a good machine
+            setSettingsOpens((n) => n + 1);
+          }}
         />
       </main>
       <aside>
@@ -399,14 +406,12 @@ export function App() {
           })}
         />
         <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
-        <SpeedsPanel speeds={state.speeds} onChange={(s) => call("setSpeeds", [s])} />
         <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
-        {/* Last and collapsed: a plotter driven from SVG never needs it. */}
-        <MachinePanel
-          machine={state.machine} error={errors.machine}
-          onPick={pickMachine} onEdit={(m) => call("setMachine", [m], "machine")}
-        />
       </aside>
+      <SettingsDialog
+        opens={settingsOpens} machine={state.machine} error={errors.machine} speeds={state.speeds} onPick={pickMachine}
+        onEdit={(m) => call("setMachine", [m], "machine")} onSpeeds={(s) => call("setSpeeds", [s])}
+      />
     </div>
   );
 }
