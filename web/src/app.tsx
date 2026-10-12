@@ -131,6 +131,9 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
   const [showTravel, setShowTravel] = useState(false);
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [fits, setFits] = useState(0);
+  // The run Stop was pressed for: a stage stops between steps, so the run can stay running a while.
+  const [stopFor, setStopFor] = useState(0);
+  const stopping = run.state === "running" && stopFor === run.id;
   const latest = useRef(0);
   useEffect(() => {
     engine.onEvent = (e) => {
@@ -172,7 +175,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
         </span>
         <span class="group">
           <button type="button" class="primary" disabled={!preview.hasImage} onClick={onRun}><Play /> Run</button>
-          <button type="button" disabled={run.state !== "running"} onClick={onStop}><Square /> Stop</button>
+          <button type="button" disabled={run.state !== "running" || stopping} onClick={() => { setStopFor(run.id); onStop(); }}><Square /> Stop</button>
         </span>
         <span class="group">
           <label class="chip">
@@ -201,7 +204,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
         />
       </div>
       <footer>
-        <StatusBar stages={stages} progress={progress} run={run} />
+        <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
         <StatsPanel stats={stats} />
       </footer>
     </>

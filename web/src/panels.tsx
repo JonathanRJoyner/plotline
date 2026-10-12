@@ -135,16 +135,17 @@ type StatusProps = {
   stages: { name: string; label: string }[];
   progress: Record<string, { label: string; progress: number }>;
   run: State["run"];
+  stopping: boolean;
 };
 
 // Each stage is done, running with its frame's label, or waiting. The first stage not done runs
 // before its first frame arrives.
-export function StatusBar({ stages, progress, run }: StatusProps): JSX.Element {
+export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX.Element {
   const done = (name: string) => (progress[name]?.progress ?? 0) >= 1;
   const current = run.state === "running" ? stages.find((s) => !done(s.name)) : undefined;
   return (
     <div class="status">
-      <span class={run.error ? "error" : undefined}>{run.id > 0 ? `Run ${run.id}: ` : ""}{run.state}{run.error ? `: ${run.error}` : ""}</span>
+      <span class={run.error ? "error" : undefined}>{run.id > 0 ? `Run ${run.id}: ` : ""}{stopping ? "stopping…" : run.state}{run.error ? `: ${run.error}` : ""}</span>
       <ol>
         {stages.map((s) => {
           const p = progress[s.name];
