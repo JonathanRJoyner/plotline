@@ -1,6 +1,7 @@
 //! The `Session` and `Run` classes, thin wrappers over the engine's session layer.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use numpy::{PyArray3, PyReadonlyArray3};
 use plotline_core::{image, Canvas, Pen, RunState, Speeds, DEFAULT_CACHE_BYTES};
@@ -132,7 +133,10 @@ impl Session {
     /// Cancel the latest run and start a new one over a snapshot of the session.
     fn start(&mut self) -> PyResult<Run> {
         let run = self.inner.start().map_err(session_error)?;
-        Ok(Run(Mutex::new(run)))
+        Ok(Run {
+            cancel: run.cancel_flag(),
+            run: Mutex::new(run),
+        })
     }
 
     fn state(&self) -> &'static str {
@@ -193,19 +197,24 @@ impl Session {
     }
 }
 
-/// One run, driven a frame at a time. The engine run is not `Sync`, so it sits behind a lock,
-/// and every method takes that lock with the interpreter lock released, so that no thread holds
-/// one lock while it waits for the other.
+/// One run, driven a frame at a time. The engine run is not `Sync`, so it sits behind a lock
+/// that `next_frame` holds, with the interpreter lock released, for the whole engine call. The
+/// other methods never wait for that lock: `cancel` sets the run's cancel flag directly, and
+/// `state` and `error` report a run that is busy in `next_frame` as running with no error.
 #[pyclass]
-pub struct Run(Mutex<plotline_core::Run>);
+pub struct Run {
+    run: Mutex<plotline_core::Run>,
+    cancel: Arc<AtomicBool>,
+}
 
 impl Run {
-    fn with<T: Send>(
-        &self,
-        py: Python<'_>,
-        f: impl FnOnce(&mut plotline_core::Run) -> T + Send,
-    ) -> T {
-        py.detach(|| f(&mut self.0.lock().unwrap()))
+    /// `f` of the run, or `busy` while another thread is inside `next_frame`.
+    fn peek<T>(&self, busy: T, f: impl FnOnce(&plotline_core::Run) -> T) -> T {
+        match self.run.try_lock() {
+            Ok(run) => f(&run),
+            Err(TryLockError::Poisoned(e)) => f(&e.into_inner()),
+            Err(TryLockError::WouldBlock) => busy,
+        }
     }
 }
 
@@ -213,20 +222,25 @@ impl Run {
 impl Run {
     /// The next frame, or `None` once the run has ended.
     fn next_frame<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
-        let frame = self.with(py, |run| run.next_frame());
+        // A panic in an earlier call poisons the lock; the run is still safe to read and drive.
+        let frame = py.detach(|| {
+            let mut run = self.run.lock().unwrap_or_else(PoisonError::into_inner);
+            run.next_frame()
+        });
         frame.map(|f| frame_to_py(py, f)).transpose()
     }
 
-    /// Ask the run to stop; the next frame is `None`.
-    fn cancel(&self, py: Python<'_>) {
-        self.with(py, |run| run.cancel());
+    /// Ask the run to stop; the stage in progress sees it at its next check, and the next frame
+    /// is `None`. Returns at once, also while another thread is inside `next_frame`.
+    fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
     }
 
-    fn state(&self, py: Python<'_>) -> &'static str {
-        state_name(self.with(py, |run| run.state()))
+    fn state(&self) -> &'static str {
+        state_name(self.peek(RunState::Running, |run| run.state()))
     }
 
-    fn error(&self, py: Python<'_>) -> Option<String> {
-        self.with(py, |run| run.error())
+    fn error(&self) -> Option<String> {
+        self.peek(None, |run| run.error())
     }
 }

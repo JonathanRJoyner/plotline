@@ -73,8 +73,20 @@ pub fn serde_to_py<'py>(
 }
 
 /// A Python object as JSON: `None`, `bool`, `str`, `dict` with `str` keys, `list`, `tuple`, and
-/// anything that converts to an integer or a finite float. Anything else is a `ValueError`.
+/// anything that converts to an integer or a finite float. Anything else is a `ValueError`, and so
+/// is nesting deeper than [`MAX_DEPTH`].
 pub fn py_to_value(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+    nested_value(obj, 0)
+}
+
+/// How deep [`py_to_value`] follows dicts and lists. Settings nest a few levels; anything deeper
+/// is most likely a dict or list that contains itself, which would otherwise overflow the stack.
+const MAX_DEPTH: usize = 64;
+
+fn nested_value(obj: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
+    if depth > MAX_DEPTH {
+        return Err(value_error("settings nest too deeply"));
+    }
     if obj.is_none() {
         return Ok(Value::Null);
     }
@@ -90,12 +102,15 @@ pub fn py_to_value(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
             let key: String = k
                 .extract()
                 .map_err(|_| value_error(format!("dict keys must be strings, got {k:?}")))?;
-            map.insert(key, py_to_value(&x)?);
+            map.insert(key, nested_value(&x, depth + 1)?);
         }
         return Ok(Value::Object(map));
     }
     if obj.is_instance_of::<PyList>() || obj.is_instance_of::<PyTuple>() {
-        return obj.try_iter()?.map(|x| py_to_value(&x?)).collect();
+        return obj
+            .try_iter()?
+            .map(|x| nested_value(&x?, depth + 1))
+            .collect();
     }
     // Integer extraction goes through `__index__`, which floats lack, so 2.0 stays a float.
     if let Ok(i) = obj.extract::<i64>() {

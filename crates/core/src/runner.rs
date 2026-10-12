@@ -234,6 +234,12 @@ impl Run {
         self.cancel.store(true, Ordering::Relaxed);
     }
 
+    /// The flag [`Run::cancel`] sets, for a host that cancels from another thread while this run
+    /// is busy in [`Run::next_frame`].
+    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
+
     /// Where the run is.
     pub fn state(&self) -> RunState {
         self.state
@@ -582,6 +588,7 @@ mod tests {
             0,
         );
         assert!(run.next_frame().is_some());
+        assert!(Arc::ptr_eq(&run.cancel_flag(), &cancel));
         run.cancel();
         assert!(cancel.load(Ordering::Relaxed));
         assert!(run.next_frame().is_none());

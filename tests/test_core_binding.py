@@ -1,4 +1,5 @@
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -49,19 +50,43 @@ def test_inputs_convert_and_bad_ones_are_value_errors():
     for patch in [{"resolution": float("nan")}, {1: 2}, {"resolution": object()}]:
         with pytest.raises(ValueError):
             s.update("tone", patch)
+    cyclic: dict[str, object] = {"resolution": 64}
+    cyclic["self"] = cyclic
+    with pytest.raises(ValueError, match="nest too deeply"):
+        s.update("tone", cyclic)
     s.set_pens([{"name": "Red", "width_mm": 0.5, "color": "#ff0000"}])
     t = _core.Session()
     assert t.load_preset(s.preset()) == [] and t.pens() == s.pens()
 
 
-def test_run_cancels_from_another_thread():
+def test_cancel_from_the_main_thread_does_not_wait_for_a_busy_run():
     s = _core.Session(1 << 20)
     s.set_image(_core.synthetic_flat(8, 8, 0.5))
     s.set_style("_slow")
     s.update("b", {"frames": 1000, "delay_ms": 5})
     run = s.start()
-    worker = threading.Thread(target=lambda: list(iter(run.next_frame, None)))
+    frames: list[dict[str, object]] = []
+    errors: list[BaseException] = []
+    first = threading.Event()
+
+    def drive() -> None:
+        try:
+            while (f := run.next_frame()) is not None:
+                frames.append(f)
+                first.set()
+        except BaseException as e:  # re-raised in the test thread after the join
+            errors.append(e)
+        finally:
+            first.set()
+
+    worker = threading.Thread(target=drive)
     worker.start()
+    assert first.wait(5)
+    started = time.monotonic()
     run.cancel()
+    assert time.monotonic() - started < 1
     worker.join(5)
-    assert not worker.is_alive() and run.state() == "cancelled"
+    if errors:
+        raise errors[0]
+    assert not worker.is_alive()
+    assert len(frames) < 1000 and run.state() == "cancelled"
