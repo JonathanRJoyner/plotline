@@ -1,6 +1,7 @@
 //! Core engine for plotline.
 
 pub mod cache;
+pub mod export;
 pub mod math;
 pub mod registry;
 pub mod runner;
@@ -8,6 +9,7 @@ pub mod settings;
 pub mod spatial;
 pub mod stage;
 pub mod stages;
+pub mod stats;
 pub mod style;
 pub mod synthetic;
 pub mod types;

@@ -13,7 +13,7 @@ use crate::runner::{Run, Shared};
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
 use crate::style::Style;
-use crate::types::{Canvas, Drawing, Fit, Image, Paths, Pen, Points, ToneMap};
+use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap};
 
 /// `n` points at the origin.
 pub(crate) fn points(n: usize) -> Artifact {
@@ -54,6 +54,23 @@ pub(crate) fn roots() -> [Artifact; 3] {
         Artifact::Canvas(Arc::new(canvas)),
         Artifact::Pens(Arc::new(vec![pen])),
     ]
+}
+
+/// A drawing on an A4 page with a 10 mm margin and one layer of the pen "Black 0.3" holding
+/// `paths`, in order, and no tone map.
+pub(crate) fn drawing_with(paths: Vec<Vec<[f64; 2]>>) -> Drawing {
+    let mut layer_paths = Paths::new();
+    for path in &paths {
+        layer_paths.push(path);
+    }
+    Drawing {
+        canvas: Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap(),
+        layers: vec![Layer {
+            pen: Pen::new("Black 0.3", 0.3, "#000000").unwrap(),
+            paths: layer_paths,
+        }],
+        tone: None,
+    }
 }
 
 /// Every frame `run` gives until it stops.
