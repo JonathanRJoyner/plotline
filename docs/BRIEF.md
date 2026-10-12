@@ -202,17 +202,26 @@ The ten questions the brief opened with (frontend stack, performance strategy, c
 2. **Which toolchains to adapt first.** Driven by the owner's own setup.
 3. **Canvas 2D or WebGL** for very large path counts in the GUI. Decide in the GUI spec after measuring.
 4. **Disk cache.** Whether and when. Cache keys already support it.
+5. **Server stack for the GUI and MCP.** The web framework, the WebSocket library and the MCP SDK are not chosen. Candidates: starlette with uvicorn and websockets (all BSD) and the `mcp` package (MIT). Decide in the GUI spec, run `scripts/check_licenses.py` on the candidates, and log the choice here.
+6. **Shipping the GUI bundle in the wheel.** CI needs a Node step, the wheel build needs include rules for the built assets, and a build without the bundle must fail loudly rather than ship a wheel with no GUI. Design this in the GUI spec.
 
 ## 13. Suggested milestones
 
 1. **Scaffold:** package layout, tooling, CI, licence checks, a synthetic test image set.
 2. **Core:** tone map, canvas, pens, path and layer types, the stage/pipeline/cache machinery, SVG and JSON export, a minimal CLI. Prove caching and cancellation with a trivial test style.
-3. **Voronoi stipple:** the point placement stage plus the stipple renderer, with path ordering.
+3. **Voronoi stipple:** the point placement stage plus the stipple renderer, with path ordering. Includes a benchmark script that measures the performance targets in §14, so the numbers are checked before they are published.
 4. **Continuous line and dashes:** the remaining renderers, reusing the cached points.
 5. **Sketch Lines.**
 6. **GUI:** server, frame streaming, preview features (§8), presets.
 7. **MCP server.**
-8. **0.1 release prep:** docs, examples with project-owned images, a check before making the repo public.
+8. **0.1 release prep:** docs, examples with project-owned images, and this checklist before the repo goes public:
+   - add `src/plotline/py.typed` so third-party style authors get type information
+   - add `[project.urls]` and classifiers to `pyproject.toml`
+   - add a CHANGELOG and a short CONTRIBUTING (the verification set, the licence rule, the naming rule)
+   - scan the full git history for personal paths and secrets
+   - restore the full CI matrix (Windows, macOS, Python 3.12)
+   - add the release workflow and register the trusted publisher on PyPI (owner action)
+   - bump the version from `0.1.0.dev0` to `0.1.0` and tag `v0.1.0`
 
 Each milestone, or pair of milestones, gets its own spec under `docs/superpowers/specs/` before it is built. Milestones 1 and 2 share the first spec, which also pulls in a minimal ordering stage, the preview PNG, stats and presets so results can be checked visually before the GUI exists.
 
@@ -236,6 +245,7 @@ Each milestone, or pair of milestones, gets its own spec under `docs/superpowers
 | Determinism | Every stage that uses randomness has its own `seed` setting feeding a numpy generator; no global random state | Per-stage seeds keep cache keys correct and make tests simple. |
 | Python and tooling | Python 3.11+, uv, hatchling, ruff for lint and format, mypy, pytest; CI on Windows, macOS and Linux for 3.11 to 3.13; a licence allow-list check in CI | Confirms the working assumption. uv installs the interpreter, so the developer's system Python does not matter. |
 | Performance | numpy and scipy baseline, optional numba extra (`plotline[fast]`) for hot kernels, no compiled extension in 0.x; relaxation runs on the raster, coarse to fine; targets for 10k points on a 1000 px image over 50 passes: under 5 s with numba, under 30 s without | The baseline always installs. numba is BSD and speeds up the few hot loops. Multi-platform wheels for an extension cost more than this project can carry. |
+| Compiled extension (Rust) | Not in 0.x. The hot kernels (relaxation, 2-opt) live in their own modules behind a pure numpy fallback, so a Rust extension built with maturin and abi3 wheels can replace them in 0.2 or later if the numba path misses the targets | The targets are not measured yet, so optimising now is guesswork. A Rust extension adds a toolchain for every contributor and a wheel matrix across three OSes, which the project cannot carry before it is public and the slow kernels are known. |
 | Continuous-line solver | Nearest-neighbour construction, then 2-opt and Or-opt with candidate neighbour lists and don't-look bits (Johnson and McGeoch, 1997); frames after construction and then every few hundred improving moves | Standard and well documented. A 2-opt local optimum in the plane has no crossings, so the single line is non-crossing by construction. |
 | Dot geometry | A stipple renderer setting: point (one-vertex path), circle outline or spiral fill; default automatic, point when the dot is no wider than the pen, spiral above | Dots stay paths, so export and preview need no special case. |
 | Canvas modes | `fit` and `fill` in the first release; `crop` is `fill` plus an offset and comes later | Keeps the canvas type small until someone needs the offset. |

@@ -43,7 +43,7 @@
 **Interfaces:**
 - Produces: `plotline.__version__ == "0.1.0.dev0"`; the verification set runs.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 import plotline
@@ -52,7 +52,7 @@ def test_version_is_dev_zero_one():
     assert plotline.__version__ == "0.1.0.dev0"
 ```
 
-- [ ] **Step 2: Write `pyproject.toml` exactly as follows**
+- [x] **Step 2: Write `pyproject.toml` exactly as follows**
 
 ```toml
 [project]
@@ -122,20 +122,20 @@ testpaths = ["tests"]
 pythonpath = ["tests"]
 ```
 
-- [ ] **Step 3: Write the other scaffold files**
+- [x] **Step 3: Write the other scaffold files**
 
 `.python-version` contains `3.11`. `.gitattributes` contains `* text=auto eol=lf`. `src/plotline/__init__.py` contains `__version__ = "0.1.0.dev0"`. The other `__init__.py` files are empty.
 
-- [ ] **Step 4: Create the environment and lock file**
+- [x] **Step 4: Create the environment and lock file**
 
 Run: `uv sync`
 Expected: `uv.lock` is created, numpy, scipy, pillow, pydantic, click, pytest, ruff and mypy are installed, and a Python 3.11 interpreter is downloaded if none is present.
 
-- [ ] **Step 5: Run the verification set**
+- [x] **Step 5: Run the verification set**
 
 Expected: `1 passed`; ruff and mypy report nothing.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pyproject.toml uv.lock .python-version .gitattributes src tests
@@ -151,7 +151,7 @@ git commit -m "Scaffold the package with uv, ruff, mypy and pytest" -m "Co-Autho
 **Interfaces:**
 - Produces: in `scripts/check_licenses.py`: `ALLOWED: tuple[str, ...]`, `DENIED: tuple[str, ...]`, `OVERRIDES: dict[str, tuple[str, str]]` mapping a normalised package name to `(licence, url_checked)`; `license_text(dist: importlib.metadata.Distribution) -> str`; `is_allowed(text: str) -> bool`; `runtime_closure(root: str = "plotline") -> list[str]`; `main() -> int`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 import sys
@@ -185,18 +185,18 @@ def test_glued_copyleft_spellings_are_denied():
     assert cl.is_allowed("THIS SOFTWARE IS PROVIDED WITHOUT IMPLIED WARRANTIES. BSD-3-Clause")
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_check_licenses.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'check_licenses'`
 
-- [ ] **Step 3: Implement `scripts/check_licenses.py` with the standard library only**
+- [x] **Step 3: Implement `scripts/check_licenses.py` with the standard library only**
 
 `ALLOWED = ("MIT", "BSD", "Apache", "ISC", "HPND", "Historical Permission", "PSF", "Python Software Foundation", "Python-2.0")`. `DENIED = ("GPL", "LGPL", "AGPL", "MPL", "EPL", "CDDL", "SSPL")`. `OVERRIDES = {}`.
 
 `license_text` joins the `License-Expression` field, the `License` field and every `Classifier` starting with `License ::`. `is_allowed` is true when some `ALLOWED` token appears as a whole word and no `DENIED` token appears at a word start, case-sensitive. `runtime_closure` walks `Requires-Dist` breadth-first from `root`, skipping requirements whose marker contains `extra ==`, skipping names that raise `PackageNotFoundError` (platform-only dependencies), normalising names with `re.sub(r"[-_.]+", "-", name).lower()`, and returns the sorted names without `root`. `main` prints one line per package (`name  licence  OK|DENIED`), applies `OVERRIDES` by name, prints the offenders, and returns `1` when any exist.
 
-- [ ] **Step 4: Write `.github/workflows/ci.yml` exactly as follows**
+- [x] **Step 4: Write `.github/workflows/ci.yml` exactly as follows**
 
 ```yaml
 name: CI
@@ -226,7 +226,7 @@ jobs:
       - run: uv run python scripts/check_licenses.py
 ```
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `uv run pytest tests/test_check_licenses.py -v`
 Expected: 6 passed.
@@ -234,7 +234,7 @@ Run: `uv run --with pyyaml python -c "import yaml; yaml.safe_load(open('.github/
 Expected: `ok`.
 Run the verification set.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts tests/test_check_licenses.py .github
@@ -256,7 +256,7 @@ git commit -m "Add the dependency licence check and the CI workflow" -m "Co-Auth
   - `@dataclass(frozen=True, eq=False) class Result: canvas: Canvas; layers: list[Layer]; tone: ToneMap | None = None`.
 - `eq=False` on the array-holding classes, because array equality is ambiguous.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_drawing_rect_and_fit():
@@ -292,21 +292,21 @@ def test_tone_map_geometry_and_sampling():
     assert s == pytest.approx([0, 1, 0.5, 1, 0])
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_types.py -v`
 Expected: FAIL with `ImportError` on `plotline.core.types`.
 
-- [ ] **Step 3: Implement `types.py` to the interfaces above**
+- [x] **Step 3: Implement `types.py` to the interfaces above**
 
 `fit`: scale is `min(rect_w / width_px, rect_h / height_px)`, the image is centred in the drawing rect. `fill`: the rect is the drawing rect.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Run: `uv run pytest tests/test_types.py -v`
 Expected: 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/types.py tests/test_types.py
@@ -322,7 +322,7 @@ git commit -m "Add the core types: pen, canvas, tone map, layer and result" -m "
 **Interfaces:**
 - Produces: `class Settings(pydantic.BaseModel)` with `model_config = ConfigDict(frozen=True, extra="forbid")`; `def setting(default: Any, *, help: str, min: float | None = None, max: float | None = None, step: float | None = None, unit: str | None = None, advanced: bool = False, label: str | None = None) -> Any`, returning `pydantic.Field(default, description=help, ge=min, le=max, json_schema_extra=extra)` where `extra` always holds `advanced` and holds `step`, `unit` and `label` only when given.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class M(Settings):
@@ -352,18 +352,18 @@ def test_lax_coercion_and_range():
         M(x=100)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_settings.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `settings.py`**
+- [x] **Step 3: Implement `settings.py`**
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/settings.py tests/test_settings.py
@@ -385,7 +385,7 @@ git commit -m "Add the settings base model and the setting helper" -m "Co-Author
   - `class Stage(ABC)` with class-level annotations `name: str`, `label: str`, `version: str = "1"`, `requires: tuple[str, ...]`, `provides: str`, `settings_model: type[Settings]`, and `@abstractmethod run(self, inputs: Mapping[str, Any], settings: Settings, ctx: RunContext) -> Generator[Frame, None, Any]`.
 - Produces, in `tests/doubles.py`: `collect(gen) -> tuple[list[Frame], Any]`, which drains a stage generator and returns its frames and its return value (from `StopIteration.value`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 class Two(Stage):
@@ -418,18 +418,18 @@ def test_stage_is_abstract():
         Stage()
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_stage.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `stage.py` and `collect` in `tests/doubles.py`**
+- [x] **Step 3: Implement `stage.py` and `collect` in `tests/doubles.py`**
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 4 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/stage.py tests/doubles.py tests/test_stage.py
@@ -453,7 +453,7 @@ git commit -m "Add the stage contract: frames, cancellation and run context" -m 
   - `class SpySettings(Settings): knob: int = setting(0, help="Test knob.")`.
   - `class Spy(Stage)` with `settings_model = SpySettings` and `__init__(self, name: str, requires: tuple[str, ...], provides: str, value: Any = None, frames: int = 1, delay_s: float = 0.0, fail: Exception | None = None)`. `label` is `name.title()`. `runs: int` counts calls to `run`. `run` sleeps `delay_s` before each of `frames` frames, yields `Frame((i + 1) / frames, f"{i + 1}/{frames}")`, raises `fail` after the first frame when given, and returns `value(inputs)` when `value` is callable, else `value`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def spy(name, req, prov): return Spy(name, req, prov)
@@ -480,20 +480,20 @@ def test_schema_and_defaults():
     assert st.defaults() == {"a": SpySettings()}
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_style.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `Style` in `pipeline.py` and `Spy` in `tests/doubles.py`**
+- [x] **Step 3: Implement `Style` in `pipeline.py` and `Spy` in `tests/doubles.py`**
 
 Use `object.__setattr__(self, "sources", ...)` inside `__post_init__` because the dataclass is frozen.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 6 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/pipeline.py tests/doubles.py tests/test_style.py
@@ -511,7 +511,7 @@ git commit -m "Add styles with declared artifact kinds and nearest-provider reso
   - `estimate_bytes(value: Any) -> int`: `nbytes` for arrays, the sum over items for lists and tuples, the sum over fields for dataclass instances, `sys.getsizeof` otherwise.
   - `class StageCache` with `__init__(self, max_bytes: int = 512 * 2**20)`, `get(key: str) -> Any | None` (counts a hit or a miss and marks the key most recently used), `put(key: str, value: Any) -> None` (skips values larger than `max_bytes`, evicts least recently used until under budget), `__contains__(key: str) -> bool`, `__len__() -> int`, `clear() -> None`, and attributes `hits: int`, `misses: int`, `bytes: int`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_miss_then_hit():
@@ -540,18 +540,18 @@ def test_clear():
     assert len(c) == 0 and c.bytes == 0
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_cache.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `cache.py`** with an `OrderedDict` for recency.
+- [x] **Step 3: Implement `cache.py`** with an `OrderedDict` for recency.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/cache.py tests/test_cache.py
@@ -572,7 +572,7 @@ git commit -m "Add the in-memory stage cache with byte-bounded LRU eviction" -m 
   - `stage_key(stage: Stage, settings: Settings, input_keys: dict[str, str]) -> str`: BLAKE2b hex of the canonical JSON of `{"stage": f"{type(stage).__module__}.{type(stage).__qualname__}", "name": stage.name, "version": stage.version, "settings": settings.model_dump(mode="json"), "inputs": input_keys}`.
   - `run_style(style: Style, settings: Mapping[str, Settings], roots: Mapping[str, Any], cache: StageCache, ctx: RunContext) -> Generator[Frame, None, Result]`. Raises `KeyError` when a root kind or a stage's settings are missing. For each stage: compute the key; on a cache hit yield `Frame(1.0, "cached", stage=stage.name)`; otherwise drive `stage.run`, re-yield each frame with `stage` set via `dataclasses.replace`, call `ctx.check()` after each frame, and `cache.put` the returned artifact. Builds the `Result` from the last stage's artifact (`layers` used directly, `paths` wrapped in `Layer(roots["pens"][0], paths)`) and sets `tone` to the artifact of the last stage providing `tone`, if any.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 ROOTS = {"image": np.zeros((4, 4, 3), np.float32), "canvas": Canvas(100, 100), "pens": (Pen("p", 0.3, "#000000"),)}
@@ -640,20 +640,20 @@ def test_missing_root_raises():
         run(style, style.defaults(), StageCache(), roots={"canvas": ROOTS["canvas"]})
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_runner.py -v`
 Expected: FAIL with `ImportError: cannot import name 'run_style'`.
 
-- [ ] **Step 3: Implement `canonical_json`, `root_key`, `stage_key` and `run_style` in `pipeline.py`**
+- [x] **Step 3: Implement `canonical_json`, `root_key`, `stage_key` and `run_style` in `pipeline.py`**
 
 Keep a `keys: dict[str, str]` and an `artifacts: dict[str, Any]` indexed by source name (root kinds and stage names); a stage's `input_keys` is `{kind: keys[source] for kind, source in style.sources[stage.name].items()}`.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 8 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/pipeline.py tests/test_runner.py
@@ -673,7 +673,7 @@ git commit -m "Add the cached pipeline runner with content-hash keys" -m "Co-Aut
   - `class ToneStage(Stage)` with `name = "tone"`, `label = "Tone"`, `requires = ("image", "canvas")`, `provides = "tone"`, `settings_model = ToneSettings`. `run` narrows `settings` with an `isinstance` assert, yields one `Frame(1.0, "tone map")` and returns a `ToneMap`.
 - Module docstring cites ITU-R BT.601 for the luminance weights.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def run_tone(image, canvas=Canvas(100, 100), **kw):
@@ -716,20 +716,20 @@ def test_downscaling_averages_rather_than_skips():
     assert abs(float(t.ink.mean()) - 0.5) < 0.05 and float(t.ink.std()) < 0.1
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_tone.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `tests/synthetic.py` and `tone.py`**
+- [x] **Step 3: Implement `tests/synthetic.py` and `tone.py`**
 
 Processing order in `run`: luminance `Y = 0.299 R + 0.587 G + 0.114 B` as float32; when `canvas.fit == "fill"`, centre-crop `Y` to the drawing rect's aspect ratio; target size has long edge `resolution` and short edge `max(1, round(short * resolution / long))`; when the source long edge is at least twice the target, block-mean by `k = long // resolution` (crop to a multiple of `k` first), then resample to the exact target shape with `scipy.ndimage.map_coordinates(order=1, mode="nearest")` at target pixel centres; levels `(Y - black) / (white - black)` clipped to 0..1; `Y ** gamma`; `clip(0.5 + (Y - 0.5) * (1 + contrast), 0, 1)`; `ink = 1 - Y`; invert as `1 - ink`; `mm_per_px, origin = canvas.image_transform(tw, th)`; when `blur_mm > 0`, `scipy.ndimage.gaussian_filter(ink, blur_mm / mm_per_px)`; clip and cast to float32.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 7 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/stages/tone.py tests/synthetic.py tests/test_tone.py
@@ -749,7 +749,7 @@ git commit -m "Add the tone map stage and synthetic test images" -m "Co-Authored
   - `class DotSettings(Settings)` with no fields.
   - `class DotRenderer(Stage)` with `name = "render"`, `label = "Dots"`, `requires = ("points",)`, `provides = "paths"`, `settings_model = DotSettings`. Returns `[p.reshape(1, 2) for p in points]` and yields one final frame carrying those paths.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 CTX = RunContext(CancelToken())
@@ -775,18 +775,18 @@ def test_dots_are_one_vertex_paths():
     assert frames[-1].progress == 1 and len(frames[-1].paths) == 2
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_grid.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `grid.py`**
+- [x] **Step 3: Implement `grid.py`**
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 4 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/stages/grid.py tests/test_grid.py
@@ -806,7 +806,7 @@ git commit -m "Add the grid placer and the dot renderer" -m "Co-Authored-By: Cla
   - `class OrderStage(Stage)` with `name = "order"`, `label = "Path order"`, `requires = ("paths", "canvas")`, `provides = "paths"`, `settings_model = OrderSettings`. Drops paths with `path_length < min_length_mm`. When `optimize` is on: start at the drawing rect's top-left corner, repeatedly take the unvisited path whose nearer endpoint is closest, reversing it when its last vertex is the nearer one. Yields a frame with the ordered paths so far every `max(1, n // 20)` paths and a final frame at progress 1. Returns `[]` for no paths without touching scipy.
 - Module docstring cites the nearest-neighbour heuristic analysis by Rosenkrantz, Stearns and Lewis (1977).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_path_lengths():
@@ -845,20 +845,20 @@ def test_empty_input():
     assert order([])[1] == []
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_paths.py tests/test_order.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `paths.py` and `order.py`**
+- [x] **Step 3: Implement `paths.py` and `order.py`**
 
 Greedy search: build a `scipy.spatial.cKDTree` over all `2n` endpoints (starts then ends), query the nearest `k` from the current position with `k` doubling until an unvisited endpoint appears, map index `j` to path `j % n` and reversal `j >= n`.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 6 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/paths.py src/plotline/core/stages/order.py tests/test_paths.py tests/test_order.py
@@ -875,7 +875,7 @@ git commit -m "Add path length helpers and the greedy path ordering stage" -m "C
 - Produces, in `plotline.core.styles`: `GRID: Style` with `name="grid"`, `label="Grid dots"`, a one-sentence description, and stages `(ToneStage(), GridPlacer(), DotRenderer(), OrderStage())`; `BUILTIN: tuple[Style, ...] = (GRID,)`.
 - Produces, in `plotline.core.registry`: `ENTRY_POINT_GROUP = "plotline.styles"`; `_entry_points() -> list[importlib.metadata.EntryPoint]` wrapping `importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)`; `list_styles() -> list[Style]` returning the built-ins followed by every entry point whose `load()` returns a `Style`, warning with `warnings.warn` and skipping anything else; `get_style(name: str) -> Style` raising `KeyError(f"unknown style {name!r}")`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_builtin_grid_is_listed():
@@ -926,18 +926,18 @@ def test_same_settings_give_identical_output(style):
     assert len(a) == len(b) and all(np.array_equal(p, q) for p, q in zip(a, b))
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_registry.py tests/test_integration.py tests/test_determinism.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `styles.py` and `registry.py`**
+- [x] **Step 3: Implement `styles.py` and `registry.py`**
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 6 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/styles.py src/plotline/core/registry.py tests/test_registry.py tests/test_integration.py tests/test_determinism.py
