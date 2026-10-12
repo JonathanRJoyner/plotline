@@ -1,0 +1,257 @@
+//! The stage contract: what a stage needs and provides, and the run it hands back.
+//!
+//! A stage runs as a step function rather than one call because the engine also runs in a
+//! WebAssembly worker, which can only honour a cancel message between calls into the engine.
+//! [`Stage::start`] validates the settings and returns a [`StageRun`]; each [`StageRun::step`]
+//! does one chunk of work and returns a progress [`Frame`] or the finished [`Artifact`].
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use rand::SeedableRng;
+use rand_pcg::Pcg64;
+use serde_json::Value;
+use thiserror::Error;
+
+use crate::settings::SettingsError;
+use crate::types::{Canvas, Image, Layer, Paths, Pen, Points, ToneMap};
+
+/// The kind of artifact a stage requires or provides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Kind {
+    /// The source image.
+    Image,
+    /// The page.
+    Canvas,
+    /// The pens.
+    Pens,
+    /// The tone map.
+    Tone,
+    /// Points on the page.
+    Points,
+    /// Paths on the page.
+    Paths,
+    /// Paths grouped by pen.
+    Layers,
+}
+
+impl Kind {
+    /// The kinds a run is given rather than computes.
+    pub const ROOTS: [Kind; 3] = [Kind::Image, Kind::Canvas, Kind::Pens];
+
+    /// The lowercase name clients see.
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Image => "image",
+            Kind::Canvas => "canvas",
+            Kind::Pens => "pens",
+            Kind::Tone => "tone",
+            Kind::Points => "points",
+            Kind::Paths => "paths",
+            Kind::Layers => "layers",
+        }
+    }
+}
+
+/// A stage's output or a run's root input, shared by reference count rather than copied.
+#[derive(Clone, Debug)]
+pub enum Artifact {
+    /// The source image.
+    Image(Arc<Image>),
+    /// The page.
+    Canvas(Arc<Canvas>),
+    /// The pens.
+    Pens(Arc<Vec<Pen>>),
+    /// The tone map.
+    Tone(Arc<ToneMap>),
+    /// Points on the page.
+    Points(Arc<Points>),
+    /// Paths on the page.
+    Paths(Arc<Paths>),
+    /// Paths grouped by pen.
+    Layers(Arc<Vec<Layer>>),
+}
+
+impl Artifact {
+    /// The artifact's kind.
+    pub fn kind(&self) -> Kind {
+        match self {
+            Artifact::Image(_) => Kind::Image,
+            Artifact::Canvas(_) => Kind::Canvas,
+            Artifact::Pens(_) => Kind::Pens,
+            Artifact::Tone(_) => Kind::Tone,
+            Artifact::Points(_) => Kind::Points,
+            Artifact::Paths(_) => Kind::Paths,
+            Artifact::Layers(_) => Kind::Layers,
+        }
+    }
+
+    /// The size of the artifact's buffers in bytes; the canvas and the pens count as 64.
+    pub fn bytes(&self) -> usize {
+        let paths = |p: &Paths| p.coords().len() * 16 + p.offsets().len() * 4;
+        match self {
+            Artifact::Image(i) => i.rgb.len() * 4,
+            Artifact::Canvas(_) | Artifact::Pens(_) => 64,
+            Artifact::Tone(t) => t.ink.len() * 4,
+            Artifact::Points(p) => p.0.len() * 16,
+            Artifact::Paths(p) => paths(p),
+            Artifact::Layers(l) => l.iter().map(|layer| paths(&layer.paths)).sum(),
+        }
+    }
+}
+
+/// Progress from a running stage, with optional partial geometry to preview.
+#[derive(Clone, Debug)]
+pub struct Frame {
+    /// The stage's name.
+    pub stage: String,
+    /// How far the stage has got, from 0 to 1.
+    pub progress: f32,
+    /// What the stage is doing, for users.
+    pub label: String,
+    /// Points placed so far, if the stage has any to show.
+    pub points: Option<Points>,
+    /// Paths made so far, if the stage has any to show.
+    pub paths: Option<Paths>,
+}
+
+/// What one step of a run produced.
+#[derive(Debug)]
+pub enum Step {
+    /// The run is not finished; here is its progress.
+    Frame(Frame),
+    /// The run is finished; here is its output.
+    Done(Artifact),
+}
+
+/// The artifacts a stage declared it requires, by kind.
+pub struct Inputs(HashMap<Kind, Artifact>);
+
+/// A getter that returns the input of one kind and panics if the stage did not declare it.
+macro_rules! input {
+    ($name:ident, $kind:ident, $ty:ty) => {
+        #[doc = concat!("The ", stringify!($name), " input. Panics if the stage did not declare it.")]
+        pub fn $name(&self) -> &Arc<$ty> {
+            match self.0.get(&Kind::$kind) {
+                Some(Artifact::$kind(a)) => a,
+                _ => panic!("stage did not declare {}", Kind::$kind.name()),
+            }
+        }
+    };
+}
+
+impl Inputs {
+    /// Wrap the inputs; the runner supplies every kind the stage requires. Panics if an artifact
+    /// is filed under another kind.
+    pub fn new(map: HashMap<Kind, Artifact>) -> Inputs {
+        assert!(
+            map.iter().all(|(k, a)| a.kind() == *k),
+            "input filed under the wrong kind"
+        );
+        Inputs(map)
+    }
+
+    input!(image, Image, Image);
+    input!(canvas, Canvas, Canvas);
+    input!(pens, Pens, Vec<Pen>);
+    input!(tone, Tone, ToneMap);
+    input!(points, Points, Points);
+    input!(paths, Paths, Paths);
+    input!(layers, Layers, Vec<Layer>);
+}
+
+/// What a running stage may use besides its inputs: the cancel flag and seeded randomness.
+pub struct RunContext {
+    cancel: Arc<AtomicBool>,
+}
+
+impl RunContext {
+    /// A context that reports cancelled once `cancel` is set.
+    pub fn new(cancel: Arc<AtomicBool>) -> RunContext {
+        RunContext { cancel }
+    }
+
+    /// Whether the run has been cancelled.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// A generator seeded from `seed` alone, so the same seed gives the same output everywhere.
+    /// Stages draw randomness only from here.
+    pub fn rng(&self, seed: u64) -> Pcg64 {
+        Pcg64::seed_from_u64(seed)
+    }
+}
+
+/// Why a stage stopped without an artifact.
+#[derive(Debug, Error)]
+pub enum StageError {
+    /// The run was cancelled.
+    #[error("cancelled")]
+    Cancelled,
+    /// The settings did not validate.
+    #[error(transparent)]
+    Settings(#[from] SettingsError),
+    /// The stage failed; the message is shown to users.
+    #[error("{0}")]
+    Failed(String),
+}
+
+/// One step of a drawing pipeline: it requires some kinds, provides one, and has settings.
+pub trait Stage: Send + Sync {
+    /// The stable identifier, used in settings errors and cache keys.
+    fn name(&self) -> &'static str;
+    /// The name shown to users.
+    fn label(&self) -> &'static str;
+    /// Bumped whenever the output for the same inputs and settings changes.
+    fn version(&self) -> u32;
+    /// The kinds the stage reads.
+    fn requires(&self) -> &'static [Kind];
+    /// The kind the stage produces.
+    fn provides(&self) -> Kind;
+    /// The JSON Schema of the stage's settings.
+    fn schema(&self) -> Value;
+    /// The default settings.
+    fn defaults(&self) -> Value;
+    /// Validate `settings` and return the run that will produce the artifact.
+    fn start(
+        &self,
+        inputs: Inputs,
+        settings: &Value,
+        ctx: RunContext,
+    ) -> Result<Box<dyn StageRun>, StageError>;
+}
+
+/// A started stage. `Send` because a host may drive the steps on a worker thread.
+pub trait StageRun: Send {
+    /// Do one chunk of work and return its progress, or the artifact once finished.
+    fn step(&mut self) -> Result<Step, StageError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::RngCore;
+
+    #[test]
+    fn rng_is_seeded_and_cancel_is_shared() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let ctx = RunContext::new(flag.clone());
+        let (mut a, mut b) = (ctx.rng(7), ctx.rng(7));
+        assert_eq!(a.next_u64(), b.next_u64());
+        assert!(!ctx.cancelled());
+        flag.store(true, Ordering::Relaxed);
+        assert!(ctx.cancelled());
+    }
+    #[test]
+    fn artifact_bytes_count_buffers() {
+        let mut p = Paths::new();
+        p.push(&[[0.0, 0.0], [1.0, 1.0]]);
+        assert_eq!(Artifact::Paths(Arc::new(p)).bytes(), 2 * 16 + 2 * 4);
+        assert_eq!(
+            Artifact::Points(Arc::new(Points(vec![[0.0, 0.0]; 3]))).bytes(),
+            48
+        );
+    }
+}
