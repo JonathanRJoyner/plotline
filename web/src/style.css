@@ -172,6 +172,33 @@ summary:hover { color: var(--text); }
 @keyframes pulse { to { opacity: 0.3; } }
 progress { width: 7em; height: 6px; }
 
+/* The settings dialog: the sections on the left, the open one's fields on the right. */
+dialog.settings {
+  width: min(720px, 100vw - 32px);
+  max-height: 70vh;
+  padding: 0;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+dialog.settings[open] { display: flex; flex-direction: column; }
+dialog.settings::backdrop { background: rgb(0 0 0 / 0.4); }
+dialog.settings header { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--border); }
+dialog.settings h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
+dialog.settings h2 svg { width: 18px; height: 18px; color: var(--accent); }
+dialog.settings .body { display: grid; grid-template-columns: 140px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; }
+dialog.settings nav { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-right: 1px solid var(--border); }
+dialog.settings nav button { justify-content: flex-start; background: none; border-color: transparent; }
+dialog.settings nav button[aria-current] { color: var(--accent); background: var(--accent-soft); }
+dialog.settings .fields { overflow-y: auto; padding: 8px 16px 16px; }
+dialog.settings h3 { margin: 16px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+@media (max-width: 600px) {
+  dialog.settings .body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  dialog.settings nav { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); }
+}
+
 dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
 dd { margin: 0; }
 .loading { display: grid; place-items: center; height: 100vh; margin: 0; color: var(--muted); }

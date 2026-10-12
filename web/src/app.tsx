@@ -2,12 +2,12 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
-import { Image as ImageIcon, ImageUp, Monitor, Moon, Play, Route, Sparkles, Spline, Square, Sun } from "lucide-preact";
+import { Image as ImageIcon, ImageUp, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Spline, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { FrameEvent, Machine, Pen, ResultEvent } from "./events";
 import { imageFile } from "./files";
-import { ExportPanel, MachinePanel, PagePanel, PensPanel, PresetsPanel, SpeedsPanel, StatsPanel, StatusBar } from "./panels";
+import { ExportPanel, PagePanel, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
@@ -162,6 +162,7 @@ export function App() {
   const [hidden, setHidden] = useState(new Set<number>());
   const [showSource, setShowSource] = useState(false);
   const [showTravel, setShowTravel] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -270,8 +271,7 @@ export function App() {
   async function pickMachine(machine: Machine | null) {
     await call("setMachine", [machine], "machine");
     if (machine && state) {
-      const { x_min, x_max, y_min, y_max } = machine.area;
-      await call("setCanvas", [{ ...state.canvas, width_mm: x_max - x_min, height_mm: y_max - y_min }]);
+      await call("setCanvas", [{ ...state.canvas, width_mm: machine.area.width, height_mm: machine.area.height }]);
     }
   }
 
@@ -327,6 +327,7 @@ export function App() {
             <Route /> Travel
           </label>
           <span class="spacer" />
+          <button type="button" onClick={() => setSettingsOpen(true)}><Gear /> Settings</button>
           <ThemeButton />
         </div>
         {errors[""] && <p class="error">{errors[""]}</p>}
@@ -336,10 +337,6 @@ export function App() {
         />
       </main>
       <aside>
-        <MachinePanel
-          machine={state.machine} error={errors.machine}
-          onPick={pickMachine} onEdit={(m) => call("setMachine", [m], "machine")}
-        />
         <PagePanel canvas={state.canvas} onChange={(c) => call("setCanvas", [c])} />
         <PensPanel
           pens={state.pens} bank={bank} hidden={hidden} onChange={(p) => call("setPens", [p])}
@@ -349,10 +346,14 @@ export function App() {
             return next;
           })}
         />
-        <SpeedsPanel speeds={state.speeds} onChange={(s) => call("setSpeeds", [s])} />
         <PresetsPanel warnings={warnings} onSave={savePreset} onLoad={loadPreset} />
         <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
       </aside>
+      <SettingsDialog
+        open={settingsOpen} onClose={() => setSettingsOpen(false)} machine={state.machine}
+        error={errors.machine} speeds={state.speeds} onPick={pickMachine}
+        onEdit={(m) => call("setMachine", [m], "machine")} onSpeeds={(s) => call("setSpeeds", [s])}
+      />
     </div>
   );
 }

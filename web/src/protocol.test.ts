@@ -128,7 +128,7 @@ test("listPens gives the bank", () => {
 });
 
 const MACHINE: Machine = {
-  name: "Test printer", bed_mm: [256, 256], area: { x_min: 28, x_max: 228, y_min: 42, y_max: 216 },
+  name: "Test printer", area: { x: 28, y: 42, width: 200, height: 174 },
   z_down_mm: 4, z_up_mm: 9, z_safe_mm: 20, draw_feed: 3600, travel_feed: 6000, z_feed: 1200, settle_ms: 50,
   start_gcode: "", end_gcode: "",
 };
