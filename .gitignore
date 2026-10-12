@@ -19,6 +19,7 @@ node_modules/
 scratch/
 out/
 *.local.*
+.superpowers/
 
 # Editors and OS
 .vscode/
