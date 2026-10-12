@@ -55,6 +55,8 @@ export function Settings({ stages, values, errors, help, onChange }: Props): JSX
   const { own, shared } = splitStages(stages);
   const stage = (s: Stage, open: boolean) => {
     const controls = controlsFor(s.schema);
+    // A stage with no settings, such as the dot renderer, would open on nothing.
+    if (controls.length === 0 && !errors[s.name]) return null;
     const field = (c: Control) => <Field c={c} value={values[s.name]?.[c.key] ?? c.default} help={help} set={(v) => onChange(s.name, c.key, v)} />;
     const advanced = controls.filter((c) => c.advanced);
     // Keyed by name, so a changed style does not hand one stage's open or closed state to another.

@@ -31,7 +31,7 @@ pub struct GridSettings {
 impl Default for GridSettings {
     fn default() -> Self {
         GridSettings {
-            spacing_mm: 2.0,
+            spacing_mm: 1.0,
             threshold: 0.5,
         }
     }
@@ -365,7 +365,7 @@ mod tests {
         );
         let s = g.schema();
         let spacing = &s["properties"]["spacing_mm"];
-        assert_eq!(spacing["default"], 2.0);
+        assert_eq!(spacing["default"], 1.0);
         assert_eq!(
             (spacing["minimum"].as_f64(), spacing["maximum"].as_f64()),
             (Some(0.2), Some(10.0))

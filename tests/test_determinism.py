@@ -25,5 +25,5 @@ def test_grid_golden_counts():
     s.set_image(_core.synthetic_gradient(64, 48))
     s.set_canvas(Canvas(100, 75, 5))
     s.update("tone", resolution=64)
-    s.update("points", threshold=0.6)
+    s.update("points", threshold=0.6, spacing_mm=2.0)
     assert len(s.run_blocking().layers[0].paths) == EXPECTED_COUNT
