@@ -62,3 +62,27 @@ jobs:
           size=$(stat -c %s web/pkg/plotline_wasm_bg.wasm)
           echo "plotline_wasm_bg.wasm is $size bytes"
           test "$size" -le 1500000
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm run wasm
+        working-directory: web
+      - run: npm ci
+        working-directory: web
+      - run: npm run check
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: test -f src/plotline/web/index.html && test -f src/plotline/web/preact-LICENSE.txt

@@ -228,7 +228,7 @@ The ten questions the brief opened with (frontend stack, performance strategy, c
 
 Each milestone, or pair of milestones, gets its own spec under `docs/superpowers/specs/` before it is built. Milestones 1 and 2 share the first spec, which also pulls in a minimal ordering stage, the preview PNG, stats and presets so results can be checked visually before the GUI exists. The Rust port, decided on 2026-10-11, sits between milestones 2 and 3 under [its own spec](superpowers/specs/2026-10-11-rust-core-design.md): the Python engine is rewritten in Rust with the same design, so the algorithm milestones are written once, in Rust.
 
-Milestone 2 was completed in Python and then ported to Rust on 2026-10-12 under the Rust core spec. The Python engine is gone: the Python package is now a thin layer over the Rust extension, and the algorithm milestones that follow proceed in Rust. Milestone 6 is built before 3 to 5, see the decision log.
+Milestone 2 was completed in Python and then ported to Rust on 2026-10-12 under the Rust core spec. The Python engine is gone: the Python package is now a thin layer over the Rust extension, and the algorithm milestones that follow proceed in Rust. Milestone 6 is built before 3 to 5, see the decision log. It was built on 2026-10-12 under [the GUI spec](superpowers/specs/2026-10-12-gui-design.md).
 
 ## 14. Decision log
 
