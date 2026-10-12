@@ -17,6 +17,9 @@ dependencies = [
 [project.optional-dependencies]
 fast = ["numba>=0.59"]
 
+[project.scripts]
+plotline = "plotline.cli.main:main"
+
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
 
