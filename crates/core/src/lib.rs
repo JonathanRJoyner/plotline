@@ -3,6 +3,7 @@
 pub mod cache;
 pub mod export;
 pub mod math;
+pub mod preview;
 pub mod registry;
 pub mod runner;
 pub mod settings;

@@ -56,21 +56,53 @@ pub(crate) fn roots() -> [Artifact; 3] {
     ]
 }
 
-/// A drawing on an A4 page with a 10 mm margin and one layer of the pen "Black 0.3" holding
-/// `paths`, in order, and no tone map.
-pub(crate) fn drawing_with(paths: Vec<Vec<[f64; 2]>>) -> Drawing {
+/// A drawing on `canvas` with one layer of `pen` holding `paths`, in order, and no tone map.
+fn drawing_on(canvas: Canvas, pen: Pen, paths: Vec<Vec<[f64; 2]>>) -> Drawing {
     let mut layer_paths = Paths::new();
     for path in &paths {
         layer_paths.push(path);
     }
     Drawing {
-        canvas: Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap(),
+        canvas,
         layers: vec![Layer {
-            pen: Pen::new("Black 0.3", 0.3, "#000000").unwrap(),
+            pen,
             paths: layer_paths,
         }],
         tone: None,
     }
+}
+
+/// A drawing on an A4 page with a 10 mm margin and one layer of the pen "Black 0.3" holding
+/// `paths`, in order, and no tone map.
+pub(crate) fn drawing_with(paths: Vec<Vec<[f64; 2]>>) -> Drawing {
+    drawing_on(
+        Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap(),
+        Pen::new("Black 0.3", 0.3, "#000000").unwrap(),
+        paths,
+    )
+}
+
+/// A drawing on a 100 by 100 mm page with no margin and one layer of a pen `pen_width_mm` wide in
+/// `color` holding `paths`, in order, and no tone map.
+pub(crate) fn drawing_100(paths: Vec<Vec<[f64; 2]>>, pen_width_mm: f64, color: &str) -> Drawing {
+    drawing_on(
+        Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap(),
+        Pen::new("Pen", pen_width_mm, color).unwrap(),
+        paths,
+    )
+}
+
+/// [`drawing_100`] with the pen "Black 0.3" and a tone map of full ink over the whole page.
+pub(crate) fn drawing_100_with_tone(paths: Vec<Vec<[f64; 2]>>) -> Drawing {
+    let mut d = drawing_100(paths, 0.3, "#000000");
+    d.tone = Some(Arc::new(ToneMap {
+        width: 1,
+        height: 1,
+        ink: vec![1.0],
+        mm_per_px: 100.0,
+        origin_mm: [0.0, 0.0],
+    }));
+    d
 }
 
 /// Every frame `run` gives until it stops.
