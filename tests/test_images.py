@@ -1,6 +1,7 @@
 """Tests for loading image files as float RGB arrays."""
 
 import numpy as np
+import pytest
 from PIL import Image
 from synthetic import gradient
 
@@ -45,3 +46,34 @@ def test_load_composites_the_other_transparency_forms_on_white(tmp_path):
     }
     for name, (img, kw) in forms.items():
         assert load_image(save(tmp_path, img, f"{name}.png", **kw)).min() == 1.0, name
+
+
+@pytest.mark.parametrize(
+    ("dtype", "name"),
+    [("<u2", "i.png"), (">u2", "i.tif"), ("<i4", "i.tif")],
+    ids=["I;16", "I;16B", "I"],
+)
+def test_load_scales_16_bit_greyscale_to_full_range(tmp_path, dtype, name):
+    ramp = np.linspace(0, 65535, 16).astype(dtype)
+    a = load_image(save(tmp_path, Image.fromarray(np.tile(ramp, (4, 1))), name))
+    row = a[0, :, 0]
+    assert a.shape == (4, 16, 3) and a.dtype == np.float32 and (a == a[..., :1]).all()
+    assert np.all(np.diff(row) >= 0) and row[-1] == 1.0 and abs(row[8] - 0.5) < 0.04
+
+
+def test_load_shrunken_greyscale_stays_in_range_and_saturates_overrange_values(tmp_path):
+    def step(low, high):
+        edge = np.full((8, 5000), low, np.int32)
+        edge[:, 2500:] = high
+        return load_image(save(tmp_path, Image.fromarray(edge), f"{low}.tif"))
+
+    exact, beyond = step(0, 65535), step(-100000, 100000)
+    assert exact.shape == (6, 4000, 3) and 0.0 <= exact.min() and exact.max() <= 1.0
+    assert np.array_equal(exact, beyond)
+
+
+def test_load_refuses_float_images(tmp_path):
+    with pytest.raises(
+        ValueError, match="unsupported image mode 'F': float images have no defined white level"
+    ):
+        load_image(save(tmp_path, Image.fromarray(np.zeros((4, 4), np.float32)), "f.tif"))
