@@ -2,7 +2,7 @@
 
 Turn images into drawings for pen plotters.
 
-plotline converts raster images into vector line art, such as stippling, single continuous lines, dashes and sketched strokes. It comes with a live preview that shows the algorithm at work, so you can see what a setting does before you commit ink to paper.
+plotline converts raster images into vector line art, such as stippling, single continuous lines, dashes and sketched strokes. It will come with a live preview that shows the algorithm at work, so you can see what a setting does before you commit ink to paper.
 
 ## What works now
 
