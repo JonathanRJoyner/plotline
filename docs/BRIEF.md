@@ -221,7 +221,7 @@ The ten questions the brief opened with (frontend stack, performance strategy, c
    - add `src/plotline/py.typed` so third-party style authors get type information
    - add `[project.urls]` and classifiers to `pyproject.toml`
    - add a CHANGELOG and a short CONTRIBUTING (the verification set, the licence rule, the naming rule)
-   - scan the full git history for personal paths and secrets
+   - scan the full git history for personal paths and secrets (done on 2026-10-12, see "Repository history")
    - restore the full CI matrix (Windows, macOS, Python 3.12)
    - add the release workflow, which builds the Vite bundle before the wheel and fails if `src/plotline/web/index.html` is missing, and register the trusted publisher on PyPI (owner action)
    - bump the version from `0.1.0.dev0` to `0.1.0` and tag `v0.1.0`
@@ -311,3 +311,4 @@ Milestone 2 was completed in Python and then ported to Rust on 2026-10-12 under 
 | WebP input | The image crate's `webp` decoder (`image-webp`, MIT or Apache-2.0) is enabled | Images saved from the web are often WebP; two of the owner's eight test images were. |
 | Test build | `cargo test` builds at opt-level 1 | Whole-style tests on real-sized rasters took nearly three minutes unoptimised and under thirty seconds at opt-level 1. |
 | Wasm size limit | The CI size check allows 2,000,000 bytes, up from the 1.5 MB of the Rust core spec | The ink style and the WebP decoder took the module from 1,299,070 to 1,500,838 bytes (574 KB gzipped), just over the old limit. Both are wanted, and shrinking with `wasm-opt -Os` would slow the live preview. The check stays to catch an accidental jump, such as a heavy dependency, and the log still prints the size. |
+| Repository history | Rewritten on 2026-10-12 before going public: every commit carries the owner's GitHub noreply address, and a printer brand was taken out of three old places. The history was also scanned for personal paths, secrets and images, and none were found. The earlier private repository is kept, renamed, as a private archive with the first five pull requests | The owner's personal address was on every commit. GitHub keeps a pull request's commits even after a force-push, so only a new repository removes them. |
