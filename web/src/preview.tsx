@@ -169,19 +169,30 @@ export function Preview(props: Props): JSX.Element {
     return () => cancelAnimationFrame(id);
   }, [props.canvas, props.frame, props.result, props.running, props.showSource, props.showTravel, props.hidden, props.firstPen, props.hasImage, view, size, bitmap]);
 
+  // Zooms by `k`, keeping the page point under (px, py) in place.
+  const zoom = (k: number, px: number, py: number) => setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));
+  const PAN: Record<string, [number, number]> = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] };
+
   return (
     <div ref={box} style={{ position: "relative", height: "100%" }}>
       <canvas
         ref={cvs}
+        tabIndex={0}
+        aria-label="Preview of the drawing: arrow keys pan, plus and minus zoom, 0 fits the page"
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", touchAction: "none", cursor: "grab" }}
+        onKeyDown={(e) => {
+          if (e.key === "+" || e.key === "=") zoom(1.25, size.w / 2, size.h / 2);
+          else if (e.key === "-") zoom(0.8, size.w / 2, size.h / 2);
+          else if (e.key === "0") fit(size.w, size.h);
+          else if (PAN[e.key]) setView((v) => ({ ...v, x: v.x + PAN[e.key][0], y: v.y + PAN[e.key][1] }));
+          else return;
+          e.preventDefault();
+        }}
         onWheel={(e) => {
           e.preventDefault();
           const r = e.currentTarget.getBoundingClientRect();
-          const px = e.clientX - r.left;
-          const py = e.clientY - r.top;
           // In proportion to the delta, so a trackpad's stream of small deltas zooms gradually.
-          const k = Math.exp(-e.deltaY * 0.002);
-          setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));
+          zoom(Math.exp(-e.deltaY * 0.002), e.clientX - r.left, e.clientY - r.top);
         }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);

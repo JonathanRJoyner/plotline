@@ -115,6 +115,12 @@ function Export({ status, machine, onExport, onGcode }: ExportProps) {
   return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onGcode={onGcode} />;
 }
 
+// The pens panel, told how many layers the last drawing has, so it can say which pens draw.
+function Pens({ status, ...props }: Omit<Parameters<typeof PensPanel>[0], "drawn"> & { status: StatusStore }) {
+  const { stats, layers } = useStatus(status);
+  return <PensPanel {...props} drawn={stats === null ? null : layers.length} />;
+}
+
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
@@ -134,6 +140,8 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
   // The run Stop was pressed for: a stage stops between steps, so the run can stay running a while.
   const [stopFor, setStopFor] = useState(0);
   const stopping = run.state === "running" && stopFor === run.id;
+  // A mark under a device pixel wide draws as a faint grey or not at all, which reads as a blank page.
+  const thin = stats !== null && preview.firstPen.width_mm * view.scale * (window.devicePixelRatio || 1) < 1;
   const latest = useRef(0);
   useEffect(() => {
     engine.onEvent = (e) => {
@@ -158,7 +166,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
   return (
     <>
       {/* Grouped, so a narrow window wraps whole groups. */}
-      <div class="toolbar">
+      <div class="toolbar" id="toolbar" tabIndex={-1}>
         <span class="group">
           <label class="button">
             <ImageUp /> Open image
@@ -202,6 +210,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
           {...preview} frame={frame} result={result} running={run.state === "running"} showSource={showSource}
           showTravel={showTravel} view={view} onView={setView} fits={fits}
         />
+        {thin && <p class="hint">The pen is under a pixel wide at this zoom, so its marks barely show: zoom in to see them.</p>}
       </div>
       <footer>
         <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
@@ -299,9 +308,9 @@ export function App() {
     if (!file) return;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      await call("setImageBytes", [bytes], "", [bytes.buffer]);
+      await call("setImageBytes", [bytes], "image", [bytes.buffer]);
     } catch (e) {
-      setErrors((es) => ({ ...es, "": message(e) }));
+      setErrors((es) => ({ ...es, image: message(e) }));
     }
   }
 
@@ -314,11 +323,11 @@ export function App() {
     let preset: unknown;
     try {
       preset = JSON.parse(await file.text());
-    } catch (e) {
-      setErrors((es) => ({ ...es, "": message(e) }));
+    } catch {
+      setErrors((es) => ({ ...es, preset: `${file.name} is not a preset: it is not valid JSON.` }));
       return;
     }
-    setWarnings((await call<string[]>("loadPreset", [preset])) ?? []);
+    setWarnings((await call<string[]>("loadPreset", [preset], "preset")) ?? []);
   }
 
   async function exportAs(format: "svg" | "json") {
@@ -337,7 +346,7 @@ export function App() {
     await call("setMachine", [machine], "machine");
     if (machine && state) {
       const { x_min, x_max, y_min, y_max } = machine.area;
-      await call("setCanvas", [{ ...state.canvas, width_mm: x_max - x_min, height_mm: y_max - y_min }]);
+      await call("setCanvas", [{ ...state.canvas, width_mm: x_max - x_min, height_mm: y_max - y_min }], "page");
     }
   }
 
@@ -353,6 +362,7 @@ export function App() {
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); openImage(imageFile(e.dataTransfer)); }}
     >
+      <a class="skip" href="#toolbar">Skip to the toolbar</a>
       <aside>
         <h1 class="brand"><Spline /> plotline</h1>
         <label>
@@ -373,14 +383,15 @@ export function App() {
       <main>
         <RunView
           engine={engine} status={status} stages={stages} canvas={state.canvas} hidden={hidden}
-          firstPen={state.pens[0]} hasImage={state.image} error={errors[""]} onOpen={openImage}
-          onSample={() => call("sample")} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
+          firstPen={state.pens[0]} hasImage={state.image} onOpen={openImage}
+          error={errors[""] || (errors.image && `Could not open the image (${errors.image}).${state.image ? " The previous image is still open." : ""}`)}
+          onSample={() => call("sample", [], "image")} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
         />
       </main>
       <aside>
-        <PagePanel canvas={state.canvas} onChange={(c) => call("setCanvas", [c])} />
-        <PensPanel
-          pens={state.pens} bank={bank} hidden={hidden} onChange={(p) => call("setPens", [p])}
+        <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
+        <Pens
+          status={status} pens={state.pens} bank={bank} hidden={hidden} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
           onToggle={(i) => setHidden((h) => {
             const next = new Set(h); // a new set each time: the preview redraws on its identity
             if (!next.delete(i)) next.add(i);
@@ -389,7 +400,7 @@ export function App() {
         />
         <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
         <SpeedsPanel speeds={state.speeds} onChange={(s) => call("setSpeeds", [s])} />
-        <PresetsPanel warnings={warnings} onSave={savePreset} onLoad={loadPreset} />
+        <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
         {/* Last and collapsed: a plotter driven from SVG never needs it. */}
         <MachinePanel
           machine={state.machine} error={errors.machine}

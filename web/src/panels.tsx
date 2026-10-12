@@ -11,7 +11,7 @@ const SIZES: [string, number, number][] = [
 ];
 const near = (a: number, b: number) => Math.abs(a - b) <= 0.05;
 
-export function PagePanel({ canvas, onChange }: { canvas: Canvas; onChange: (canvas: Canvas) => void }): JSX.Element {
+export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?: string; onChange: (canvas: Canvas) => void }): JSX.Element {
   const { width_mm: w, height_mm: h } = canvas;
   const size = SIZES.find(([, a, b]) => (near(a, w) && near(b, h)) || (near(a, h) && near(b, w)));
   const set = (patch: Partial<Canvas>) => onChange({ ...canvas, ...patch });
@@ -53,13 +53,19 @@ export function PagePanel({ canvas, onChange }: { canvas: Canvas; onChange: (can
           </select>
         </label>
       </div>
+      {error && <p class="error">{error}</p>}
     </fieldset>
   );
 }
 
-type PensProps = { pens: Pen[]; bank: Pen[]; hidden: Set<number>; onChange: (pens: Pen[]) => void; onToggle: (index: number) => void };
+type PensProps = {
+  pens: Pen[]; bank: Pen[]; hidden: Set<number>; error?: string;
+  // How many pens the last drawing has layers for, or null before the first drawing.
+  drawn: number | null;
+  onChange: (pens: Pen[]) => void; onToggle: (index: number) => void;
+};
 
-export function PensPanel({ pens, bank, hidden, onChange, onToggle }: PensProps): JSX.Element {
+export function PensPanel({ pens, bank, hidden, error, drawn, onChange, onToggle }: PensProps): JSX.Element {
   const set = (i: number, patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   return (
     <fieldset>
@@ -69,11 +75,18 @@ export function PensPanel({ pens, bank, hidden, onChange, onToggle }: PensProps)
           <input type="color" aria-label="Colour" value={p.color} onChange={(e) => set(i, { color: e.currentTarget.value })} />
           <input type="text" aria-label="Name" value={p.name} onChange={(e) => set(i, { name: e.currentTarget.value })} />
           <input type="number" aria-label="Width in mm" min="0" step="0.05" value={p.width_mm} onChange={(e) => set(i, { width_mm: e.currentTarget.valueAsNumber })} /> mm
-          <input type="checkbox" aria-label="Show" title="Show in the preview" checked={!hidden.has(i)} onChange={() => onToggle(i)} />
+          <input type="checkbox" aria-label="Show in the preview" title="Show in the preview" checked={!hidden.has(i)} onChange={() => onToggle(i)} />
           {/* The session refuses an empty pen list. */}
           <button type="button" class="icon" aria-label="Remove pen" title="Remove pen" disabled={pens.length === 1} onClick={() => onChange(pens.filter((_, j) => j !== i))}><X /></button>
         </div>
       ))}
+      {error && <p class="error">{error}</p>}
+      {drawn !== null && drawn < pens.length && (
+        <p class="help">
+          {drawn === 1 ? "This style draws with the first pen only" : `This drawing uses the first ${drawn} pens`}; the others stay empty.
+        </p>
+      )}
+      {hidden.size > 0 && <p class="help">A hidden pen is only hidden in the preview: it still exports.</p>}
       <button type="button" onClick={() => onChange([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }])}><Plus /> Add pen</button>
       <label>
         Add from bank
@@ -123,6 +136,9 @@ export function SpeedsPanel({ speeds, onChange }: { speeds: Speeds; onChange: (s
 export function StatsPanel({ stats }: { stats: Stats | null }): JSX.Element {
   const t = Math.round(stats?.estimated_seconds ?? 0);
   if (!stats) return <p class="stats">No drawing yet</p>;
+  if (stats.path_count === 0) {
+    return <p class="stats">No marks at these settings. Try a lower threshold, or the black, white and gamma settings under Image.</p>;
+  }
   return (
     <p class="stats">
       {stats.path_count} paths · pen down {stats.pen_down_mm.toFixed(1)} mm · pen up {stats.pen_up_mm.toFixed(1)} mm
@@ -158,9 +174,9 @@ export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX
   );
 }
 
-type PresetsProps = { warnings: string[]; onSave: () => void; onLoad: (file: File) => void };
+type PresetsProps = { warnings: string[]; error?: string; onSave: () => void; onLoad: (file: File) => void };
 
-export function PresetsPanel({ warnings, onSave, onLoad }: PresetsProps): JSX.Element {
+export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps): JSX.Element {
   return (
     <fieldset>
       <legend>Presets</legend>
@@ -176,6 +192,7 @@ export function PresetsPanel({ warnings, onSave, onLoad }: PresetsProps): JSX.El
           }}
         />
       </label>
+      {error && <p class="error">{error}</p>}
       {warnings.length > 0 && <ul class="warnings">{warnings.map((w) => <li>{w}</li>)}</ul>}
     </fieldset>
   );
