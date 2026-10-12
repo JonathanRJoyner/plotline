@@ -59,9 +59,9 @@ class OrderStage(Stage):
     ) -> Generator[Frame, None, list[NDArray[np.float64]]]:
         assert isinstance(settings, OrderSettings)
         canvas: Canvas = inputs["canvas"]
-        kept: list[NDArray[np.float64]] = [
-            p for p in inputs["paths"] if path_length(p) >= settings.min_length_mm
-        ]
+        kept: list[NDArray[np.float64]] = list(inputs["paths"])
+        if settings.min_length_mm > 0:  # at 0 no path is shorter, so skip measuring every one
+            kept = [p for p in kept if path_length(p) >= settings.min_length_mm]
         n = len(kept)
         if n == 0 or not settings.optimize:
             yield Frame(1.0, f"{n}/{n} paths", paths=kept)
@@ -76,6 +76,9 @@ class OrderStage(Stage):
             # List the k endpoints nearest the pen and double k until one is on an undrawn path,
             # which happens at the latest when k reaches 2n and lists every endpoint.
             k = 8
+            # shortcut: k-doubling goes quadratic when many endpoints coincide, and the greedy
+            # loop costs ~100 us per path in Python; revisit with the stipple renderer in spec 2
+            # (dedupe coincident endpoints or move the loop to a numba kernel).
             while True:
                 near = tree.query(pen, min(k, 2 * n))[1]
                 free = near[~drawn[near % n]]

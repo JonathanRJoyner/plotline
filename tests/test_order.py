@@ -37,6 +37,17 @@ def test_min_length_drops_short_paths_but_keeps_dots_at_zero():
     assert len(order([dot, short])[1]) == 2
 
 
+def test_no_length_is_measured_without_a_minimum_and_the_result_is_a_new_list(monkeypatch):
+    def fail(path):
+        raise AssertionError("measured a path that no minimum can drop")
+
+    monkeypatch.setattr("plotline.core.stages.order.path_length", fail)
+    paths = [np.array([[90.0, 90.0], [91.0, 90.0]]), np.array([[5.0, 5.0]])]
+    out = order(paths, optimize=False)[1]
+    assert out is not paths and all(a is b for a, b in zip(out, paths, strict=True))
+    assert len(order(paths)[1]) == 2
+
+
 def test_optimize_off_keeps_order():
     paths = [np.array([[90.0, 90.0], [91.0, 90.0]]), np.array([[10.0, 10.0], [11.0, 10.0]])]
     out = order(paths, optimize=False)[1]

@@ -146,12 +146,12 @@ The JSON Schema from `model_json_schema()` is the only description of settings t
 `core/stage.py`:
 
 ```python
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Frame:
     progress: float                     # 0..1 within the stage
     label: str                          # e.g. "row 12/40"
-    points: np.ndarray | None = None    # (N, 2) mm
-    paths: list[np.ndarray] | None = None
+    points: NDArray[np.float64] | None = None  # (N, 2) mm
+    paths: list[NDArray[np.float64]] | None = None
     stage: str = ""                     # filled in by the runner
 
 class Cancelled(Exception): ...
@@ -316,7 +316,7 @@ Coordinates rounded to three decimals so golden files are stable.
 
 State:
 
-- `image: np.ndarray | None`, float32 RGB. `load_image(path)` uses Pillow, converts to RGB, and downsizes so the long edge is at most 4000 px. `set_image(array)` accepts an array directly.
+- `image: np.ndarray | None`, float32 RGB. `load_image(path)` uses Pillow, converts to RGB, and downsizes so the long edge is at most 4000 px. 16-bit integer greyscale images are scaled by 65535 and float images are refused with a `ValueError`. `set_image(array)` accepts an array directly.
 - `canvas: Canvas`, default 210 by 297 mm with a 10 mm margin and `fit`.
 - `pens: tuple[Pen, ...]`, default one pen named "Black 0.3", 0.3 mm, `#000000`.
 - `style: Style`, `settings: dict[str, Settings]`. `set_style(name_or_style)` accepts a registered name or a `Style` object, resets settings to that style's defaults and keeps the cache. `update(stage, **values)` validates and replaces that stage's settings.

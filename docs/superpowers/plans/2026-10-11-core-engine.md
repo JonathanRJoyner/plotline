@@ -953,7 +953,7 @@ git commit -m "Add the style registry, the grid style and determinism tests" -m 
 **Interfaces:**
 - Produces: `to_svg(result: Result) -> str` and `to_json_dict(result: Result) -> dict[str, Any]`, both pure. SVG: root `<svg xmlns="http://www.w3.org/2000/svg" width="{W}mm" height="{H}mm" viewBox="0 0 {W} {H}">` with `W` and `H` formatted with `:g`; one `<g id="pen-{i}" data-pen="{name}" fill="none" stroke="{color}" stroke-width="{width:g}" stroke-linecap="round" stroke-linejoin="round">` per layer, 1-based; one `<path d="M x y L x y ..."/>` per path with `:.3f` coordinates, and `M x y L x y` for a one-vertex path; the pen name is attribute-escaped. JSON: `{"format": "plotline-paths", "version": 1, "units": "mm", "canvas": {"width_mm", "height_mm", "margin_mm", "fit"}, "layers": [{"pen": {"name", "width_mm", "color"}, "paths": [[[x, y], ...], ...]}]}` with coordinates as floats rounded to 3 decimals.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 SVG = "{http://www.w3.org/2000/svg}"
@@ -987,20 +987,20 @@ def test_json_rounds_to_three_decimals_and_serialises():
     assert d["layers"][0]["paths"] == [[[1.235, 2.0]]] and json.dumps(d)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_export.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement both exporters**
+- [x] **Step 3: Implement both exporters**
 
 Escape the pen name with `xml.sax.saxutils.escape(name, {'"': "&quot;"})`.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 4 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/core/export tests/test_export.py
@@ -1017,7 +1017,7 @@ git commit -m "Add SVG and JSON exporters" -m "Co-Authored-By: Claude Fable 5.1 
 - Consumes: `run_style`, `GRID`, `to_json_dict`, `gradient`, `checkerboard`.
 - Produces: a pytest option `--update-golden` that rewrites the golden files instead of comparing.
 
-- [ ] **Step 1: Write `tests/conftest.py` and the failing test**
+- [x] **Step 1: Write `tests/conftest.py` and the failing test**
 
 `conftest.py` adds the `--update-golden` boolean option with `pytest_addoption` and an `update_golden` fixture returning its value.
 
@@ -1042,22 +1042,22 @@ def test_golden(name, update_golden):
     assert np.allclose(np.concatenate([np.array(p) for p in a]), np.concatenate([np.array(p) for p in e]), atol=1e-3)
 ```
 
-- [ ] **Step 2: Run to verify it fails for the missing files**
+- [x] **Step 2: Run to verify it fails for the missing files**
 
 Run: `uv run pytest tests/test_golden.py -v`
 Expected: FAIL with `FileNotFoundError`.
 
-- [ ] **Step 3: Generate the golden files**
+- [x] **Step 3: Generate the golden files**
 
 Run: `uv run pytest tests/test_golden.py --update-golden -q`
 Expected: 2 passed, two files under `tests/golden/`, each under 100 KB.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Run: `uv run pytest tests/test_golden.py -v`
 Expected: 2 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/conftest.py tests/test_golden.py tests/golden
@@ -1078,7 +1078,7 @@ If a CI platform later flips a single cell in a golden file, move `threshold` in
   - `class RunState(str, Enum)` with `idle`, `running`, `done`, `cancelled`, `error`.
   - `class Session` with `__init__(self, cache_bytes: int = 512 * 2**20, max_fps: float = 15.0)`. Attributes: `image: NDArray[np.float32] | None`, `canvas: Canvas` (default `Canvas(210, 297, 10)`), `pens: tuple[Pen, ...]` (default `(Pen("Black 0.3", 0.3, "#000000"),)`), `style: Style` (default `get_style("grid")`), `settings: dict[str, Settings]`, `cache: StageCache`, `result: Result | None`, `state: RunState`, `max_fps: float`. Methods: `load_image(path) -> None`; `set_image(image: NDArray[Any]) -> None` accepting `(H, W, 3)` or `(H, W)` arrays, uint8 scaled by 255, stored as float32 RGB; `set_canvas(canvas: Canvas) -> None`; `set_pens(pens: Sequence[Pen]) -> None` raising `ValueError` when empty; `set_style(style: str | Style) -> None` resetting `settings` to the style's defaults and keeping the cache; `update(stage: str, **values: Any) -> None` raising `KeyError` for an unknown stage and validating with `type(current).model_validate({**current.model_dump(), **values})`; `run_blocking() -> Result` raising `RuntimeError` when no image is loaded, driving `run_style` in the calling thread through `self._deliver(frame)` (a no-op until Task 16), setting `state` to `done` and `result`, re-raising stage exceptions after setting `state` to `error`, and re-raising `Cancelled` after setting `state` to `cancelled`; `svg() -> str`; `json_dict() -> dict[str, Any]`; `export_svg(path) -> None`; `export_json(path) -> None`, all four raising `RuntimeError` when `result` is `None`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_defaults():
@@ -1152,18 +1152,18 @@ def test_load_composites_alpha_on_white(tmp_path):
     assert a.min() == 1.0
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_session.py tests/test_images.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `images.py` and `session.py`**
+- [x] **Step 3: Implement `images.py` and `session.py`**
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 11 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/session tests/test_session.py tests/test_images.py
@@ -1184,7 +1184,7 @@ git commit -m "Add the session with image loading, blocking runs and export" -m 
   - `Session.subscribe(callback: Callable[[Frame], None]) -> Callable[[], None]` returning an unsubscribe function.
   - `Session._deliver(frame: Frame) -> None`: delivers to every subscriber when `frame.progress >= 1` or at least `1 / max_fps` seconds (by `time.monotonic()`) have passed since the last delivery; the first frame of a run is always delivered. `run_blocking` delivers through the same method.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 PATHS = [np.array([[1.0, 1.0], [2.0, 2.0]])]
@@ -1232,20 +1232,20 @@ def test_unsubscribe_and_blocking_delivery():
     unsub(); seen.clear(); s.run_blocking(); assert seen == []
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_session_threads.py -v`
 Expected: FAIL with `AttributeError` on `subscribe` or `run`.
 
-- [ ] **Step 3: Implement `RunHandle`, `run`, `cancel`, `subscribe` and `_deliver`**
+- [x] **Step 3: Implement `RunHandle`, `run`, `cancel`, `subscribe` and `_deliver`**
 
 Keep one private `_execute(handle, style, settings, roots)` used by both `run_blocking` and the worker thread so the state transitions live in one place. Initialise the throttle clock to `-inf` at the start of each run.
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 6 passed, plus the Task 15 tests still passing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/session/session.py tests/test_session_threads.py
@@ -1263,7 +1263,7 @@ git commit -m "Run pipelines in a worker thread with cancellation and throttled 
 - Produces, in `plotline.session.stats`: `@dataclass class Speeds: draw_mm_s: float = 50.0; travel_mm_s: float = 100.0; pen_lift_s: float = 0.2`; `@dataclass(frozen=True) class Stats: path_count: int; pen_down_mm: float; pen_up_mm: float; estimated_seconds: float`; `compute_stats(result: Result, speeds: Speeds) -> Stats` using `total_length` and `travel_length` from `plotline.core.paths` over all layers' paths in order, starting at the drawing rect's top-left corner, with `estimated_seconds = pen_down_mm / draw_mm_s + pen_up_mm / travel_mm_s + path_count * pen_lift_s`.
 - Produces, in `Session`: attribute `speeds: Speeds` (default `Speeds()`) and `stats() -> Stats` raising `RuntimeError` without a result.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_compute_stats_by_hand():
@@ -1284,18 +1284,18 @@ def test_session_stats():
         Session().stats()
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_stats.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `stats.py` and `Session.stats`**
+- [x] **Step 3: Implement `stats.py` and `Session.stats`**
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 3 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/session/stats.py src/plotline/session/session.py tests/test_stats.py
@@ -1313,7 +1313,7 @@ git commit -m "Add drawing stats and a plot time estimate" -m "Co-Authored-By: C
 - Produces, in `plotline.session.preview`: `SUPERSAMPLE = 4`; `render_png(result: Result, width_px: int = 1000, travel: bool = False, source: bool = False) -> bytes`. Output height is `round(canvas.height_mm * width_px / canvas.width_mm)`. Draws, at `SUPERSAMPLE` times the size and then `Image.reduce(SUPERSAMPLE)`: a white page; the drawing rect outlined in `#dddddd`; when `source` and `result.tone` is not `None`, the tone map as grey `255 * (1 - ink)` resized to its `rect_mm` and blended at 30 percent; each layer's paths in the pen colour at width `max(1, pen.width_mm * px_per_mm * SUPERSAMPLE)` with `joint="curve"` and filled circles of that diameter at both ends for round caps, a one-vertex path as one such circle; when `travel`, a `#ff8080` line of width `SUPERSAMPLE` from each path's last vertex to the next path's first vertex. Returns PNG bytes.
 - Produces, in `Session`: `preview_png(width_px: int = 1000, travel: bool = False, source: bool = False) -> bytes` raising `RuntimeError` without a result.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 PEN = Pen("p", 2.0, "#000000")
@@ -1347,18 +1347,18 @@ def test_session_preview():
         Session().preview_png()
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_preview.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `preview.py` and `Session.preview_png`**
+- [x] **Step 3: Implement `preview.py` and `Session.preview_png`**
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 6 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/session/preview.py src/plotline/session/session.py tests/test_preview.py
@@ -1376,7 +1376,7 @@ git commit -m "Render preview PNGs at true pen width with travel and source over
 - Produces, in `plotline.session.presets`: `PRESET_FORMAT = "plotline-preset"`; `PRESET_VERSION = 1`; `MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}` mapping a version to the function that upgrades a preset of that version to the next; `preset_dict(session: Session) -> dict[str, Any]` returning `{"format", "version", "style", "canvas": asdict(canvas), "pens": [asdict(p)...], "settings": {name: s.model_dump(mode="json")}}`; `apply_preset(session: Session, data: dict[str, Any]) -> None` raising `ValueError` on a wrong `format` or a `version` above `PRESET_VERSION`, applying migrations from the file's version up to the current one, then `set_style`, `set_canvas`, `set_pens`, and per stage `update` with the keys that exist, emitting `warnings.warn(..., UserWarning)` once per unknown stage and once per unknown key; `save_preset(session, path) -> None`; `load_preset(session, path) -> None`.
 - Produces, in `Session`: `save_preset(path) -> None` and `load_preset(path) -> None` delegating to the module.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_round_trip(tmp_path):
@@ -1412,18 +1412,18 @@ def test_migration_is_invoked(monkeypatch):
     assert calls == [0]
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_presets.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `presets.py` and the two `Session` methods**
+- [x] **Step 3: Implement `presets.py` and the two `Session` methods**
 
-- [ ] **Step 4: Run the tests and the verification set**
+- [x] **Step 4: Run the tests and the verification set**
 
 Expected: 5 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/session/presets.py src/plotline/session/session.py tests/test_presets.py
@@ -1445,7 +1445,7 @@ git commit -m "Add versioned JSON presets" -m "Co-Authored-By: Claude Fable 5.1 
   - `run STYLE IMAGE --out PATH [--json PATH] [--preview PATH] [--width MM] [--height MM] [--margin MM] [--fit fit|fill] [--pen NAME:WIDTH_MM:COLOR]... [--set STAGE.KEY=VALUE]... [--preset PATH] [--save-preset PATH] [--quiet]`. Order: `Session(max_fps=4)`, `load_image`, `load_preset` if given, `set_style(STYLE)` only when the session's style name differs, canvas rebuilt from the current canvas with any given `--width`, `--height`, `--margin`, `--fit`, pens from `--pen` when given, then each `--set`. A `--set` without exactly one `.` before `=` and one `=` is a `click.BadParameter`. `ValueError`, `KeyError` and `pydantic.ValidationError` from the session become `click.ClickException` with the message. Progress frames print `stage: label` to stderr unless `--quiet`. Writes `--out` SVG and the optional JSON, preview and preset, then prints `paths: N  pen down: X mm  pen up: Y mm  estimated: Z s` with one decimal.
   - `gui` and `mcp`: print `The GUI is not available yet.` / `The MCP server is not available yet.` to stderr and exit with status 1.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 @pytest.fixture
@@ -1491,20 +1491,20 @@ def test_gui_and_mcp_stubs():
         assert r.exit_code == 1 and "not available" in r.stderr
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_cli.py -v`
 Expected: FAIL with `ImportError`.
 
-- [ ] **Step 3: Implement `main.py` and add the script entry to `pyproject.toml`, then `uv sync`**
+- [x] **Step 3: Implement `main.py` and add the script entry to `pyproject.toml`, then `uv sync`**
 
 Define `parse_set(value: str) -> tuple[str, str, str]` and `parse_pen(value: str) -> Pen` as module functions so the error messages stay in one place.
 
-- [ ] **Step 4: Run the tests and the verification set, then try the real entry point**
+- [x] **Step 4: Run the tests and the verification set, then try the real entry point**
 
 Expected: 5 passed. Run `uv run plotline styles` and expect a line starting with `grid`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/plotline/cli/main.py pyproject.toml uv.lock tests/test_cli.py
@@ -1516,21 +1516,21 @@ git commit -m "Add the command line interface" -m "Co-Authored-By: Claude Fable 
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Update the README**
+- [x] **Step 1: Update the README**
 
 Replace the status paragraph with: what works now (the `grid` style via the CLI, SVG and JSON export, preview PNGs, presets), how to install from a clone (`uv sync`, then `uv run plotline --help`), one `plotline run grid your-photo.jpg --out drawing.svg --preview preview.png` example, and a pointer to the brief for everything that is still planned. Name no other tools. Reference no third-party images.
 
-- [ ] **Step 2: Run the full verification set and the licence check**
+- [x] **Step 2: Run the full verification set and the licence check**
 
 Run: `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy src`, `uv run pytest -q`, `uv run python scripts/check_licenses.py`
 Expected: all clean, every test passing, licence check exit 0.
 
-- [ ] **Step 3: Build the wheel once**
+- [x] **Step 3: Build the wheel once**
 
 Run: `uv build`
 Expected: `dist/plotline-0.1.0.dev0-py3-none-any.whl` is produced. `dist/` is ignored by git.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md

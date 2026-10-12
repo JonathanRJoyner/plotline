@@ -90,6 +90,6 @@ class Stage(ABC):
 
         ``inputs`` and the returned artifact are shared with the cache and with later runs. Never
         modify them in place: copy before changing anything. The runner marks a returned array,
-        or each array in a returned list or tuple, read-only, so an in-place write to one raises
-        ``ValueError``. The root inputs belong to the caller and are not marked, but the same rule
-        holds for them."""
+        each array in a returned list or tuple, and the arrays held by the fields of a returned
+        dataclass read-only, so an in-place write to one raises ``ValueError``. The root inputs
+        belong to the caller and are not marked, but the same rule holds for them."""
