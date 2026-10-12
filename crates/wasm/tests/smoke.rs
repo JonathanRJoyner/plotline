@@ -53,3 +53,10 @@ fn grid_matches_the_golden_file() {
         }
     }
 }
+#[wasm_bindgen_test]
+fn the_pen_bank_is_listed() {
+    let pens: serde_json::Value = serde_json::from_str(&plotline_wasm::list_pens()).unwrap();
+    assert!(pens.as_array().unwrap().len() >= 30);
+    assert_eq!(pens[1]["name"], "Sakura Pigma Micron 005");
+    assert_eq!(pens[1]["width_mm"], 0.2);
+}

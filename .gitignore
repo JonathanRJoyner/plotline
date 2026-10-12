@@ -33,3 +33,6 @@ target/
 # Web build output
 web/pkg/
 src/plotline/web/
+
+# Claude Code worktrees and launch configs
+.claude/

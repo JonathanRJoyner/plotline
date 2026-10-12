@@ -107,7 +107,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     ctx.font = "6px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("Open an image to start", page.width_mm / 2, page.height_mm / 2);
+    ctx.fillText("Open, drop or paste an image to start", page.width_mm / 2, page.height_mm / 2);
   }
 }
 

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::{
-    image, registry, synthetic, Canvas, Drawing, Frame, Layer, Pen, RunState, SessionError,
+    image, pens, registry, synthetic, Canvas, Drawing, Frame, Layer, Pen, RunState, SessionError,
     DEFAULT_CACHE_BYTES,
 };
 use serde_json::{json, Value};
@@ -352,4 +352,10 @@ pub fn synthetic_checkerboard(w: u32, h: u32, cells: u32) -> Result<Vec<f32>, Js
         )));
     }
     Ok(synthetic::checkerboard(w, h, cells).rgb)
+}
+
+/// The pen bank as a JSON list of `{"name", "width_mm", "color"}`, in catalogue order.
+#[wasm_bindgen(js_name = listPens)]
+pub fn list_pens() -> String {
+    json!(pens::bank()).to_string()
 }

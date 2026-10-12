@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
 import init, { Session, syntheticGradient } from "../pkg/plotline_wasm.js";
 import { macrotask } from "./driver";
+import type { Pen } from "./events";
 import { Protocol, type Reply, type State } from "./protocol";
 
 beforeAll(async () => { await init({ module_or_path: readFileSync(new URL("../pkg/plotline_wasm_bg.wasm", import.meta.url)) }); });
@@ -117,4 +118,11 @@ test("cancel stops the current run", async () => {
   ok("setImage", ...image());
   await ended(1);
   expect(posted.filter((m) => m.type === "end")).toEqual([expect.objectContaining({ id: 1, state: "cancelled" })]);
+});
+
+test("listPens gives the bank", () => {
+  const { ok } = setup();
+  const pens = ok("listPens").value as Pen[];
+  expect(pens.length).toBeGreaterThan(30);
+  expect(pens.find((p) => p.name === "Sakura Pigma Micron 005")?.width_mm).toBe(0.2);
 });

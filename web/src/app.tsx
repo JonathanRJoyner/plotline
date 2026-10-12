@@ -4,7 +4,8 @@
 // an input the user is typing into.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
-import type { FrameEvent, ResultEvent } from "./events";
+import type { FrameEvent, Pen, ResultEvent } from "./events";
+import { imageFile } from "./files";
 import { ExportPanel, PagePanel, PensPanel, PresetsPanel, SpeedsPanel, StatsPanel, StatusBar } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
@@ -23,6 +24,23 @@ function download(name: string, text: string, type: string) {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url));
+}
+
+// The last preset, kept in the browser so a reload keeps the setup. Storage can be missing or
+// full, and the setup is a convenience, so both are ignored.
+const REMEMBERED = "plotline.preset";
+function remember(text: string | null) {
+  try {
+    if (text === null) localStorage.removeItem(REMEMBERED);
+    else localStorage.setItem(REMEMBERED, text);
+  } catch { /* ignored */ }
+}
+function remembered(): unknown {
+  try {
+    return JSON.parse(localStorage.getItem(REMEMBERED) ?? "null");
+  } catch {
+    return null;
+  }
 }
 
 type Status = Pick<State, "run" | "stats">;
@@ -104,6 +122,7 @@ export function App() {
     return new Engine(worker);
   });
   const [styles, setStyles] = useState<Style[] | null>(null);
+  const [bank, setBank] = useState<Pen[]>([]);
   const [state, setState] = useState<State | null>(null);
   const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null }));
   const [stages, setStages] = useState<Stage[]>([]);
@@ -116,9 +135,12 @@ export function App() {
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
+  const save = useRef<ReturnType<typeof setTimeout>>();
   const take = (s: State) => {
     setState(s);
     status.set({ run: s.run, stats: s.stats });
+    clearTimeout(save.current);
+    save.current = setTimeout(() => engine.call("preset").then((r) => remember(JSON.stringify(r.value)), () => {}), 500);
   };
 
   // Sends a command and takes the state from its reply. A refusal shows the message under
@@ -136,10 +158,22 @@ export function App() {
   }
 
   useEffect(() => {
-    engine.call<Style[]>("listStyles").then(({ state, value }) => {
-      take(state);
+    engine.call<Pen[]>("listPens").then((r) => setBank(r.value), () => {});
+    engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
       setStyles(value);
+      const saved = remembered();
+      if (saved) {
+        try {
+          state = (await engine.call("loadPreset", [saved])).state;
+        } catch {
+          remember(null); // a preset this build refuses would block every start
+        }
+      }
+      take(state);
     }, (e) => setFatal(message(e)));
+    const paste = (e: ClipboardEvent) => openImage(imageFile(e.clipboardData));
+    document.addEventListener("paste", paste);
+    return () => document.removeEventListener("paste", paste);
   }, []);
 
   const style = state?.style;
@@ -203,7 +237,11 @@ export function App() {
   for (const k in draft) settings[k] = { ...settings[k], ...draft[k] };
 
   return (
-    <div class="app">
+    <div
+      class="app"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => { e.preventDefault(); openImage(imageFile(e.dataTransfer)); }}
+    >
       <aside>
         <fieldset>
           <legend>Style</legend>
@@ -244,7 +282,7 @@ export function App() {
       <aside>
         <PagePanel canvas={state.canvas} onChange={(c) => call("setCanvas", [c])} />
         <PensPanel
-          pens={state.pens} hidden={hidden} onChange={(p) => call("setPens", [p])}
+          pens={state.pens} bank={bank} hidden={hidden} onChange={(p) => call("setPens", [p])}
           onToggle={(i) => setHidden((h) => {
             const next = new Set(h); // a new set each time: the preview redraws on its identity
             if (!next.delete(i)) next.add(i);

@@ -38,7 +38,7 @@ pub struct ToneSettings {
     /// Midtone curve applied to the luminance: above 1 darkens the midtones, below 1 lightens them.
     #[schemars(range(min = 0.1, max = 5.0), extend("x-step" = 0.05))]
     pub gamma: f64,
-    /// Contrast around mid-grey: positive values push tones apart, negative values squeeze them towards mid-grey.
+    /// Contrast around mid-grey: positive values push tones apart, negative values squeeze them towards mid-grey. Mid-grey itself stays put, so a style that thresholds at 0.5, such as grid at its default, shows no change.
     #[schemars(range(min = -1.0, max = 1.0), extend("x-step" = 0.05))]
     pub contrast: f64,
     /// Gaussian blur, given as sigma in mm, that smooths the tone map; 0 turns it off.

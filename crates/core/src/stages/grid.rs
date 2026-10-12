@@ -21,7 +21,7 @@ use crate::types::{Paths, Points, ToneMap};
 #[serde(default, deny_unknown_fields)]
 pub struct GridSettings {
     /// Distance between neighbouring grid points, along the rows and along the columns.
-    #[schemars(range(min = 0.2, max = 20.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.2, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
     /// Least ink density that gets a point: 0 keeps every grid position and 1 keeps only full ink.
     #[schemars(range(min = 0.0, max = 1.0), extend("x-step" = 0.01))]
@@ -317,7 +317,7 @@ mod tests {
     }
     #[test]
     fn too_small_map_gives_no_cells() {
-        let (frames, pts) = run_grid(tone(vec![1.0; 1], 1, 1), json!({"spacing_mm": 20.0}));
+        let (frames, pts) = run_grid(tone(vec![1.0; 1], 1, 1), json!({"spacing_mm": 10.0}));
         assert!(pts.0.is_empty());
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].label, "no grid cells");
@@ -368,7 +368,7 @@ mod tests {
         assert_eq!(spacing["default"], 2.0);
         assert_eq!(
             (spacing["minimum"].as_f64(), spacing["maximum"].as_f64()),
-            (Some(0.2), Some(20.0))
+            (Some(0.2), Some(10.0))
         );
         assert_eq!(
             (spacing["x-step"].as_f64(), spacing["x-unit"].as_str()),

@@ -46,9 +46,9 @@ export function PagePanel({ canvas, onChange }: { canvas: Canvas; onChange: (can
   );
 }
 
-type PensProps = { pens: Pen[]; hidden: Set<number>; onChange: (pens: Pen[]) => void; onToggle: (index: number) => void };
+type PensProps = { pens: Pen[]; bank: Pen[]; hidden: Set<number>; onChange: (pens: Pen[]) => void; onToggle: (index: number) => void };
 
-export function PensPanel({ pens, hidden, onChange, onToggle }: PensProps): JSX.Element {
+export function PensPanel({ pens, bank, hidden, onChange, onToggle }: PensProps): JSX.Element {
   const set = (i: number, patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   return (
     <fieldset>
@@ -64,6 +64,19 @@ export function PensPanel({ pens, hidden, onChange, onToggle }: PensProps): JSX.
         </div>
       ))}
       <button type="button" onClick={() => onChange([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }])}>Add pen</button>
+      <label>
+        Add from bank{" "}
+        <select
+          value=""
+          onChange={(e) => {
+            const pen = bank.find((p) => p.name === e.currentTarget.value);
+            if (pen) onChange([...pens, pen]);
+          }}
+        >
+          <option value="">choose a pen</option>
+          {bank.map((p) => <option value={p.name}>{p.name} ({p.width_mm} mm)</option>)}
+        </select>
+      </label>
     </fieldset>
   );
 }
