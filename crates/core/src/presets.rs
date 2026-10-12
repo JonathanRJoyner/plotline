@@ -25,17 +25,38 @@ use crate::types::{Canvas, Fit, Pen};
 pub const PRESET_FORMAT: &str = "plotline-preset";
 
 /// The version this build writes and the newest it reads.
-pub const PRESET_VERSION: u64 = 2;
+pub const PRESET_VERSION: u64 = 3;
 
 /// A step of the chain: a preset of one version as the next.
 type Migration = fn(Value) -> Value;
 
 /// `MIGRATIONS[v]` upgrades a preset of version `v` to version `v + 1`.
-const MIGRATIONS: &[Option<Migration>] = &[None, Some(v1_to_v2)];
+const MIGRATIONS: &[Option<Migration>] = &[None, Some(v1_to_v2), Some(v2_to_v3)];
 
 /// Version 2 added the machine; a version 1 preset has none.
 fn v1_to_v2(mut v: Value) -> Value {
     v["machine"] = Value::Null;
+    v
+}
+
+/// Version 3 gave the machine's area a corner and a size and dropped the bed. An area without
+/// the four old bounds is left as it is, so `parse` names what is wrong with it.
+fn v2_to_v3(mut v: Value) -> Value {
+    if let Some(m) = v.get_mut("machine").and_then(Value::as_object_mut) {
+        m.remove("bed_mm");
+        let bound = |k: &str| m.get("area").and_then(|a| a.get(k)).and_then(Value::as_f64);
+        if let (Some(x0), Some(x1), Some(y0), Some(y1)) = (
+            bound("x_min"),
+            bound("x_max"),
+            bound("y_min"),
+            bound("y_max"),
+        ) {
+            m.insert(
+                "area".to_string(),
+                json!({"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}),
+            );
+        }
+    }
     v
 }
 
@@ -221,7 +242,7 @@ mod tests {
             &json!({"tone": {"resolution": 500}}),
         );
         assert_eq!(v["format"], "plotline-preset");
-        assert_eq!(v["version"], 2);
+        assert_eq!(v["version"], 3);
         let p = parse(&v).unwrap();
         assert_eq!(p.style, "grid");
         assert_eq!(p.settings["tone"]["resolution"], 500);
@@ -237,8 +258,8 @@ mod tests {
             .to_string()
             .starts_with("not a preset"));
         let mut v = good.clone();
-        v["version"] = json!(3);
-        assert!(parse(&v).unwrap_err().to_string().contains("reads up to 2"));
+        v["version"] = json!(4);
+        assert!(parse(&v).unwrap_err().to_string().contains("reads up to 3"));
         let mut v = good.clone();
         v["version"] = json!(0);
         assert!(parse(&v)
@@ -291,7 +312,7 @@ mod tests {
     #[test]
     fn a_version_that_is_not_a_whole_number_up_to_the_current_one_is_unsupported() {
         for (given, shown) in [
-            (json!(3), "3"),
+            (json!(4), "4"),
             (json!(1.0), "1.0"),
             (json!("1"), "\"1\""),
             (json!(-1), "-1"),
@@ -299,7 +320,7 @@ mod tests {
         ] {
             assert_eq!(
                 error_with("version", given),
-                format!("unsupported preset version {shown}: this build reads up to 2")
+                format!("unsupported preset version {shown}: this build reads up to 3")
             );
         }
         let mut v = to_value("grid", &a4(), &[black()], None, &json!({}));
@@ -399,8 +420,28 @@ mod tests {
     fn the_machine_round_trips() {
         let m: Machine = machine();
         let v = to_value("grid", &a4(), &[black()], Some(&m), &json!({}));
-        assert_eq!(v["machine"]["area"]["x_min"], 28.0);
+        assert_eq!(v["machine"]["area"]["x"], 28.0);
         assert_eq!(parse(&v).unwrap().machine, Some(m));
+    }
+
+    #[test]
+    fn a_version_2_preset_migrates_the_machine() {
+        let p = parse(&json!({
+            "format": "plotline-preset", "version": 2, "style": "grid", "pens": [], "settings": {},
+            "canvas": {"width_mm": 100, "height_mm": 50},
+            "machine": {
+                "name": "Test printer",
+                "bed_mm": [256, 256],
+                "area": {"x_min": 28, "x_max": 228, "y_min": 42, "y_max": 216},
+                "z_down_mm": 4, "z_up_mm": 9, "z_safe_mm": 20,
+                "draw_feed": 3600, "travel_feed": 6000, "z_feed": 1200,
+                "settle_ms": 50,
+                "start_gcode": "M104 S0\nM140 S0",
+                "end_gcode": "G1 Z20 F600\nG1 Y250 F3600",
+            },
+        }))
+        .unwrap();
+        assert_eq!(p.machine, Some(machine()));
     }
 
     #[test]

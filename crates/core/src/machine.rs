@@ -13,43 +13,37 @@ use crate::stats::Speeds;
 #[error("{0}")]
 pub struct MachineError(pub String);
 
-/// Where the pen may be below the safe height, in machine mm.
+/// Where the pen may be below the safe height, in machine mm: a corner and a size.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Area {
-    pub x_min: f64,
-    pub x_max: f64,
-    pub y_min: f64,
-    pub y_max: f64,
+    /// X of the corner with the smallest X and Y; may be negative.
+    pub x: f64,
+    /// Y of the corner with the smallest X and Y; may be negative.
+    pub y: f64,
+    /// The size along X.
+    pub width: f64,
+    /// The size along Y.
+    pub height: f64,
 }
 
 impl Area {
-    /// The area's width in mm.
-    pub fn width(&self) -> f64 {
-        self.x_max - self.x_min
-    }
-    /// The area's height in mm.
-    pub fn height(&self) -> f64 {
-        self.y_max - self.y_min
-    }
     /// Whether `p` lies inside the area, with `eps` of slack for rounding.
     pub fn contains(&self, [x, y]: [f64; 2], eps: f64) -> bool {
-        self.x_min - eps <= x
-            && x <= self.x_max + eps
-            && self.y_min - eps <= y
-            && y <= self.y_max + eps
+        self.x - eps <= x
+            && x <= self.x + self.width + eps
+            && self.y - eps <= y
+            && y <= self.y + self.height + eps
     }
 }
 
-/// A machine that draws with a pen: its bed, drawable area, pen heights, feeds and the G-code
-/// written around a plot.
+/// A machine that draws with a pen: its drawable area, pen heights, feeds and the G-code written
+/// around a plot.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Machine {
     /// The machine's name, shown to users.
     pub name: String,
-    /// The bed's width and height in mm; no move goes beyond it.
-    pub bed_mm: [f64; 2],
     /// Where the pen may be below `z_safe_mm`.
     pub area: Area,
     /// The Z the pen draws at.
@@ -79,18 +73,16 @@ impl Machine {
         if self.name.trim().is_empty() {
             return bad("name must not be empty".to_string());
         }
-        let [bw, bh] = self.bed_mm;
-        if !(bw > 0.0 && bh > 0.0) {
-            return bad(format!("bed_mm must be positive, got {:?}", self.bed_mm));
-        }
         let a = &self.area;
-        let inside = 0.0 <= a.x_min && a.x_min < a.x_max && a.x_max <= bw;
-        let inside = inside && 0.0 <= a.y_min && a.y_min < a.y_max && a.y_max <= bh;
-        if !inside {
-            return bad(format!(
-                "area must lie inside the {bw} by {bh} mm bed with min below max, got x {}..{} y {}..{}",
-                a.x_min, a.x_max, a.y_min, a.y_max
-            ));
+        for (name, v) in [("area.x", a.x), ("area.y", a.y)] {
+            if !v.is_finite() {
+                return bad(format!("{name} must be finite, got {v}"));
+            }
+        }
+        for (name, v) in [("area.width", a.width), ("area.height", a.height)] {
+            if !(v > 0.0 && v.is_finite()) {
+                return bad(format!("{name} must be positive, got {v}"));
+            }
         }
         if !(0.0 <= self.z_down_mm && self.z_down_mm < self.z_up_mm) {
             return bad(format!(
@@ -133,15 +125,15 @@ impl Machine {
     /// Where a page of `width_mm` by `height_mm` lands: centred in the area. Fails when the page
     /// is wider or taller than the area, naming both sizes.
     pub fn mapping(&self, width_mm: f64, height_mm: f64) -> Result<Mapping, MachineError> {
-        let (w, h) = (self.area.width(), self.area.height());
+        let (w, h) = (self.area.width, self.area.height);
         if width_mm > w + 1e-6 || height_mm > h + 1e-6 {
             return Err(MachineError(format!(
                 "the {width_mm} by {height_mm} mm page is larger than the machine's {w} by {h} mm drawable area"
             )));
         }
         Ok(Mapping {
-            ox: self.area.x_min + (w - width_mm) / 2.0,
-            oy: self.area.y_max - (h - height_mm) / 2.0,
+            ox: self.area.x + (w - width_mm) / 2.0,
+            oy: self.area.y + (h + height_mm) / 2.0,
         })
     }
 }
@@ -185,6 +177,16 @@ mod tests {
     }
 
     #[test]
+    fn a_negative_offset_is_accepted() {
+        let mut m = machine();
+        m.area.x = -100.0;
+        m.area.y = -100.0;
+        m.validate().unwrap();
+        let map = m.mapping(200.0, 174.0).unwrap();
+        assert_eq!(map.to_machine([0.0, 0.0]), [-100.0, 74.0]);
+    }
+
+    #[test]
     fn a_larger_page_is_refused_with_both_sizes() {
         let err = machine().mapping(201.0, 100.0).unwrap_err().to_string();
         assert!(
@@ -199,8 +201,11 @@ mod tests {
         m.z_up_mm = 3.0;
         assert!(m.validate().unwrap_err().to_string().contains("z_up_mm"));
         let mut m = machine();
-        m.area.x_max = 300.0;
-        assert!(m.validate().unwrap_err().to_string().contains("area"));
+        m.area.width = 0.0;
+        assert!(m.validate().unwrap_err().to_string().contains("area.width"));
+        let mut m = machine();
+        m.area.x = f64::NAN;
+        assert!(m.validate().unwrap_err().to_string().contains("area.x"));
         let mut m = machine();
         m.draw_feed = 0.0;
         assert!(m.validate().unwrap_err().to_string().contains("draw_feed"));

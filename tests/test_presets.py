@@ -34,7 +34,7 @@ def test_round_trip(tmp_path):
     d = json.loads(text)
     assert (d["format"], d["version"], d["style"], d["settings"]["order"]["min_length_mm"]) == (
         "plotline-preset",
-        2,
+        3,
         "grid",
         2.0,
     )
@@ -85,7 +85,7 @@ def test_bad_format_and_future_version_raise(files):
     with pytest.raises(ValueError, match="not a preset"):
         apply(s, {**read(s), "format": "other"})
     with pytest.raises(ValueError, match="unsupported preset version"):
-        apply(s, {**read(s), "version": 3})
+        apply(s, {**read(s), "version": 4})
 
 
 def test_malformed_header_raises_value_error(files):

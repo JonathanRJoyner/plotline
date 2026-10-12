@@ -194,17 +194,16 @@ pub(crate) fn bounds(schema: &Value, key: &str) -> (f64, f64, f64) {
     )
 }
 
-/// A pen-fitted printer: a 256 mm bed, a 200 by 174 mm area, the pen down at Z 4, up at 9 and
-/// safe at 20, and feeds of 3600, 6000 and 1200 mm/min.
+/// A pen-fitted printer: a 200 by 174 mm area with its corner at (28, 42), the pen down at Z 4,
+/// up at 9 and safe at 20, and feeds of 3600, 6000 and 1200 mm/min.
 pub(crate) fn machine() -> Machine {
     Machine {
         name: "Test printer".to_string(),
-        bed_mm: [256.0, 256.0],
         area: Area {
-            x_min: 28.0,
-            x_max: 228.0,
-            y_min: 42.0,
-            y_max: 216.0,
+            x: 28.0,
+            y: 42.0,
+            width: 200.0,
+            height: 174.0,
         },
         z_down_mm: 4.0,
         z_up_mm: 9.0,
