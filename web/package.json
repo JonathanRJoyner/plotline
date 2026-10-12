@@ -1,0 +1,22 @@
+{
+  "name": "plotline-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "wasm-pack build ../crates/wasm --release --target web --out-dir ../../web/pkg",
+    "dev": "vite",
+    "build": "vite build",
+    "check": "tsc --noEmit && vitest run"
+  },
+  "dependencies": {
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9",
+    "vite": "^7.3.7",
+    "vitest": "^4.1.11"
+  }
+}

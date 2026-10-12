@@ -26,6 +26,7 @@ python-source = "src"
 module-name = "plotline._core"
 manifest-path = "crates/py/Cargo.toml"
 features = ["pyo3/extension-module"]
+include = ["src/plotline/web/**/*"]
 
 [tool.uv]
 # Rebuild the extension when the Rust sources change, not only when pyproject.toml does.
