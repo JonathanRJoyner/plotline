@@ -160,13 +160,13 @@ def test_an_error_after_the_last_frame_ends_the_run_in_error(monkeypatch):
 def test_exports_are_utf8_with_lf(tmp_path):
     s = Session()
     s.set_image(_core.synthetic_gradient(64, 48))
-    s.set_pens([Pen("Stift Ã©", 0.3, "#000000")])
+    s.set_pens([Pen("Stift é", 0.3, "#000000")])
     s.update("tone", resolution=64)
     s.run_blocking()
     s.export_svg(tmp_path / "o.svg")
     s.export_json(tmp_path / "o.json")
     svg = (tmp_path / "o.svg").read_bytes()
-    assert "Ã©".encode() in svg and b"\r" not in svg
+    assert "é".encode() in svg and b"\r" not in svg
     assert b"\r" not in (tmp_path / "o.json").read_bytes()
 
 
