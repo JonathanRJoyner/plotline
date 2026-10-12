@@ -2,8 +2,10 @@
 
 pub mod cache;
 pub mod math;
+pub mod registry;
 pub mod runner;
 pub mod settings;
+pub mod spatial;
 pub mod stage;
 pub mod stages;
 pub mod style;

@@ -2,16 +2,18 @@
 //! small artifacts to give it.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::runner::Run;
+use crate::cache::StageCache;
+use crate::runner::{Run, Shared};
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
-use crate::types::{Canvas, Fit, Image, Paths, Pen, Points, ToneMap};
+use crate::style::Style;
+use crate::types::{Canvas, Drawing, Fit, Image, Paths, Pen, Points, ToneMap};
 
 /// `n` points at the origin.
 pub(crate) fn points(n: usize) -> Artifact {
@@ -57,6 +59,24 @@ pub(crate) fn roots() -> [Artifact; 3] {
 /// Every frame `run` gives until it stops.
 pub(crate) fn drain(run: &mut Run) -> Vec<Frame> {
     std::iter::from_fn(|| run.next_frame()).collect()
+}
+
+/// Run `style` with its default settings over `image` and the other [`roots`], with a fresh cache,
+/// and return the drawing. Panics if the run ends without one.
+pub(crate) fn run_to_drawing(style: &Arc<Style>, image: Image) -> Arc<Drawing> {
+    let [_, canvas, pens] = roots();
+    let shared = Arc::new(Mutex::new(Shared::default()));
+    let mut run = Run::new(
+        style.clone(),
+        style.defaults(),
+        [Artifact::Image(Arc::new(image)), canvas, pens],
+        Arc::new(Mutex::new(StageCache::new(1 << 20))),
+        shared.clone(),
+        Arc::default(),
+    );
+    drain(&mut run);
+    let drawing = shared.lock().unwrap().drawing.clone();
+    drawing.unwrap_or_else(|| panic!("style {:?} gave no drawing", style.name))
 }
 
 /// The [`Spy`]'s settings; the one knob does nothing but take part in validation and cache keys.
