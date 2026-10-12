@@ -1,5 +1,7 @@
 //! Core engine for plotline.
 
+pub mod types;
+
 /// The crate version, in Cargo's semver form.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
