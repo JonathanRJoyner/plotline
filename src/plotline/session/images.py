@@ -21,6 +21,17 @@ from PIL import Image, ImageOps
 MAX_EDGE_PX = 4000
 
 
+def _open(path: str | os.PathLike[str]) -> Image.Image:
+    """``Image.open``, but an image over Pillow's size limit raises a plain ``ValueError``."""
+    try:
+        return Image.open(path)
+    except Image.DecompressionBombError as error:
+        raise ValueError(
+            f"image is too large to open safely ({path}); "
+            f"resize it below {Image.MAX_IMAGE_PIXELS} pixels first"
+        ) from error
+
+
 def load_image(path: str | os.PathLike[str]) -> NDArray[np.float32]:
     """Load the image at ``path`` as an ``(H, W, 3)`` float32 array with values in 0..1.
 
@@ -28,10 +39,11 @@ def load_image(path: str | os.PathLike[str]) -> NDArray[np.float32]:
     white, convert to RGB, then shrink with Lanczos resampling until neither edge is longer than
     ``MAX_EDGE_PX``. A smaller image is not enlarged. 16-bit greyscale skips the transparency and
     RGB steps: it is scaled to 0..1, shrunk as floats and repeated into three channels. A float
-    image raises ``ValueError``. Errors from Pillow, such as a missing or unreadable file, are not
-    caught.
+    image raises ``ValueError``, and so does one of more than twice ``Image.MAX_IMAGE_PIXELS``
+    pixels, which Pillow refuses to open because decoding it whole could exhaust memory. Other
+    errors from Pillow, such as a missing or unreadable file, are not caught.
     """
-    with Image.open(path) as opened:
+    with _open(path) as opened:
         if opened.mode == "F":
             raise ValueError(
                 f"unsupported image mode {opened.mode!r}: float images have no defined white level"

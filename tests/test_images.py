@@ -77,3 +77,13 @@ def test_load_refuses_float_images(tmp_path):
         ValueError, match="unsupported image mode 'F': float images have no defined white level"
     ):
         load_image(save(tmp_path, Image.fromarray(np.zeros((4, 4), np.float32)), "f.tif"))
+
+
+def test_load_reports_an_image_over_the_size_limit_as_a_plain_error(tmp_path, monkeypatch):
+    path = save(tmp_path, Image.new("RGB", (16, 16)))
+    # Pillow only warns above MAX_IMAGE_PIXELS and raises above twice that, here 200 pixels.
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+    with pytest.raises(ValueError, match="too large") as caught:
+        load_image(path)
+    message = str(caught.value)
+    assert "100 pixels" in message and "bomb" not in message and "attack" not in message
