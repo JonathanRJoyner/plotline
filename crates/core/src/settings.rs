@@ -112,18 +112,25 @@ pub fn validate<S: DeserializeOwned>(
         let Some(prop) = schema.get("properties").and_then(|p| p.get(&key)) else {
             return Err(SettingsError::UnknownKey { stage, key });
         };
-        // schemars puts an enum under `$defs` and points at it with a `$ref`.
-        let def_name = prop
+        // schemars puts an enum or a nested struct under `$defs` and points at it with a `$ref`.
+        let def = prop
             .get("$ref")
             .and_then(Value::as_str)
-            .and_then(|r| r.strip_prefix("#/$defs/"));
-        let def = def_name
-            .and_then(|name| schema.get("$defs")?.get(name))
+            .and_then(|r| schema.get("$defs")?.get(r.strip_prefix("#/$defs/")?))
             .unwrap_or(prop);
-        let expected: Vec<&str> = if def_name.is_some() || def.get("enum").is_some() {
+        // Variants with doc comments come out as `oneOf` of `const` instead of `enum`.
+        let choices: Option<Vec<Value>> = def
+            .get("enum")
+            .and_then(Value::as_array)
+            .cloned()
+            .or_else(|| {
+                let variants = def.get("oneOf")?.as_array()?;
+                variants.iter().map(|c| c.get("const").cloned()).collect()
+            });
+        let expected: Vec<&str> = if choices.is_some() {
             vec!["string"]
         } else {
-            match prop.get("type") {
+            match def.get("type") {
                 Some(Value::String(t)) => vec![t.as_str()],
                 Some(Value::Array(ts)) => ts.iter().filter_map(Value::as_str).collect(),
                 _ => vec![],
@@ -151,9 +158,9 @@ pub fn validate<S: DeserializeOwned>(
                 });
             }
         }
-        if let Some(choices) = def.get("enum").and_then(Value::as_array) {
+        if let Some(choices) = choices {
             if !choices.contains(v) {
-                let (value, choices) = (v.clone(), Value::Array(choices.clone()));
+                let (value, choices) = (v.clone(), Value::Array(choices));
                 return Err(SettingsError::NotAChoice {
                     stage,
                     key,
@@ -174,6 +181,7 @@ fn type_matches(t: &str, v: &Value) -> bool {
         "boolean" => v.is_boolean(),
         "string" => v.is_string(),
         "null" => v.is_null(),
+        "object" => v.is_object(),
         _ => true,
     }
 }
@@ -262,10 +270,13 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("knob"), "{e}");
-        assert!(validate::<Demo>("demo", &s, &json!({"mode": "square"}))
-            .unwrap_err()
-            .to_string()
-            .contains("circle"));
+        let err = validate::<Demo>("demo", &s, &json!({"mode": "square"})).unwrap_err();
+        assert!(matches!(err, SettingsError::NotAChoice { .. }), "{err:?}");
+        let e = err.to_string();
+        assert!(
+            e.starts_with("stage 'demo', setting 'mode': ") && e.contains("circle"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -291,5 +302,37 @@ mod tests {
             Err(SettingsError::WrongType { .. })
         ));
         assert!(validate::<Value>("demo", &int_schema, &json!({"n": 3})).is_ok());
+        let nested =
+            json!({"properties": {"i": {"$ref": "#/$defs/I"}}, "$defs": {"I": {"type": "object"}}});
+        assert!(validate::<Value>("demo", &nested, &json!({"i": {}})).is_ok());
+        assert!(matches!(
+            validate::<Value>("demo", &nested, &json!({"i": 1})),
+            Err(SettingsError::WrongType { .. })
+        ));
+    }
+
+    #[derive(Debug, Deserialize, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    enum Shape {
+        /// A point.
+        Point,
+        /// A circle.
+        Circle,
+    }
+    #[derive(Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    struct Documented {
+        mode: Shape,
+    }
+
+    #[test]
+    fn validate_reads_choices_from_documented_variants() {
+        let s = schema_for::<Documented>();
+        let err = validate::<Documented>("demo", &s, &json!({"mode": "square"})).unwrap_err();
+        assert!(matches!(err, SettingsError::NotAChoice { .. }), "{err:?}");
+        let e = err.to_string();
+        assert!(e.starts_with("stage 'demo', setting 'mode': "), "{e}");
+        let d: Documented = validate("demo", &s, &json!({"mode": "circle"})).unwrap();
+        assert!(matches!(d.mode, Shape::Circle));
     }
 }
