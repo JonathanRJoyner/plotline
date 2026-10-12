@@ -17,7 +17,7 @@ Out of scope: pen-up and pen-down G-code snippets (servo plotters), units other 
 ## 2. The machine
 
 ```json
-{"name": "Bambu A1 with clip-on pen holder",
+{"name": "My printer",
  "area": {"x": 28, "y": 42, "width": 200, "height": 174},
  "z_down_mm": 4, "z_up_mm": 9, "z_safe_mm": 20,
  "draw_feed": 3600, "travel_feed": 6000, "z_feed": 1200,
@@ -26,7 +26,7 @@ Out of scope: pen-up and pen-down G-code snippets (servo plotters), units other 
  "end_gcode": "G1 Z20 F600\nG1 Y250 F3600"}
 ```
 
-- `area` is where the pen may be below `z_safe_mm`, in machine millimetres with y up. `x` and `y` are the machine position of its corner with the smallest X and Y. `width` and `height` are its size. The built-in values describe the same rectangle as before, so the A1's G-code does not change.
+- `area` is where the pen may be below `z_safe_mm`, in machine millimetres with y up. `x` and `y` are the machine position of its corner with the smallest X and Y. `width` and `height` are its size. The tests' machine describes the same rectangle as before, so its G-code does not change.
 - `x` and `y` must be finite and may be negative, so a machine whose zero is the middle of its bed works. `width` and `height` must be positive and finite.
 - There is no bed size. The bed only checked that the area fits on it, which the area alone now states.
 - Validation names the failing field, for example `area.width must be positive, got 0`. The other rules are unchanged from spec 4.
@@ -47,7 +47,7 @@ So the preset the browser remembers, and preset files saved with spec 4, keep lo
 **Sections.**
 
 - **Machine.**
-  - The machine select: "None (export SVG only)", the built-ins, and "custom" when the machine matches no built-in.
+  - The machine select: "None (export SVG only)", the current machine by name, and "New machine", which starts from placeholder values to replace (there is no built-in machine; see the brief's "Built-in machines" row).
   - With a machine set: Name.
   - Drawable area: Width and Height, then Offset X and Offset Y, all in mm. A help line follows: "Offset is the machine position of the area's corner with the smallest X and Y. The page is centred in the area."
   - Feeds: Draw and Travel, in mm/min.
@@ -65,31 +65,30 @@ So the preset the browser remembers, and preset files saved with spec 4, keep lo
 
 Without a machine, Pen lift and G-code show "Choose a machine first" instead of their fields.
 
-**Picking a machine.** Picking a built-in still sets the page to the area's width and height and keeps the current margin. Editing the area does not change the page. If the page then no longer fits, the G-code export refuses it with the message that names both sizes, as now.
+**Picking a machine.** Picking "New machine" still sets the page to the area's width and height and keeps the current margin. Editing the area does not change the page. If the page then no longer fits, the G-code export refuses it with the message that names both sizes, as now.
 
 **The right column** keeps what changes per drawing: Page, Pens, Presets and Export. `MachinePanel` and `SpeedsPanel` become sections of a `SettingsDialog` in `panels.tsx`, and `events.ts` takes the new `Area` and drops `bed_mm`.
 
 ## 5. Tests
 
 - `machine.rs`:
-  - The A1 built-in matches section 2.
   - Validation names `area.width` and `area.x`.
   - A negative offset is accepted.
   - The existing mapping tests keep their numbers: a full page starts at `(28, 216)`, a smaller one is centred, and a larger one is refused.
 - `gcode.rs`: the checker walk drops its bed check and keeps the area check.
 - `presets.rs`:
-  - A version 2 preset carrying the spec 4 A1 parses to the new A1.
+  - A version 2 preset carrying the tests' machine in the spec 4 shape parses to the same machine in the new shape.
   - A version 1 preset still parses with no machine.
   - The round trip asserts `area.x`.
   - The version pins move to 3, with 4 as the unsupported version.
 - `tests/test_presets.py`: the unsupported version moves from 3 to 4.
-- vitest and the WebAssembly smoke test pass unchanged, since they only use the built-in by name and the Z lines.
+- vitest and the WebAssembly smoke test give their machine in the new shape and otherwise pass unchanged.
 - Manual, in `npm run dev`:
   - The dialog opens from the toolbar and closes with Esc and with Close.
-  - Picking the A1 sets the page to 200 by 174 mm.
+  - Picking "New machine" sets the page to 200 by 200 mm.
   - Editing a feed updates the read-only plot time.
   - A refused value, such as Pen up Z below Pen down Z, shows its message.
-  - A G-code file exported for the sample image is byte for byte the same as on `main`.
+  - G-code is byte for byte the same as before: the exact-string tests in `gcode.rs` pass unedited.
 
 ## 6. Decisions recorded in the brief
 

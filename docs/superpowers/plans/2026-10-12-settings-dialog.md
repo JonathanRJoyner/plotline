@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-12-settings-dialog-design.md`
 
+**Note:** this plan was executed against a `main` that still had the built-in machine, then ported onto the rewritten `main`, which has none. There, tests build their machine with `test_util::machine()`, and the select offers "New machine" instead of built-ins.
+
 ## Global Constraints
 
 - No new runtime dependency. `<dialog>` is native, and the gear icon comes from the installed `lucide-preact`.
