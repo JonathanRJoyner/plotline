@@ -45,7 +45,7 @@ impl Session {
         }
     }
 
-    /// Decode PNG or JPEG bytes and use the picture as the source image.
+    /// Decode PNG, JPEG or WebP bytes and use the picture as the source image.
     fn set_image_bytes(&mut self, data: &[u8]) -> PyResult<()> {
         self.inner.set_image_bytes(data).map_err(value_error)
     }

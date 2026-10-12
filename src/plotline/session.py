@@ -175,7 +175,7 @@ class Session:
         return RunState.idle if self._handle is None else self._handle.state
 
     def load_image(self, path: str | os.PathLike[str]) -> None:
-        """Read the PNG or JPEG file at ``path`` as the source image. Raises ``OSError`` when the
+        """Read the PNG, JPEG or WebP file at ``path`` as the source image. Raises ``OSError`` when the
         file cannot be read and ``ValueError`` when the engine cannot decode it."""
         self._core.set_image_bytes(Path(path).read_bytes())
 

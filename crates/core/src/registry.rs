@@ -6,12 +6,14 @@ use std::sync::Arc;
 use crate::stage::Stage;
 use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
+use crate::stages::ink::InkStage;
 use crate::stages::order::OrderStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
 use crate::stages::tone::ToneStage;
 use crate::stages::waves::WaveStage;
 use crate::style::Style;
+use serde_json::json;
 
 /// Dots on a regular grid: tone, points, render, order.
 pub fn grid_style() -> Style {
@@ -72,6 +74,18 @@ pub fn spiral_style() -> Style {
     )
 }
 
+/// An image's own marks, outlined and filled: tone, ink, order. A finer tone map than the other
+/// styles use keeps the hairlines of ink drawings, which averaging into fewer pixels greys out.
+pub fn ink_style() -> Style {
+    line_style(
+        "ink",
+        "Ink",
+        "Draws the marks of line art, lettering and inked drawings as they are: every ink shape          is outlined and filled with rings, and strokes thinner than the pen get one line down          the middle.",
+        Arc::new(InkStage),
+    )
+    .with_defaults("tone", json!({"resolution": 2500}))
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -91,6 +105,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(hatch_style()),
         Arc::new(waves_style()),
         Arc::new(spiral_style()),
+        Arc::new(ink_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -121,7 +136,7 @@ mod tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            ["grid", "hatch", "waves", "spiral"]
+            ["grid", "hatch", "waves", "spiral", "ink"]
         );
         assert!(get_style("_slow").is_some());
         assert!(get_style("nope").is_none());

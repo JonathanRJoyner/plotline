@@ -12,6 +12,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::settings::{merge, validate};
 use crate::stage::{Kind, Stage};
 
 /// Where a stage reads one of its inputs from.
@@ -65,6 +66,8 @@ pub struct Style {
     pub stages: Vec<Arc<dyn Stage>>,
     /// Per stage, in the order of its `requires`, where each input comes from.
     sources: Vec<Vec<(Kind, Source)>>,
+    /// Settings this style starts from in place of its stages' own defaults, by stage name.
+    overrides: Value,
 }
 
 impl Style {
@@ -130,7 +133,23 @@ impl Style {
             description: description.to_string(),
             stages,
             sources,
+            overrides: json!({}),
         })
+    }
+
+    /// The style with `patch` merged over the defaults of stage `stage`, for a style that needs a
+    /// shared stage set differently, such as a finer tone map. Panics for a stage the style does
+    /// not have or a value its schema refuses, since built-in styles are fixed at compile time.
+    pub fn with_defaults(mut self, stage: &str, patch: Value) -> Style {
+        let i = self
+            .stage_index(stage)
+            .unwrap_or_else(|| panic!("style {:?} has no stage {stage:?}", self.name));
+        let merged = merge(&self.stages[i].defaults(), &patch);
+        validate::<Value>(stage, &self.stages[i].schema(), &merged)
+            .unwrap_or_else(|e| panic!("style {:?}: {e}", self.name));
+        let base = self.overrides.get(stage).cloned().unwrap_or(json!({}));
+        self.overrides[stage] = merge(&base, &patch);
+        self
     }
 
     /// Where stage `stage_index` reads each of its required kinds from, in the order of its
@@ -141,11 +160,20 @@ impl Style {
 
     /// The style and each stage's settings as JSON Schema, for UIs and tool descriptions:
     /// `{"name", "label", "description", "stages": [{"name", "label", "schema"}]}`.
+    /// A stage's schema shows the style's own defaults where the style overrides them.
     pub fn schema(&self) -> Value {
         let stages: Vec<Value> = self
             .stages
             .iter()
-            .map(|s| json!({"name": s.name(), "label": s.label(), "schema": s.schema()}))
+            .map(|s| {
+                let mut schema = s.schema();
+                if let Some(Value::Object(o)) = self.overrides.get(s.name()) {
+                    for (key, value) in o {
+                        schema["properties"][key]["default"] = value.clone();
+                    }
+                }
+                json!({"name": s.name(), "label": s.label(), "schema": schema})
+            })
             .collect();
         json!({
             "name": self.name,
@@ -155,12 +183,15 @@ impl Style {
         })
     }
 
-    /// Each stage's default settings, keyed by stage name.
+    /// Each stage's default settings, with the style's overrides, keyed by stage name.
     pub fn defaults(&self) -> Value {
         Value::Object(
             self.stages
                 .iter()
-                .map(|s| (s.name().to_string(), s.defaults()))
+                .map(|s| {
+                    let own = self.overrides.get(s.name()).cloned().unwrap_or(json!({}));
+                    (s.name().to_string(), merge(&s.defaults(), &own))
+                })
                 .collect(),
         )
     }
@@ -263,5 +294,11 @@ mod tests {
         .unwrap();
         assert_eq!(s.schema()["stages"][0]["name"], "p");
         assert_eq!(s.defaults()["p"]["knob"], 0);
+        let s = s.with_defaults("p", json!({"knob": 3}));
+        assert_eq!(s.defaults()["p"]["knob"], 3);
+        assert_eq!(
+            s.schema()["stages"][0]["schema"]["properties"]["knob"]["default"],
+            3
+        );
     }
 }

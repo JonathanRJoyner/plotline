@@ -8,6 +8,7 @@ pub mod math;
 pub mod pens;
 pub mod presets;
 pub mod preview;
+pub mod raster;
 pub mod registry;
 pub mod runner;
 pub mod session;

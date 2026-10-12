@@ -1,7 +1,7 @@
-//! Reading PNG and JPEG files as the float RGB images the engine works on.
+//! Reading PNG, JPEG and WebP files as the float RGB images the engine works on.
 //!
 //! [`decode`] runs these steps in this order: guess the format from the bytes and refuse anything
-//! but PNG and JPEG, decode, apply the EXIF orientation (so a phone photo is upright, not
+//! but PNG, JPEG and WebP, decode, apply the EXIF orientation (so a phone photo is upright, not
 //! sideways), composite any transparency over white (the colour of blank paper, instead of
 //! whatever colour hides under transparent pixels), shrink with Lanczos resampling so that the
 //! longer edge is [`MAX_EDGE_PX`] if it was longer, then convert to floats clamped to 0..1. A
@@ -34,10 +34,10 @@ pub const MAX_EDGE_PX: u32 = 4000;
 /// Why an image could not be read; the message is shown to users.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum ImageError {
-    /// The bytes are not a PNG or JPEG file; the message says what they are.
-    #[error("unsupported image: {0}; supported formats are PNG and JPEG")]
+    /// The bytes are not a PNG, JPEG or WebP file; the message says what they are.
+    #[error("unsupported image: {0}; supported formats are PNG, JPEG and WebP")]
     Unsupported(String),
-    /// A PNG or JPEG file the decoder rejected; the message is its reason.
+    /// A PNG, JPEG or WebP file the decoder rejected; the message is its reason.
     #[error("could not decode the image: {0}")]
     Decode(String),
     /// Float pixels whose count does not match the image size.
@@ -54,14 +54,14 @@ fn decode_error(e: impl std::fmt::Display) -> ImageError {
     ImageError::Decode(e.to_string())
 }
 
-/// Decode a PNG or JPEG file into an upright, opaque RGB image at most `MAX_EDGE_PX` on its
+/// Decode a PNG, JPEG or WebP file into an upright, opaque RGB image at most `MAX_EDGE_PX` on its
 /// longer edge, following the steps in the module doc.
 pub fn decode(bytes: &[u8]) -> Result<Image, ImageError> {
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(decode_error)?;
     match reader.format() {
-        Some(ImageFormat::Png | ImageFormat::Jpeg) => {}
+        Some(ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::WebP) => {}
         Some(other) => return Err(ImageError::Unsupported(format!("{other:?}"))),
         None => return Err(ImageError::Unsupported("unknown format".to_string())),
     }
@@ -243,7 +243,21 @@ mod tests {
     #[test]
     fn unsupported_bytes_name_the_supported_formats() {
         let e = decode(b"not an image").unwrap_err().to_string();
-        assert!(e.contains("PNG") && e.contains("JPEG"), "{e}");
+        assert!(
+            e.contains("PNG") && e.contains("JPEG") && e.contains("WebP"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn webp_decodes() {
+        let mut bytes = Vec::new();
+        ::image::codecs::webp::WebPEncoder::new_lossless(&mut bytes)
+            .write_image(&[0, 0, 255].repeat(6), 3, 2, ExtendedColorType::Rgb8)
+            .unwrap();
+        let im = decode(&bytes).unwrap();
+        assert_eq!((im.width, im.height), (3, 2));
+        assert_eq!(&im.rgb[..3], &[0.0, 0.0, 1.0]);
     }
 
     #[test]
