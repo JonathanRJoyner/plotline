@@ -236,9 +236,37 @@ pub struct Points(pub Vec<[f64; 2]>);
 /// Many polylines in mm, stored flat: `offsets` has one entry more than there are paths, starts
 /// at 0, and path `i` is `coords[offsets[i]..offsets[i + 1]]`. A path of one vertex is a dot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "RawPaths")]
 pub struct Paths {
     coords: Vec<[f64; 2]>,
     offsets: Vec<u32>,
+}
+
+/// The unchecked shape of `Paths` on the wire; `Paths` is only built from it through `try_from`.
+#[derive(Deserialize)]
+struct RawPaths {
+    coords: Vec<[f64; 2]>,
+    offsets: Vec<u32>,
+}
+
+impl TryFrom<RawPaths> for Paths {
+    type Error = TypeError;
+
+    fn try_from(raw: RawPaths) -> Result<Paths, TypeError> {
+        let starts_at_zero = raw.offsets.first() == Some(&0);
+        let never_decreases = raw.offsets.windows(2).all(|w| w[0] <= w[1]);
+        let covers_coords = raw.offsets.last().map(|&n| n as usize) == Some(raw.coords.len());
+        if !(starts_at_zero && never_decreases && covers_coords) {
+            return Err(TypeError::Invalid(
+                "offsets must start at 0, never decrease and end at the number of coords"
+                    .to_string(),
+            ));
+        }
+        Ok(Paths {
+            coords: raw.coords,
+            offsets: raw.offsets,
+        })
+    }
 }
 
 impl Default for Paths {
@@ -281,14 +309,16 @@ impl Paths {
         &self.offsets
     }
 
-    /// Append a path.
+    /// Append a path. Panics if `path` is empty, since a path has at least one vertex.
     pub fn push(&mut self, path: &[[f64; 2]]) {
+        assert!(!path.is_empty(), "a path has at least one vertex");
         self.coords.extend_from_slice(path);
         self.offsets.push(self.coords.len() as u32);
     }
 
-    /// Append a path with its vertices in reverse order.
+    /// Append a path with its vertices in reverse order. Panics if `path` is empty.
     pub fn push_reversed(&mut self, path: &[[f64; 2]]) {
+        assert!(!path.is_empty(), "a path has at least one vertex");
         self.coords.extend(path.iter().rev());
         self.offsets.push(self.coords.len() as u32);
     }
@@ -430,5 +460,76 @@ mod tests {
         // start -> (0,0): 0; (3,4) -> (7,7): 5; (7,7) -> (2,0): sqrt(74)
         assert!((p.travel_length([0.0, 0.0]) - (5.0 + 74f64.sqrt())).abs() < 1e-12);
         assert_eq!(Paths::new().travel_length([1.0, 1.0]), 0.0);
+    }
+    #[test]
+    fn luminance_matches_numpy_float32_bits() {
+        // Bit patterns generated with numpy float32: 0.299 * r + 0.587 * g + 0.114 * b.
+        let img = Image {
+            width: 4,
+            height: 1,
+            rgb: vec![
+                0.5, 0.25, 0.125, //
+                1.0, 1.0, 1.0, //
+                0.1, 0.7, 0.3, //
+                0.0, 0.0, 1.0,
+            ],
+        };
+        let want = [0x3e9ef9db_u32, 0x3f800000, 0x3ef33334, 0x3de978d5];
+        let got: Vec<u32> = img.luminance().iter().map(|v| v.to_bits()).collect();
+        assert_eq!(got, want);
+    }
+    #[test]
+    fn validation_messages() {
+        let canvas = |w, h, m| Canvas::new(w, h, m, Fit::Fit).unwrap_err().to_string();
+        assert_eq!(canvas(0.0, 10.0, 0.0), "width_mm must be positive, got 0.0");
+        assert_eq!(
+            canvas(100.0, -1.0, 0.0),
+            "height_mm must be positive, got -1.0"
+        );
+        assert_eq!(
+            canvas(100.0, 100.0, -1.0),
+            "margin_mm must not be negative, got -1.0"
+        );
+        assert_eq!(
+            canvas(100.0, 100.0, 50.0),
+            "margin_mm must leave a positive drawing area, got 50.0 for a 100.0 x 100.0 mm page"
+        );
+        assert_eq!(
+            Pen::new("x", 0.3, "000000").unwrap_err().to_string(),
+            "color must be written as #rrggbb, got \"000000\""
+        );
+        assert_eq!(
+            Pen::new("x", 0.0, "#000000").unwrap_err().to_string(),
+            "width_mm must be positive, got 0.0"
+        );
+    }
+    #[test]
+    fn paths_deserialize_checks_the_offsets() {
+        for bad in [
+            r#"{"coords":[],"offsets":[]}"#,
+            r#"{"coords":[[0,0]],"offsets":[0,5]}"#,
+            r#"{"coords":[[0,0],[1,1]],"offsets":[1,2]}"#,
+            r#"{"coords":[[0,0],[1,1]],"offsets":[0,2,1,2]}"#,
+            r#"{"coords":[[0,0],[1,1]],"offsets":[0,1]}"#,
+        ] {
+            assert!(serde_json::from_str::<Paths>(bad).is_err(), "{bad}");
+        }
+        let mut p = Paths::new();
+        p.push(&[[0.0, 0.0], [3.0, 4.0]]);
+        p.push_reversed(&[[1.0, 0.0], [2.0, 0.0]]);
+        let back: Paths = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back, p);
+        let empty: Paths = serde_json::from_str(r#"{"coords":[],"offsets":[0]}"#).unwrap();
+        assert!(empty.is_empty());
+    }
+    #[test]
+    #[should_panic(expected = "a path has at least one vertex")]
+    fn push_rejects_an_empty_path() {
+        Paths::new().push(&[]);
+    }
+    #[test]
+    #[should_panic(expected = "a path has at least one vertex")]
+    fn push_reversed_rejects_an_empty_path() {
+        Paths::new().push_reversed(&[]);
     }
 }
