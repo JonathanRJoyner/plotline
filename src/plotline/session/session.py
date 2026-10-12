@@ -27,7 +27,7 @@ from plotline.core.registry import get_style
 from plotline.core.settings import Settings
 from plotline.core.stage import Cancelled, CancelToken, Frame, RunContext
 from plotline.core.types import Canvas, Pen, Result
-from plotline.session import images
+from plotline.session import images, presets
 from plotline.session.preview import render_png
 from plotline.session.stats import Speeds, Stats, compute_stats
 
@@ -173,6 +173,17 @@ class Session:
         """
         current = self.settings[stage]
         self.settings[stage] = type(current).model_validate({**current.model_dump(), **values})
+
+    def save_preset(self, path: str | os.PathLike[str]) -> None:
+        """Write the style, canvas, pens and settings to ``path`` as a JSON preset. See
+        ``presets.save_preset``."""
+        presets.save_preset(self, path)
+
+    def load_preset(self, path: str | os.PathLike[str]) -> None:
+        """Read the preset file at ``path`` and apply it, so its style, canvas, pens and settings
+        replace the current ones. See ``presets.apply_preset``, which says what it raises and
+        warns about."""
+        presets.load_preset(self, path)
 
     def run_blocking(self) -> Result:
         """Run the style in the calling thread and return the result, which is also kept in
