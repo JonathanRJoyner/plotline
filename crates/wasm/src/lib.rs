@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
-use plotline_core::machine::{self, Machine};
+use plotline_core::machine::Machine;
 use plotline_core::{
     image, pens, registry, synthetic, Canvas, Drawing, Frame, Layer, Pen, RunState, SessionError,
     DEFAULT_CACHE_BYTES,
@@ -377,10 +377,4 @@ pub fn synthetic_checkerboard(w: u32, h: u32, cells: u32) -> Result<Vec<f32>, Js
 #[wasm_bindgen(js_name = listPens)]
 pub fn list_pens() -> String {
     json!(pens::bank()).to_string()
-}
-
-/// The built-in machines as a JSON list.
-#[wasm_bindgen(js_name = listMachines)]
-pub fn list_machines() -> String {
-    json!(machine::builtin()).to_string()
 }

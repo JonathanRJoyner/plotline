@@ -2,23 +2,23 @@
 
 Date: 2026-10-12. Status: built from the owner's approved plan; open to review.
 
-The brief keeps the core machine-agnostic and puts generic G-code in an adapter (sections 4 and 14). This spec adds that adapter: a `Machine` the session can hold, a G-code writer for one pen layer at a time, the machine in the preset, and a machine panel with per-pen G-code export in the GUI. The first built-in machine is the owner's test rig, an A1 3D printer with a clip-on pen holder, whose values come from the owner's own toolchain.
+The brief keeps the core machine-agnostic and puts generic G-code in an adapter (sections 4 and 14). This spec adds that adapter: a `Machine` the session can hold, a G-code writer for one pen layer at a time, the machine in the preset, and a machine panel with per-pen G-code export in the GUI. The example machine below is the owner's test rig, a 3D printer with a clip-on pen holder, whose values come from the owner's own toolchain. It shipped as a built-in at first and was removed on the same day: see Built-ins.
 
 ## 1. Scope
 
-- `crates/core/src/machine.rs`: the `Machine` type, its validation, the page-to-machine mapping, the plot speeds it implies, and the built-in list.
+- `crates/core/src/machine.rs`: the `Machine` type, its validation, the page-to-machine mapping, and the plot speeds it implies.
 - `crates/core/src/export/gcode.rs`: one layer of a drawing as G-code for a machine.
 - The session holds an optional machine; setting one also sets the speeds the stats use. `Session::gcode(layer)` writes a layer.
 - Preset version 2 carries `machine` (an object or null); version 1 presets migrate with null.
-- WebAssembly: `listMachines()`, `Session.setMachine(json)`, `Session.machine()`, `Session.gcode(layer)`.
-- GUI: a machine panel (a select of the built-ins, the machine's fields editable) and one G-code button per pen in the export panel.
+- WebAssembly: `Session.setMachine(json)`, `Session.machine()`, `Session.gcode(layer)`.
+- GUI: a machine panel (a select to start a new machine or drop it, the machine's fields editable) and one G-code button per pen in the export panel.
 
 Out of scope: machine options in the Python CLI and the MCP (the binding stays as it is; a later spec adds them), any dialect other than the strict one below, one file for several pens with a pause between them, arcs, and per-machine pen banks.
 
 ## 2. The machine
 
 ```json
-{"name": "A1 with clip-on pen holder",
+{"name": "Test printer",
  "bed_mm": [256, 256],
  "area": {"x_min": 28, "x_max": 228, "y_min": 42, "y_max": 216},
  "z_down_mm": 4, "z_up_mm": 9, "z_safe_mm": 20,
@@ -35,9 +35,9 @@ Out of scope: machine options in the Python CLI and the MCP (the binding stays a
 
 **Mapping.** The page (origin top-left, y down) is centred in the area: `ox = x_min + (W - w) / 2`, `oy = y_max - (H - h) / 2`, and a page point `(x, y)` lands at `(ox + x, oy - y)`. A page wider or taller than the area is refused with both sizes in the message, so no move can leave the area.
 
-**Speeds.** `draw_mm_s = draw_feed / 60`, `travel_mm_s = travel_feed / 60` and `pen_lift_s = 2 (z_up - z_down) / (z_feed / 60) + 2 settle_ms / 1000`, which for the A1 is 0.6 s. Setting a machine sets these on the session so the estimate is honest; the user can still change them afterwards.
+**Speeds.** `draw_mm_s = draw_feed / 60`, `travel_mm_s = travel_feed / 60` and `pen_lift_s = 2 (z_up - z_down) / (z_feed / 60) + 2 settle_ms / 1000`, which for the machine above is 0.6 s. Setting a machine sets these on the session so the estimate is honest; the user can still change them afterwards.
 
-**Built-ins.** `machine::builtin()` lists the A1 above. The GUI's select shows "None (SVG only)" and the built-ins, and "custom" when the session's machine matches none.
+**Built-ins.** None. A machine's area and heights are measured on one rig, so a built-in is unsafe for anyone else, and the owner's rig is their own preset. The GUI's select shows "None (SVG only)", the current machine, and "New machine", which starts from placeholder values the user replaces with their machine's own.
 
 ## 3. The G-code
 
@@ -78,12 +78,12 @@ A dot (a one-vertex path) is a travel, pen down, pen up at one point. `Session::
 
 ## 6. Tests
 
-- `machine.rs`: validation names the field; the A1 built-in matches section 2; the speeds are 60, 100 and 0.6; the mapping puts the page's top-left corner at `(x_min, y_max)` when the page fills the area, centres a smaller page, and refuses a larger one.
+- `machine.rs`: validation names the field; for the machine in section 2 the speeds are 60, 100 and 0.6; the mapping puts the page's top-left corner at `(x_min, y_max)` when the page fills the area, centres a smaller page, and refuses a larger one.
 - `gcode.rs`: a walk of the output in the style of the owner's checker: only the allowed commands, G21 and G90 before the first move, the first X/Y move at `z_safe_mm`, every X/Y inside the area while Z is below `z_safe_mm`, Z never below `z_down_mm`, no line that moves X/Y and Z together; a dot gives the down/up pair at one point; a two-vertex path gives one `G1 X Y`; the layer header names the pen and counts the paths; a page larger than the area is refused.
 - `presets.rs`: a version 1 preset parses with no machine; version 2 round-trips the machine; a bad machine names the field.
 - `session.rs`: `set_machine` sets the speeds; `gcode` fails without a machine or a drawing.
-- WebAssembly smoke test: `listMachines` holds the A1, `setMachine` then `gcode(0)` on the gradient drawing contains `G1 Z4 F1200` and `G1 Z20 F1200`.
-- vitest `protocol.test.ts`: `listMachines`, `setMachine` changes the state's machine and speeds without a run, `gcode` before a drawing is refused.
+- WebAssembly smoke test: `setMachine` with the machine in section 2, then `gcode(0)` on the gradient drawing contains `G1 Z4 F1200` and `G1 Z20 F1200`.
+- vitest `protocol.test.ts`: `setMachine` changes the state's machine and speeds without a run, `gcode` before a drawing is refused.
 - Acceptance, outside the repo: the owner's `plot.py check` passes on an exported file.
 
 ## 7. Decisions recorded in the brief

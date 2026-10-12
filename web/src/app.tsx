@@ -153,7 +153,6 @@ export function App() {
   });
   const [styles, setStyles] = useState<Style[] | null>(null);
   const [bank, setBank] = useState<Pen[]>([]);
-  const [machines, setMachines] = useState<Machine[]>([]);
   const [state, setState] = useState<State | null>(null);
   const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [] }));
   const [stages, setStages] = useState<Stage[]>([]);
@@ -190,7 +189,6 @@ export function App() {
 
   useEffect(() => {
     engine.call<Pen[]>("listPens").then((r) => setBank(r.value), () => {});
-    engine.call<Machine[]>("listMachines").then((r) => setMachines(r.value), () => {});
     engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
       setStyles(value);
       const saved = remembered();
@@ -339,7 +337,7 @@ export function App() {
       </main>
       <aside>
         <MachinePanel
-          machine={state.machine} builtins={machines} error={errors.machine}
+          machine={state.machine} error={errors.machine}
           onPick={pickMachine} onEdit={(m) => call("setMachine", [m], "machine")}
         />
         <PagePanel canvas={state.canvas} onChange={(c) => call("setCanvas", [c])} />

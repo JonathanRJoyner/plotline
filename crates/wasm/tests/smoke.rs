@@ -62,9 +62,11 @@ fn the_pen_bank_is_listed() {
 }
 #[wasm_bindgen_test]
 fn machines_and_gcode() {
-    let machines: serde_json::Value =
-        serde_json::from_str(&plotline_wasm::list_machines()).unwrap();
-    assert!(machines[0]["name"].as_str().unwrap().contains("A1"));
+    let machine = r#"{"name": "Test printer", "bed_mm": [256, 256],
+        "area": {"x_min": 28, "x_max": 228, "y_min": 42, "y_max": 216},
+        "z_down_mm": 4, "z_up_mm": 9, "z_safe_mm": 20,
+        "draw_feed": 3600, "travel_feed": 6000, "z_feed": 1200, "settle_ms": 50,
+        "start_gcode": "", "end_gcode": ""}"#;
     let mut s = plotline_wasm::Session::new();
     s.set_image(64, 48, &plotline_wasm::synthetic_gradient(64, 48))
         .unwrap();
@@ -72,8 +74,8 @@ fn machines_and_gcode() {
         .unwrap();
     s.update("tone", r#"{"resolution":64}"#).unwrap();
     assert!(s.gcode(0).is_err());
-    s.set_machine(&machines[0].to_string()).unwrap();
-    assert!(s.machine().unwrap().contains("A1"));
+    s.set_machine(machine).unwrap();
+    assert!(s.machine().unwrap().contains("Test printer"));
     let speeds: serde_json::Value = serde_json::from_str(&s.speeds()).unwrap();
     assert!((speeds["pen_lift_s"].as_f64().unwrap() - 0.6).abs() < 1e-9);
     let mut run = s.start().unwrap();

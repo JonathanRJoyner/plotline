@@ -482,17 +482,17 @@ mod tests {
     fn a_machine_sets_the_speeds_and_rides_in_the_preset() {
         let mut s = Session::new(1 << 20);
         assert!(s.machine().is_none());
-        let a1 = crate::machine::builtin().remove(0);
-        s.set_machine(Some(a1.clone())).unwrap();
+        let m = crate::test_util::machine();
+        s.set_machine(Some(m.clone())).unwrap();
         assert_eq!(s.speeds().draw_mm_s, 60.0);
-        assert_eq!(s.preset()["machine"]["name"], a1.name);
+        assert_eq!(s.preset()["machine"]["name"], m.name);
         let mut t = Session::new(1 << 20);
         t.load_preset(&s.preset()).unwrap();
-        assert_eq!(t.machine(), Some(&a1));
-        let mut bad = a1.clone();
+        assert_eq!(t.machine(), Some(&m));
+        let mut bad = m.clone();
         bad.z_up_mm = 1.0;
         assert!(s.set_machine(Some(bad)).is_err());
-        assert_eq!(s.machine(), Some(&a1));
+        assert_eq!(s.machine(), Some(&m));
         s.set_machine(None).unwrap();
         assert!(s.machine().is_none());
     }
@@ -500,8 +500,7 @@ mod tests {
     fn gcode_needs_a_machine_and_a_drawing() {
         let mut s = Session::new(1 << 20);
         assert!(s.gcode(0).unwrap_err().to_string().contains("machine"));
-        s.set_machine(Some(crate::machine::builtin().remove(0)))
-            .unwrap();
+        s.set_machine(Some(crate::test_util::machine())).unwrap();
         assert!(s.gcode(0).unwrap_err().to_string().contains("drawing"));
         s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
         s.set_image(gradient(64, 48));

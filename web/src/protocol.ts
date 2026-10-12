@@ -1,7 +1,7 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
-import { describe, listMachines, listPens, listStyles, syntheticGradient, type Run, type Session } from "../pkg/plotline_wasm.js";
+import { describe, listPens, listStyles, syntheticGradient, type Run, type Session } from "../pkg/plotline_wasm.js";
 import { drive } from "./driver";
 import type { Canvas, Event, Machine, Pen, Stats } from "./events";
 
@@ -33,7 +33,6 @@ export class Protocol {
     this.methods = {
       listStyles: () => JSON.parse(listStyles()),
       listPens: () => JSON.parse(listPens()),
-      listMachines: () => JSON.parse(listMachines()),
       setMachine: (machine: Machine | null) => s.setMachine(JSON.stringify(machine)),
       gcode: (layer: number) => s.gcode(layer),
       describe: (name: string) => JSON.parse(describe(name)),
