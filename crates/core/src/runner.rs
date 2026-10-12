@@ -89,6 +89,9 @@ pub struct Shared {
     pub state: RunState,
     /// The error message when `state` is [`RunState::Error`].
     pub error: Option<String>,
+    /// The generation of the newest run. Only a run of this generation writes the slot, so an
+    /// older run that ends late cannot overwrite a newer run's state or drawing.
+    pub generation: u64,
 }
 
 /// One run of a style over three roots, driven a frame at a time by [`Run::next_frame`].
@@ -100,6 +103,8 @@ pub struct Run {
     cache: Arc<Mutex<StageCache>>,
     shared: Arc<Mutex<Shared>>,
     cancel: Arc<AtomicBool>,
+    /// The slot's generation this run was started for.
+    generation: u64,
     /// The output and key of each finished stage, in style order.
     done: Vec<(Artifact, String)>,
     /// The stage in progress and its key.
@@ -111,7 +116,8 @@ pub struct Run {
 impl Run {
     /// A run that has not started. `roots` holds one image, one canvas and one pens artifact in
     /// any order; `settings` maps stage names to settings merged over each stage's defaults, and a
-    /// missing stage means its defaults. Hashes the roots. Panics if a root kind is missing.
+    /// missing stage means its defaults. The run writes `shared` only while its `generation`
+    /// equals `generation`. Hashes the roots. Panics if a root kind is missing.
     pub fn new(
         style: Arc<Style>,
         settings: Value,
@@ -119,6 +125,7 @@ impl Run {
         cache: Arc<Mutex<StageCache>>,
         shared: Arc<Mutex<Shared>>,
         cancel: Arc<AtomicBool>,
+        generation: u64,
     ) -> Run {
         let roots: HashMap<Kind, (Artifact, String)> = roots
             .into_iter()
@@ -135,6 +142,7 @@ impl Run {
             cache,
             shared,
             cancel,
+            generation,
             done: Vec::new(),
             active: None,
             state: RunState::Idle,
@@ -281,15 +289,18 @@ impl Run {
         }
     }
 
-    /// Set the run's state and error and copy them to the shared slot, with the drawing if there
-    /// is one, under one lock so readers never see a half-written slot.
+    /// Set the run's state and error and, while the slot is still this run's generation, copy
+    /// them to it with the drawing if there is one, under one lock so readers never see a
+    /// half-written slot.
     fn write(&mut self, state: RunState, error: Option<String>, drawing: Option<Drawing>) {
         let mut shared = self.shared.lock().unwrap();
-        if let Some(drawing) = drawing {
-            shared.drawing = Some(Arc::new(drawing));
+        if shared.generation == self.generation {
+            if let Some(drawing) = drawing {
+                shared.drawing = Some(Arc::new(drawing));
+            }
+            shared.state = state;
+            shared.error = error.clone();
         }
-        shared.state = state;
-        shared.error = error.clone();
         self.state = state;
         self.error = error;
     }
@@ -324,6 +335,7 @@ mod tests {
             cache.clone(),
             shared.clone(),
             Arc::default(),
+            0,
         );
         assert_eq!(run.state(), RunState::Idle);
         let frames = drain(&mut run);
@@ -359,6 +371,7 @@ mod tests {
                 cache.clone(),
                 shared.clone(),
                 Arc::default(),
+                0,
             );
             let frames = drain(&mut run);
             assert_eq!(run.state(), RunState::Done);
@@ -404,6 +417,7 @@ mod tests {
             cache.clone(),
             shared.clone(),
             cancel.clone(),
+            0,
         );
         let mut n = 0;
         while run.next_frame().is_some() {
@@ -426,6 +440,7 @@ mod tests {
             cache.clone(),
             shared.clone(),
             Arc::default(),
+            0,
         );
         let frames = drain(&mut again);
         assert_eq!(
@@ -442,6 +457,7 @@ mod tests {
             cache.clone(),
             shared.clone(),
             Arc::default(),
+            0,
         );
         assert_eq!(third.next_frame().unwrap().label, "cached");
         let last = third.next_frame().unwrap();
@@ -470,6 +486,7 @@ mod tests {
             cache.clone(),
             shared.clone(),
             cancel.clone(),
+            0,
         );
         let worker = std::thread::spawn(move || {
             let frames = drain(&mut run);
@@ -495,6 +512,62 @@ mod tests {
     }
 
     #[test]
+    fn a_run_of_an_older_generation_never_writes_the_slot() {
+        let a = Arc::new(Spy::new("a", &[Kind::Image], Kind::Paths, paths(1)).with_frames(3));
+        let style = Arc::new(Style::new("s", "S", "d", vec![a.clone()]).unwrap());
+        let cache = Arc::new(Mutex::new(StageCache::new(1 << 20)));
+        let shared = Arc::new(Mutex::new(Shared {
+            generation: 1,
+            ..Shared::default()
+        }));
+        let run = |generation| {
+            Run::new(
+                style.clone(),
+                style.defaults(),
+                roots(),
+                cache.clone(),
+                shared.clone(),
+                Arc::default(),
+                generation,
+            )
+        };
+        let mut old = run(1);
+        assert!(old.next_frame().is_some());
+        shared.lock().unwrap().generation = 2;
+        let mut new = run(2);
+        assert!(new.next_frame().is_some());
+        // The older run is cancelled and ends while the newer one is running.
+        old.cancel();
+        assert!(old.next_frame().is_none());
+        assert_eq!(old.state(), RunState::Cancelled);
+        assert_eq!(shared.lock().unwrap().state, RunState::Running);
+        drain(&mut new);
+        let drawing = shared.lock().unwrap().drawing.clone().unwrap();
+        // An older run that finishes after the newer one, with a drawing or an error, changes
+        // nothing either.
+        let mut late = run(1);
+        drain(&mut late);
+        assert_eq!(late.state(), RunState::Done);
+        let failing =
+            Arc::new(Spy::new("f", &[Kind::Image], Kind::Paths, paths(1)).with_fail_after(1));
+        let failing = Arc::new(Style::new("s", "S", "d", vec![failing]).unwrap());
+        let mut bad = Run::new(
+            failing.clone(),
+            failing.defaults(),
+            roots(),
+            cache.clone(),
+            shared.clone(),
+            Arc::default(),
+            1,
+        );
+        drain(&mut bad);
+        assert_eq!(bad.state(), RunState::Error);
+        let slot = shared.lock().unwrap();
+        assert_eq!((slot.state, slot.error.clone()), (RunState::Done, None));
+        assert!(Arc::ptr_eq(slot.drawing.as_ref().unwrap(), &drawing));
+    }
+
+    #[test]
     fn cancel_method_sets_the_shared_flag() {
         let a = Arc::new(Spy::new("a", &[Kind::Image], Kind::Paths, paths(1)).with_frames(5));
         let style = Arc::new(Style::new("s", "S", "d", vec![a.clone()]).unwrap());
@@ -506,6 +579,7 @@ mod tests {
             Arc::new(Mutex::new(StageCache::new(1 << 20))),
             Arc::new(Mutex::new(Shared::default())),
             cancel.clone(),
+            0,
         );
         assert!(run.next_frame().is_some());
         run.cancel();
@@ -527,6 +601,7 @@ mod tests {
             cache.clone(),
             shared.clone(),
             Arc::default(),
+            0,
         );
         assert!(drain(&mut run).is_empty());
         assert_eq!(run.state(), RunState::Error);
@@ -546,6 +621,7 @@ mod tests {
             cache,
             shared,
             Arc::default(),
+            0,
         );
         assert!(drain(&mut run).is_empty());
         assert_eq!(run.state(), RunState::Error);
@@ -573,6 +649,7 @@ mod tests {
                 cache.clone(),
                 shared.clone(),
                 Arc::default(),
+                0,
             );
             drain(&mut run);
             let d = shared.lock().unwrap().drawing.clone().unwrap();

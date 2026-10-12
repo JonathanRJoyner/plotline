@@ -127,6 +127,7 @@ pub(crate) fn run_to_drawing(style: &Arc<Style>, image: Image) -> Arc<Drawing> {
         Arc::new(Mutex::new(StageCache::new(1 << 20))),
         shared.clone(),
         Arc::default(),
+        0,
     );
     drain(&mut run);
     let drawing = shared.lock().unwrap().drawing.clone();

@@ -8,6 +8,7 @@ pub mod presets;
 pub mod preview;
 pub mod registry;
 pub mod runner;
+pub mod session;
 pub mod settings;
 pub mod spatial;
 pub mod stage;
@@ -16,6 +17,15 @@ pub mod stats;
 pub mod style;
 pub mod synthetic;
 pub mod types;
+
+pub use cache::{CacheStats, DEFAULT_CACHE_BYTES};
+pub use image::ImageError;
+pub use preview::PreviewError;
+pub use runner::{Run, RunState};
+pub use session::{Session, SessionError};
+pub use stage::Frame;
+pub use stats::{Speeds, Stats};
+pub use types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap, TypeError};
 
 #[cfg(test)]
 mod test_util;

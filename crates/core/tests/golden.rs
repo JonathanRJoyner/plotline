@@ -40,6 +40,7 @@ fn produce(image: Image) -> Value {
         Arc::new(Mutex::new(StageCache::new(64 << 20))),
         shared.clone(),
         Arc::default(),
+        0,
     );
     while run.next_frame().is_some() {}
     assert_eq!(run.state(), RunState::Done, "run failed: {:?}", run.error());
