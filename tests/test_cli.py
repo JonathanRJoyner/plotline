@@ -125,13 +125,17 @@ def test_unknown_names_and_files_are_reported(tmp_path, image):
     gone = "[Errno 2] No such file or directory"
     bad_preset = tmp_path / "bad.json"
     header = {"format": "plotline-preset", "version": 1, "style": "grid"}
-    bad_preset.write_text(json.dumps({**header, "canvas": {"bogus": 1}}))
+    sections = {"pens": [], "settings": {}}
+    bad_preset.write_text(json.dumps({**header, **sections, "canvas": {"bogus": 1}}))
+    no_canvas = tmp_path / "no_canvas.json"
+    no_canvas.write_text(json.dumps({**header, **sections}))
     cases = [
         (("nope", image), "unknown style 'nope'"),
         (("grid", image, "--set", "ghost.x=1"), "style 'grid' has no stage 'ghost'"),
         (("grid", str(tmp_path / "gone.png")), gone),
         (("grid", image, "--preset", str(tmp_path / "gone.json")), gone),
         (("grid", image, "--preset", str(bad_preset)), "invalid preset: "),
+        (("grid", image, "--preset", str(no_canvas)), "preset field 'canvas' must be an object"),
     ]
     for args, message in cases:
         r = run("run", *args, "--out", str(tmp_path / "o.svg"))

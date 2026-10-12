@@ -66,6 +66,44 @@ def test_malformed_header_raises_value_error():
             apply_preset(s, bad)
 
 
+MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("style", 5),
+        ("canvas", MISSING),
+        ("canvas", [100, 100]),
+        ("pens", "Black"),
+        ("pens", ["Black"]),
+        ("settings", []),
+        ("settings", {"order": []}),
+    ],
+    ids=[
+        "style-not-a-string",
+        "canvas-missing",
+        "canvas-not-an-object",
+        "pens-not-a-list",
+        "pen-not-an-object",
+        "settings-not-an-object",
+        "stage-settings-not-an-object",
+    ],
+)
+def test_a_misshapen_section_raises_a_value_error_naming_it_and_changes_nothing(field, value):
+    s = Session()
+    s.update("order", min_length_mm=2.0)
+    d = preset_dict(s)
+    if value is MISSING:
+        del d[field]
+    else:
+        d[field] = value
+    with pytest.raises(ValueError, match=f"preset field '{field}' must be"):
+        apply_preset(s, d)
+    # Setting the style would have reset the stage settings to their defaults.
+    assert s.style.name == "grid" and s.settings["order"].min_length_mm == 2.0
+
+
 def test_migration_is_invoked(monkeypatch):
     calls = []
 

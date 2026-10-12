@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from synthetic import gradient
 
 from plotline.core.pipeline import Style
+from plotline.core.settings import Settings
 from plotline.core.stage import Cancelled
 from plotline.core.types import Canvas, Pen
 from plotline.session.session import RunState, Session
@@ -70,6 +71,21 @@ def test_set_style_takes_a_style_object_and_keeps_the_cache():
     assert s.style.name == "t" and set(s.settings) == {"a"} and len(s.cache) == 1
     s.set_style("grid")
     assert s.style.name == "grid" and len(s.cache) == 1
+
+
+class NoDefaults(Settings):
+    knob: int  # required, so the style cannot build its default settings
+
+
+def test_a_style_whose_defaults_fail_leaves_the_session_as_it_was():
+    s = Session()
+    s.update("order", min_length_mm=1.5)
+    style, settings = s.style, dict(s.settings)
+    stage = Spy("a", ("image",), "paths", value=[])
+    stage.settings_model = NoDefaults
+    with pytest.raises(ValidationError):
+        s.set_style(Style("broken", "Broken", "d", (stage,)))
+    assert s.style is style and s.settings == settings
 
 
 def test_run_blocking_requires_an_image():

@@ -161,9 +161,10 @@ class Session:
     def set_style(self, style: str | Style) -> None:
         """Switch to ``style``, a registered name or a ``Style``, and reset the settings to its
         defaults. The cache is kept, so stages that the styles share are not run again. Raises
-        ``KeyError`` for an unknown name."""
-        self.style = get_style(style) if isinstance(style, str) else style
-        self.settings = self.style.defaults()
+        ``KeyError`` for an unknown name. When it raises, the style and settings are unchanged."""
+        resolved = get_style(style) if isinstance(style, str) else style
+        defaults = resolved.defaults()  # before either assignment, so a failure changes nothing
+        self.style, self.settings = resolved, defaults
 
     def update(self, stage: str, **values: Any) -> None:
         """Change settings of one stage, leaving the rest as they were.

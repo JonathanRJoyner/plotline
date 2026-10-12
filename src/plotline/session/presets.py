@@ -6,9 +6,9 @@ that dict, which is also what a front end sends over the wire, and ``save_preset
 ``load_preset`` put it in a file.
 
 Loading checks the format, brings a file of an older version up to ``PRESET_VERSION`` through the
-``MIGRATIONS`` chain, then sets the style, canvas and pens and validates the settings stage by
-stage. A stage or key that the style does not have is dropped with a ``UserWarning``, and a key
-that the file leaves out keeps the default.
+``MIGRATIONS`` chain, checks that each section has the right shape, then sets the style, canvas
+and pens and validates the settings stage by stage. A stage or key that the style does not have is
+dropped with a ``UserWarning``, and a key that the file leaves out keeps the default.
 """
 
 from __future__ import annotations
@@ -56,8 +56,9 @@ def apply_preset(session: Session, data: dict[str, Any]) -> None:
 
     Raises ``ValueError``, before anything is changed, when ``format`` is not ``plotline-preset``
     or ``version`` is not an integer, is above ``PRESET_VERSION`` (a newer build wrote the file)
-    or has no migration. Other bad data raises where it is found, after the earlier steps have
-    been applied: ``KeyError`` for an unknown style or a missing section, ``TypeError`` or
+    or has no migration, and when ``style``, ``canvas``, ``pens`` or ``settings`` is missing or the
+    wrong shape; the message names the field. Other bad data raises where it is found, after the
+    earlier steps have been applied: ``KeyError`` for an unknown style, ``TypeError`` or
     ``ValueError`` for a bad canvas or pen and ``pydantic.ValidationError`` for a bad setting.
     """
     if not isinstance(data, dict) or data.get("format") != PRESET_FORMAT:
@@ -71,10 +72,19 @@ def apply_preset(session: Session, data: dict[str, Any]) -> None:
         if v not in MIGRATIONS:
             raise ValueError(f"cannot read preset version {version}: no migration from {v}")
         data = MIGRATIONS[v](data)
-    session.set_style(data["style"])
-    session.set_canvas(Canvas(**data["canvas"]))
-    session.set_pens([Pen(**pen) for pen in data["pens"]])
-    for stage, values in data["settings"].items():
+    style, canvas, pens, settings = (data.get(k) for k in ("style", "canvas", "pens", "settings"))
+    if not isinstance(style, str):
+        raise ValueError("preset field 'style' must be a string")
+    if not isinstance(canvas, dict):
+        raise ValueError("preset field 'canvas' must be an object")
+    if not (isinstance(pens, list) and all(isinstance(pen, dict) for pen in pens)):
+        raise ValueError("preset field 'pens' must be a list of objects")
+    if not (isinstance(settings, dict) and all(isinstance(s, dict) for s in settings.values())):
+        raise ValueError("preset field 'settings' must be an object with an object for each stage")
+    session.set_style(style)
+    session.set_canvas(Canvas(**canvas))
+    session.set_pens([Pen(**pen) for pen in pens])
+    for stage, values in settings.items():
         if stage not in session.settings:
             warnings.warn(f"ignoring unknown stage {stage!r}", UserWarning, stacklevel=2)
             continue
