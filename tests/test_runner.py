@@ -1,5 +1,7 @@
 """Tests for the runner: content-hash keys, cache hits and misses, cancellation and the result."""
 
+from dataclasses import dataclass
+
 import numpy as np
 import pytest
 from doubles import Spy, SpySettings, collect
@@ -224,6 +226,40 @@ def test_arrays_in_a_cached_tuple_are_read_only():
     style = Style("t", "T", "d", stages)
     run(style, style.defaults(), StageCache())
     assert [x.flags.writeable for x in pair] == [False, False]
+
+
+def test_the_array_in_a_cached_tone_map_is_read_only():
+    tone = ToneMap(np.zeros((2, 2), np.float32), 1.0, (0.0, 0.0))
+    first = Spy("t", ("image",), "tone", value=tone)
+    style = Style("t", "T", "d", (first, Spy("p", ("tone",), "paths", value=PATHS)))
+    cache = StageCache()
+    assert tone.ink.flags.writeable
+    _, result = run(style, style.defaults(), cache)
+    key = stage_key(first, SpySettings(), {"image": root_key("image", ROOTS["image"])})
+    assert cache.get(key) is tone and tone.ink.flags.writeable is False
+    with pytest.raises(ValueError):
+        result.tone.ink[0, 0] = 1.0
+
+
+@dataclass(frozen=True, eq=False)
+class Bundle:
+    """An artifact that holds a dataclass, a list of arrays and a plain value."""
+
+    tone: ToneMap
+    parts: list
+    label: str
+
+
+def test_arrays_in_a_nested_dataclass_are_read_only():
+    bundle = Bundle(ToneMap(np.zeros((2, 2), np.float32), 1.0, (0.0, 0.0)), [np.zeros(2)], "x")
+    stages = (
+        Spy("b", ("image",), "bundle", value=bundle),
+        Spy("p", ("bundle",), "paths", value=PATHS),
+    )
+    style = Style("t", "T", "d", stages)
+    run(style, style.defaults(), StageCache())
+    assert bundle.tone.ink.flags.writeable is False
+    assert bundle.parts[0].flags.writeable is False and bundle.label == "x"
 
 
 def test_reordering_the_result_paths_leaves_the_cached_list_alone():

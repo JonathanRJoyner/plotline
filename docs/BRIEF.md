@@ -99,7 +99,7 @@ The session owns state and side effects: loading images, managing the canvas and
 
 ### 6.3 Front ends
 
-- **CLI:** `plotline run <style> image.png --out drawing.svg --set key=value …`, `plotline styles`, `plotline describe <style>`, `plotline gui`, `plotline mcp`.
+- **CLI:** `plotline run <style> image.png --out drawing.svg --set stage.key=value …`, `plotline styles`, `plotline describe <style>`, `plotline gui`, `plotline mcp`.
 - **GUI:** see §8.
 - **MCP:** see §9.
 - **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. None ship in 0.1; which come first is open (§12).
@@ -261,3 +261,7 @@ Each milestone, or pair of milestones, gets its own spec under `docs/superpowers
 | Artifact sharing | Stage inputs and results are shared with the cache by reference and are never modified in place; the runner marks cached arrays read-only | Copying every artifact would defeat the cache, and a read-only flag turns a silent corruption into an immediate error. |
 | CI runs | Runs on pushes to `main` and on pull requests. While the repo is private the matrix is Linux on Python 3.11 and 3.13; Windows, macOS and 3.12 return when the repo goes public | Private repos get 2,000 free Actions minutes a month, Windows bills at 2x and macOS at 10x, so the full matrix would cap out after about 25 pushes. Public repos get unlimited standard runners. The owner develops and tests on Windows, so Linux is the run that adds information. |
 | Release publishing | None until milestone 8. Then a workflow on `v*` tags builds the wheel (with the GUI bundle) and publishes to PyPI through trusted publishing | Nothing to publish before 0.1, and trusted publishing needs no stored token. |
+| Image bit depth | 16-bit integer greyscale loads scaled by 65535; float images are refused with a clear error | Scans are a named input and 16-bit greyscale is their common form; a float image has no defined white level, so guessing would plot the wrong tones silently. |
+| Fill-mode rounding | In `fill` the tone map height may differ from the drawing rect by up to one source pixel's worth of mm, because a tone map has one scale | A second scale would complicate every stage for a sub-millimetre effect that only shows when a tiny source is upsampled; placers may clamp to the drawing rect. |
+| Gamma direction | `gamma` applies as `Y ** gamma`, so values above 1 darken midtones; the help text states the direction | Matches the formula fixed in the core spec; a convention users can read from the help text. |
+| Image size limit | The image library's decompression limit stays in force; a too-large file is reported as a plain error | The whole image is decoded before downsizing, so the limit protects memory on ordinary machines; users can pre-resize. |

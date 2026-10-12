@@ -7,7 +7,7 @@ style's stages through the stage cache, under keys that hash the content each st
 import hashlib
 import json
 from collections.abc import Generator, Mapping
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -142,7 +142,8 @@ def stage_key(stage: Stage, settings: Settings, input_keys: dict[str, str]) -> s
 
 
 def _freeze(value: Any) -> None:
-    """Mark ``value`` read-only if it is an array, or each array in it if it is a list or tuple.
+    """Mark ``value`` read-only if it is an array, or each array in it if it is a list or tuple,
+    or what each field holds if it is a dataclass instance, such as the ``ink`` of a ``ToneMap``.
 
     Anything else is left as it is. A cached artifact is shared, so an in-place write to it should
     fail at once instead of corrupting later runs.
@@ -153,6 +154,10 @@ def _freeze(value: Any) -> None:
         for item in value:
             if isinstance(item, np.ndarray):
                 item.flags.writeable = False
+    elif is_dataclass(value) and not isinstance(value, type):
+        # shortcut: lists of dataclasses (layers) are skipped, extend when a stage returns layers.
+        for f in fields(value):
+            _freeze(getattr(value, f.name))
 
 
 def run_style(
@@ -179,11 +184,12 @@ def run_style(
     Everything else is shared, not copied: the inputs a stage receives and the artifact it
     returns are the objects held by ``cache``, handed to later runs and placed in the ``Result``.
     Stages and callers must never modify them in place, and must copy before changing anything.
-    Before it stores an artifact the runner marks it read-only if it is an array, and each array
-    in it if it is a list or tuple, so an in-place write to one of those raises ``ValueError``.
-    That marking covers arrays and lists or tuples of arrays only, so other artifact types rely
-    on the rule alone. The roots belong to the caller and are not marked, but the same rule holds
-    for them.
+    Before it stores an artifact the runner marks it read-only if it is an array, each array in
+    it if it is a list or tuple, and the same inside every field of a dataclass instance, such as
+    the ``ink`` of a ``ToneMap``, so an in-place write to one of those raises ``ValueError``.
+    That marking covers arrays, lists or tuples of arrays and dataclasses made of those, so other
+    artifact types rely on the rule alone. The roots belong to the caller and are not marked, but
+    the same rule holds for them.
     """
     artifacts: dict[str, Any] = {kind: roots[kind] for kind in sorted(ROOT_KINDS)}
     keys = {kind: root_key(kind, value) for kind, value in artifacts.items()}

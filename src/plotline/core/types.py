@@ -55,6 +55,8 @@ class Canvas:
                 f"margin_mm must leave a positive drawing area, got {self.margin_mm} "
                 f"for a {self.width_mm} x {self.height_mm} mm page"
             )
+        if self.fit not in ("fit", "fill"):
+            raise ValueError(f"fit must be 'fit' or 'fill', got {self.fit!r}")
 
     @property
     def drawing_rect(self) -> tuple[float, float, float, float]:

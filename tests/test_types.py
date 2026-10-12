@@ -25,6 +25,11 @@ def test_canvas_rejects_bad_dimensions():
             Canvas(*args)
 
 
+def test_canvas_rejects_an_unknown_fit_mode():
+    with pytest.raises(ValueError, match="fit"):
+        Canvas(100, 100, 0, "banana")
+
+
 def test_pen_validation():
     with pytest.raises(ValueError):
         Pen("x", 0.3, "000000")
