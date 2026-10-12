@@ -62,10 +62,11 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     ctx.globalAlpha = 1;
   }
 
-  // While running the frame stands in for the result and is drawn with the first pen.
+  // While running, the latest frame stands in for the result and is drawn with the first pen;
+  // until the first frame arrives the previous result stays.
   const f = s.running ? s.frame : null;
-  const layers: Layer[] = s.running
-    ? f?.coords && f.offsets ? [{ pen: firstPen, coords: f.coords, offsets: f.offsets }] : []
+  const layers: Layer[] = f
+    ? f.coords && f.offsets ? [{ pen: firstPen, coords: f.coords, offsets: f.offsets }] : []
     : (result?.layers ?? []).filter((_, i) => !s.hidden.has(i));
   if (f?.points) {
     const p = new Path2D();
@@ -78,7 +79,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     stroke(l.pen, p);
   }
 
-  if (s.showTravel) {
+  if (s.showTravel && !f) {
     const p = new Path2D();
     let last: [number, number] | null = null;
     for (const l of layers) {
