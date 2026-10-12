@@ -1,7 +1,9 @@
 //! The hatch stage: straight parallel lines drawn only where the image is dark enough.
 //!
 //! Each line of a family [`scanlines`] lays over the tone map is sampled every half pixel, and each
-//! run of samples whose ink reaches the threshold becomes one straight path. Further levels add
+//! run of samples whose ink reaches the threshold becomes one straight path. A light gap narrower
+//! than the line spacing does not end a run: it could not be seen between neighbouring lines, and
+//! bridging it spares the pen a lift. Further levels add
 //! families at other angles over darker tones, which is cross-hatching. This is the engraver's
 //! technique rather than a published algorithm, so there is nothing to cite.
 
@@ -10,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::lines::{sample_line, scanlines, ChunkRun};
+use crate::math;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
 
@@ -37,8 +40,8 @@ impl Default for HatchSettings {
         HatchSettings {
             spacing_mm: 1.0,
             angle_deg: 45.0,
-            threshold: 0.5,
-            levels: 1,
+            threshold: 0.25,
+            levels: 3,
         }
     }
 }
@@ -54,7 +57,7 @@ impl Stage for HatchStage {
         "Hatching"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -89,6 +92,7 @@ impl Stage for HatchStage {
             lines.extend(family.into_iter().map(|(a, b)| (a, b, level)));
         }
         let total = lines.len();
+        let bridge = s.spacing_mm;
         Ok(Box::new(ChunkRun::new(
             total,
             "lines",
@@ -106,11 +110,16 @@ impl Stage for HatchStage {
                 for p in sample_line(a, b, step) {
                     if tone.sample(p) >= level {
                         run = Some(match run {
-                            Some((first, _, n)) => (first, p, n + 1),
-                            None => (p, p, 1),
+                            Some((first, last, n))
+                                if math::hypot(p[0] - last[0], p[1] - last[1]) <= bridge =>
+                            {
+                                (first, p, n + 1)
+                            }
+                            other => {
+                                end(other);
+                                (p, p, 1)
+                            }
                         });
-                    } else {
-                        end(run.take());
                     }
                 }
                 end(run);
@@ -132,8 +141,8 @@ mod tests {
         let s = HatchStage.schema();
         assert_eq!(bounds(&s, "spacing_mm"), (0.2, 10.0, 1.0));
         assert_eq!(bounds(&s, "angle_deg"), (0.0, 180.0, 45.0));
-        assert_eq!(bounds(&s, "threshold"), (0.0, 1.0, 0.5));
-        assert_eq!(bounds(&s, "levels"), (1.0, 4.0, 1.0));
+        assert_eq!(bounds(&s, "threshold"), (0.0, 1.0, 0.25));
+        assert_eq!(bounds(&s, "levels"), (1.0, 4.0, 3.0));
         assert_eq!(
             (HatchStage.name(), HatchStage.label()),
             ("hatch", "Hatching")
@@ -152,7 +161,7 @@ mod tests {
         let (_, paths) = run_tone_stage(
             &HatchStage,
             tone_map(10, 5, |_, _| 1.0),
-            json!({"angle_deg": 0.0}),
+            json!({"angle_deg": 0.0, "levels": 1}),
         );
         assert_eq!(paths.len(), 10);
         for (i, p) in paths.iter().enumerate() {
@@ -172,7 +181,7 @@ mod tests {
         let (_, paths) = run_tone_stage(
             &HatchStage,
             tone_map(10, 5, half),
-            json!({"angle_deg": 0.0}),
+            json!({"angle_deg": 0.0, "levels": 1}),
         );
         assert_eq!(paths.len(), 10);
         for p in paths.iter() {
@@ -189,7 +198,7 @@ mod tests {
         let (_, paths) = run_tone_stage(
             &HatchStage,
             tone_map(10, 5, |_, _| 1.0),
-            json!({"levels": 2}),
+            json!({"levels": 2, "threshold": 0.5}),
         );
         let rising = paths.iter().filter(|p| slope(p) < 0.0).count();
         let falling = paths.iter().filter(|p| slope(p) > 0.0).count();
@@ -198,9 +207,24 @@ mod tests {
         let (_, light) = run_tone_stage(
             &HatchStage,
             tone_map(10, 5, |_, _| 0.6),
-            json!({"levels": 2}),
+            json!({"levels": 2, "threshold": 0.5}),
         );
         assert_eq!(light.len(), rising);
+    }
+
+    #[test]
+    fn gaps_narrower_than_the_spacing_are_bridged() {
+        // Ink everywhere but column 4, a gap 2 mm wide.
+        let gap = |x: u32, _| if x == 4 { 0.0 } else { 1.0 };
+        let lines = |spacing: f64| {
+            let patch = json!({"angle_deg": 0.0, "levels": 1, "spacing_mm": spacing});
+            run_tone_stage(&HatchStage, tone_map(10, 5, gap), patch)
+                .1
+                .len()
+        };
+        // At 5 mm spacing two lines cross the map, each bridging the gap; at 1 mm, ten lines break.
+        assert_eq!(lines(5.0), 2);
+        assert_eq!(lines(1.0), 20);
     }
 
     #[test]

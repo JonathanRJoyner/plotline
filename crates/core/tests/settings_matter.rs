@@ -17,10 +17,10 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "contrast pivots on mid-grey, which is where grid's default threshold sits",
     ),
     (
-        "hatch",
+        "ink",
         "tone",
         "contrast",
-        "contrast pivots on mid-grey, which is where hatch's default threshold sits",
+        "contrast pivots on mid-grey, which is where ink's default threshold sits",
     ),
     (
         "waves",

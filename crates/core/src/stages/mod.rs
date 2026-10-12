@@ -2,6 +2,7 @@
 
 pub mod grid;
 pub mod hatch;
+pub mod ink;
 pub mod lines;
 pub mod order;
 pub mod slow;

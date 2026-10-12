@@ -45,7 +45,7 @@ impl Session {
         }
     }
 
-    /// Decode PNG or JPEG bytes and use the picture as the source image.
+    /// Decode PNG, JPEG or WebP bytes and use the picture as the source image.
     #[wasm_bindgen(js_name = setImageBytes)]
     pub fn set_image_bytes(&mut self, bytes: &[u8]) -> Result<(), JsError> {
         Ok(self.inner.set_image_bytes(bytes)?)

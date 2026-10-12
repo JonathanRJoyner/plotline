@@ -121,7 +121,7 @@ impl Session {
         }
     }
 
-    /// Decode PNG or JPEG `bytes` with [`image::decode`] and use the picture as the source image.
+    /// Decode PNG, JPEG or WebP `bytes` with [`image::decode`] and use the picture as the source image.
     /// On error the image is unchanged.
     pub fn set_image_bytes(&mut self, bytes: &[u8]) -> Result<(), ImageError> {
         self.image = Some(Arc::new(image::decode(bytes)?));
