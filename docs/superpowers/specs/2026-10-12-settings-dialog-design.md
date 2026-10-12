@@ -47,7 +47,7 @@ So the preset the browser remembers, and preset files saved with spec 4, keep lo
 **Sections.**
 
 - **Machine.**
-  - The machine select: "None (export SVG only)", the current machine by name, and "New machine", which starts from placeholder values to replace (there is no built-in machine; see the brief's "Built-in machines" row).
+  - The machine select: "None: export SVG for your plotter's software", the current machine by name, and "New machine", which starts from placeholder values to replace (there is no built-in machine; see the brief's "Built-in machines" row).
   - With a machine set: Name.
   - Drawable area: Width and Height, then Offset X and Offset Y, all in mm. A help line follows: "Offset is the machine position of the area's corner with the smallest X and Y. The page is centred in the area."
   - Feeds: Draw and Travel, in mm/min.
@@ -67,7 +67,7 @@ Without a machine, Pen lift and G-code show "Choose a machine first" instead of 
 
 **Picking a machine.** Picking "New machine" still sets the page to the area's width and height and keeps the current margin. Editing the area does not change the page. If the page then no longer fits, the G-code export refuses it with the message that names both sizes, as now.
 
-**The right column** keeps what changes per drawing: Page, Pens, Presets and Export. `MachinePanel` and `SpeedsPanel` become sections of a `SettingsDialog` in `panels.tsx`, and `events.ts` takes the new `Area` and drops `bed_mm`.
+**The right column** keeps what changes per drawing: Page, Pens, Export and Presets, in the order spec 6 gave them. `MachinePanel` and `SpeedsPanel` become sections of a `SettingsDialog` in `panels.tsx`, and `events.ts` takes the new `Area` and drops `bed_mm`.
 
 ## 5. Tests
 

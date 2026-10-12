@@ -26,6 +26,8 @@ fn produce(image: Image) -> Value {
     let mut settings = style.defaults();
     settings["tone"]["resolution"] = json!(64);
     settings["points"]["threshold"] = json!(0.6);
+    // The spacing the files were checked against the Python engine at, before its default fell to 1.
+    settings["points"]["spacing_mm"] = json!(2.0);
     let canvas = Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap();
     let pen = Pen::new("Black 0.3", 0.3, "#000000").unwrap();
     let shared = Arc::new(Mutex::new(Shared::default()));

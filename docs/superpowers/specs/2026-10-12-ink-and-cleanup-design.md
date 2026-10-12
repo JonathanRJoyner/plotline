@@ -45,7 +45,7 @@ The image crate's `webp` feature (the `image-webp` decoder, MIT or Apache-2.0) i
 - Help text moves into tooltips, with a "Show help" switch at the top of the column that the page remembers.
 - A slider row puts its label and number on one line and the slider under them.
 - The toolbar gains the zoom readout and the SVG export, so the commonest end of a session is one click.
-- The right column runs page, pens, export and plot time, then presets, with the machine form last and collapsed as "G-code (optional)". A page has an orientation select in place of the swap button.
+- The right column runs page, pens, export and plot time, then presets, with the machine form last and collapsed as "G-code (optional)". (Spec 7 later moved plot time and the machine form into a settings dialog.) A page has an orientation select in place of the swap button.
 - Pens are one compact row each, and the bank's select fits its column.
 
 ## 6. Not built here, for the owner
