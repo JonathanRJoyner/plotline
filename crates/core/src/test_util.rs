@@ -72,14 +72,19 @@ fn drawing_on(canvas: Canvas, pen: Pen, paths: Vec<Vec<[f64; 2]>>) -> Drawing {
     }
 }
 
-/// A drawing on an A4 page with a 10 mm margin and one layer of the pen "Black 0.3" holding
-/// `paths`, in order, and no tone map.
+/// An A4 page with a 10 mm margin.
+pub(crate) fn a4() -> Canvas {
+    Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap()
+}
+
+/// The pen "Black 0.3": 0.3 mm wide, black.
+pub(crate) fn black() -> Pen {
+    Pen::new("Black 0.3", 0.3, "#000000").unwrap()
+}
+
+/// A drawing on [`a4`] with one layer of [`black`] holding `paths`, in order, and no tone map.
 pub(crate) fn drawing_with(paths: Vec<Vec<[f64; 2]>>) -> Drawing {
-    drawing_on(
-        Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap(),
-        Pen::new("Black 0.3", 0.3, "#000000").unwrap(),
-        paths,
-    )
+    drawing_on(a4(), black(), paths)
 }
 
 /// A drawing on a 100 by 100 mm page with no margin and one layer of a pen `pen_width_mm` wide in
