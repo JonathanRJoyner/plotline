@@ -249,13 +249,13 @@ Frame throttling stays in the hosts because the browser and Python have differen
 
 The four stages, the `grid` style, SVG and JSON export, stats and presets follow spec 1 §9 to §11 exactly, including every default, range, formula, format string and the three-decimal rounding. Differences:
 
-- **Tone stage.** Resize uses the `image` crate's triangle filter. The Gaussian blur is a separable kernel in `math.rs`, truncated at three sigma. Both were scipy calls before.
-- **Order stage.** The nearest-endpoint search uses the in-crate uniform grid index instead of a kd-tree. Same greedy rule, same start corner, same reversal rule, same frame cadence.
+- **Tone stage.** Resizing reproduces the Python engine: average `k` by `k` blocks when the source is at least twice the target, then sample bilinearly with target pixel centres mapped to `(j + 0.5) * source / target - 0.5`. The Gaussian blur is a separable kernel in `math.rs`, truncated at three sigma. Both were scipy calls before, and keeping the arithmetic lets the tone tests carry over with their pinned values.
+- **Order stage.** The nearest-endpoint search uses the in-crate uniform grid index instead of a kd-tree, with exact distance ties broken by the lowest endpoint index. Same greedy rule, same start corner, same reversal rule, same frame cadence. The kd-tree broke ties by its internal layout, so the Python and Rust orders can differ only where two candidates are at exactly equal distance.
 - **Preview.** tiny-skia draws anti-aliased strokes directly, so the 4x supersample and box filter go. Everything else in the picture stays: white page, light grey drawing rect, tone at 30 percent when `source` is on, each layer at true pen width with round caps, dots as filled circles of the pen width, red travel lines when `travel` is on.
 - **Images.** `image.rs` decodes PNG and JPEG bytes, converts to RGB float, scales 16-bit greyscale by 65535, and downsizes so the long edge is at most 4000 px. Any other format fails with a clear message naming the two supported formats. Float images cannot occur because no float-capable format is compiled in.
 - **Presets.** Same JSON format, version 1, same migration chain and warning rules, parsed and written by serde.
 
-The synthetic images (gradient, checkerboard, radial, seeded noise, flat grey) are generated in `synthetic.rs` behind a `test-util` feature and exposed through both bindings, so Python and Node tests use the engine's own generators and `tests/synthetic.py` is deleted.
+The synthetic images (gradient, checkerboard, radial, seeded noise, flat grey) are generated in `synthetic.rs` and exposed through both bindings, so Python and Node tests use the engine's own generators and `tests/synthetic.py` is deleted. A hidden style named `_slow`, whose stages take `frames`, `delay_ms` and `fail_after` settings, is registered for cancellation, throttling and error tests from every host; `list_styles` hides names that start with an underscore. Both are always compiled: they are small, and the hosts' tests run against release builds.
 
 ## 11. Determinism across targets
 
@@ -266,7 +266,7 @@ The brief requires the same input and settings to give the same output. With two
 - Arithmetic is `f64` for coordinates and `f32` for the tone map, as in spec 1, with no target-specific SIMD paths.
 - Nothing iterates a `HashMap` in an order that affects output; ordered collections are used where order matters.
 
-A clippy `disallowed-methods` list forbids `f64::sin` and the other platform-dependent float methods outside `math.rs`, so the rule is checked, not remembered.
+A unit test scans the crate's sources and fails on any call of the platform float methods (`sin`, `cos`, `tan`, `atan2`, `exp`, `ln`, `log`, `powf`, `mul_add`) outside `math.rs`, so the rule is checked, not remembered.
 
 The golden tests prove it: the engine's Rust tests and the WebAssembly smoke test under Node both produce the `grid` output for the gradient and the checkerboard and compare it against the same golden JSON files within 0.001 mm.
 
@@ -319,7 +319,7 @@ Python, in `tests/`:
 
 Node: the wasm smoke test in §13.
 
-Acceptance for this spec is the whole set green in CI, the Python engine deleted, and `uv run plotline run grid` producing the same SVG for the synthetic gradient as the Python engine did, within 0.001 mm.
+Acceptance for this spec is the whole set green in CI, the Python engine deleted, and the Rust `grid` output for the synthetic gradient holding the same set of dots as the Python engine's, within 0.001 mm and with the same count; the order may differ only at exact distance ties.
 
 ## 16. Porting order
 
