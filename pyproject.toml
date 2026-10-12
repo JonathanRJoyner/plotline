@@ -8,24 +8,40 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26",
-  "scipy>=1.11",
-  "pillow>=10.1",
-  "pydantic>=2.6",
   "click>=8.2",
 ]
 
-[project.optional-dependencies]
-fast = ["numba>=0.59"]
-
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+# scipy, pillow and pydantic serve only the old Python engine under src/plotline/core, which
+# Task 17 deletes; they stay here until then so its tests keep running.
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "scipy>=1.11",
+  "pillow>=10.1",
+  "pydantic>=2.6",
+]
 
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/plotline"]
+[tool.maturin]
+python-source = "src"
+module-name = "plotline._core"
+manifest-path = "crates/py/Cargo.toml"
+features = ["pyo3/extension-module"]
+
+[tool.uv]
+# Rebuild the extension when the Rust sources change, not only when pyproject.toml does.
+cache-keys = [
+  { file = "pyproject.toml" },
+  { file = "Cargo.toml" },
+  { file = "Cargo.lock" },
+  { file = "crates/**/Cargo.toml" },
+  { file = "crates/**/*.rs" },
+]
 
 [tool.ruff]
 line-length = 100
