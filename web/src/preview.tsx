@@ -1,4 +1,3 @@
-import { Maximize } from "lucide-preact";
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
@@ -15,6 +14,10 @@ type Props = {
   hidden: Set<number>;
   firstPen: Pen;
   hasImage: boolean;
+  // The view lives with the toolbar, which shows its zoom; `fits` counts the toolbar's Fit clicks.
+  view: View;
+  onView: (update: (view: View) => View) => void;
+  fits: number;
 };
 
 // A path object past about a million subpaths draws nothing, so long layers stroke in chunks.
@@ -113,18 +116,18 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
 }
 
 export function Preview(props: Props): JSX.Element {
-  const { canvas, result } = props;
+  const { canvas, result, view, onView: setView, fits } = props;
   const box = useRef<HTMLDivElement>(null);
   const cvs = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [tone, setTone] = useState<{ result: ResultEvent; bitmap: ImageBitmap } | null>(null);
   const bitmap = tone?.result === result ? tone.bitmap : null; // a closed bitmap never matches the new result
 
-  const fit = (w = size.w, h = size.h) => setView(fitView(canvas.width_mm, canvas.height_mm, w, h));
+  const fit = (w: number, h: number) => setView(() => fitView(canvas.width_mm, canvas.height_mm, w, h));
 
-  // The observer fires on observe, so this also fits on mount and when the page size changes.
+  // The observer fires on observe, so this also fits on mount, when the page size changes and on
+  // every Fit click.
   useEffect(() => {
     const el = box.current!;
     const ro = new ResizeObserver(() => {
@@ -133,7 +136,7 @@ export function Preview(props: Props): JSX.Element {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [canvas.width_mm, canvas.height_mm]);
+  }, [canvas.width_mm, canvas.height_mm, fits]);
 
   // One bitmap per result: the tone's grey bytes as opaque RGBA.
   useEffect(() => {
@@ -166,19 +169,30 @@ export function Preview(props: Props): JSX.Element {
     return () => cancelAnimationFrame(id);
   }, [props.canvas, props.frame, props.result, props.running, props.showSource, props.showTravel, props.hidden, props.firstPen, props.hasImage, view, size, bitmap]);
 
+  // Zooms by `k`, keeping the page point under (px, py) in place.
+  const zoom = (k: number, px: number, py: number) => setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));
+  const PAN: Record<string, [number, number]> = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] };
+
   return (
-    <div ref={box} class="stage">
+    <div ref={box} style={{ position: "relative", height: "100%" }}>
       <canvas
         ref={cvs}
+        tabIndex={0}
+        aria-label="Preview of the drawing: arrow keys pan, plus and minus zoom, 0 fits the page"
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", touchAction: "none", cursor: "grab" }}
+        onKeyDown={(e) => {
+          if (e.key === "+" || e.key === "=") zoom(1.25, size.w / 2, size.h / 2);
+          else if (e.key === "-") zoom(0.8, size.w / 2, size.h / 2);
+          else if (e.key === "0") fit(size.w, size.h);
+          else if (PAN[e.key]) setView((v) => ({ ...v, x: v.x + PAN[e.key][0], y: v.y + PAN[e.key][1] }));
+          else return;
+          e.preventDefault();
+        }}
         onWheel={(e) => {
           e.preventDefault();
           const r = e.currentTarget.getBoundingClientRect();
-          const px = e.clientX - r.left;
-          const py = e.clientY - r.top;
           // In proportion to the delta, so a trackpad's stream of small deltas zooms gradually.
-          const k = Math.exp(-e.deltaY * 0.002);
-          setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));
+          zoom(Math.exp(-e.deltaY * 0.002), e.clientX - r.left, e.clientY - r.top);
         }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -195,7 +209,6 @@ export function Preview(props: Props): JSX.Element {
         onPointerUp={() => (drag.current = null)}
         onPointerCancel={() => (drag.current = null)}
       />
-      <button type="button" class="fit" onClick={() => fit()}><Maximize /> Fit</button>
     </div>
   );
 }

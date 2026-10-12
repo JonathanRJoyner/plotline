@@ -1,5 +1,10 @@
 import { expect, test } from "vitest";
-import { fitView, toMm, zoomAt } from "./view";
+import { fitView, toMm, zoomAt, zoomPercent } from "./view";
+
+test("zoomPercent compares the scale with true size", () => {
+  expect(zoomPercent(96 / 25.4)).toBe(100);
+  expect(zoomPercent(1.6)).toBe(42);
+});
 
 test("fitView centres the page at the largest scale that fits", () => {
   const v = fitView(100, 50, 440, 240);

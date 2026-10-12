@@ -32,15 +32,18 @@ body {
 }
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
-.app { display: grid; grid-template-columns: 300px minmax(0, 1fr) 300px; height: 100vh; }
+/* The side columns narrow with the window so the preview keeps room. */
+.app { display: grid; grid-template-columns: clamp(230px, 22vw, 300px) minmax(0, 1fr) clamp(230px, 22vw, 300px); height: 100vh; }
 .app > aside { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding: 12px; }
+.app > aside > label { margin: 0 4px; }
 .app > main { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; padding: 12px 0; }
 
 .brand { display: flex; align-items: center; gap: 8px; margin: 2px 4px; font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
 .brand svg { width: 22px; height: 22px; color: var(--accent); }
 
-/* Panels are cards; the legend floats so it sits inside the card like a heading. */
-fieldset, aside section {
+/* Panels are cards; the legend floats so it sits inside the card like a heading, and a collapsed
+   panel's summary takes the same look. */
+fieldset, details.stage, details.panel {
   margin: 0;
   min-width: 0;
   padding: 12px 14px 14px;
@@ -49,10 +52,9 @@ fieldset, aside section {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
-legend, section h3 {
-  float: left;
-  width: 100%;
-  margin: 0 0 8px;
+details.stage:not([open]), details.panel:not([open]) { padding-bottom: 12px; }
+legend, details.stage > summary, details.panel > summary {
+  margin: 0;
   padding: 0;
   font-size: 11px;
   font-weight: 600;
@@ -60,7 +62,9 @@ legend, section h3 {
   text-transform: uppercase;
   color: var(--muted);
 }
-legend + *, section h3 + * { clear: both; }
+legend { float: left; width: 100%; margin-bottom: 8px; }
+legend + * { clear: both; }
+details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8px; }
 
 .toolbar {
   display: flex;
@@ -73,30 +77,69 @@ legend + *, section h3 + * { clear: both; }
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
-.toolbar .divider { width: 1px; height: 20px; margin: 0 4px; background: var(--border); }
-.toolbar .spacer { flex: 1; }
+.toolbar label { margin: 0; }
+/* Grouped, so a narrow window wraps whole groups; a rule divides them. */
+.toolbar .group { display: flex; gap: 6px; align-items: center; }
+.toolbar .group + .group { padding-left: 6px; border-left: 1px solid var(--border); }
+.toolbar .group.end { margin-left: auto; padding-left: 0; border-left: none; }
+.toolbar .zoom { min-width: 3.5em; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .preview { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--backdrop); border: 1px solid var(--border); border-radius: var(--radius); }
-.stage { position: relative; height: 100%; }
-.stage .fit { position: absolute; top: 10px; right: 10px; box-shadow: var(--shadow); }
+.preview canvas:focus-visible { outline-offset: -2px; }
+.preview .hint {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  max-width: calc(100% - 20px);
+  margin: 0;
+  padding: 6px 12px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
 
-footer { display: flex; flex-wrap: wrap; gap: 12px; }
-footer fieldset { flex: 1 1 280px; }
-footer dt, footer dd { white-space: nowrap; }
-footer dl { grid-auto-flow: column; grid-template-columns: none; grid-template-rows: auto auto; justify-content: start; gap: 0 28px; }
-footer dt { font-size: 11px; color: var(--muted); }
-footer dd { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Hidden until focused, so a keyboard user can jump past the settings to the toolbar. */
+.skip { position: absolute; top: 8px; left: 8px; z-index: 1; padding: 6px 12px; color: var(--on-accent); background: var(--accent); border-radius: 8px; transform: translateY(-200%); }
+.skip:focus { transform: none; }
+.toolbar:focus { outline: none; }
+
+footer {
+  padding: 8px 14px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 14px; }
+.status ol { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0; padding: 0; list-style: none; }
+.status li { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.status li::before { content: ""; width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--border); }
+.status li[data-state="done"] { color: var(--text); }
+.status li[data-state="done"]::before { background: var(--ok); }
+.status li[data-state="running"] { color: var(--text); }
+.status li[data-state="running"]::before { background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
+@keyframes pulse { to { opacity: 0.3; } }
+.stats { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
 
 /* Rows: the label's text on the left, its control and unit on the right. */
 label { display: flex; align-items: center; gap: 8px; margin: 6px 0; color: var(--text); }
 label > input:not([type="checkbox"], [type="range"]), label > select { margin-left: auto; }
 label > input[type="text"] { flex: 1; min-width: 0; }
 label > select { min-width: 0; max-width: 65%; }
-label:has(textarea), label:has(.pair) { flex-wrap: wrap; }
-label > textarea, .pair { flex-basis: 100%; }
-.pair { display: flex; gap: 8px; align-items: center; }
-.pair input[type="range"] { flex: 1; min-width: 0; }
-.toolbar label { margin: 0; }
+label:has(> textarea), label:has(> .wide) { flex-wrap: wrap; }
+label > textarea, label > .wide { flex-basis: 100%; max-width: none; margin-left: 0; }
+/* A slider: label and number on one line, the slider under them. */
+label:has(> .row) { flex-direction: column; align-items: stretch; gap: 4px; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+.row > span { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.row input[type="number"] { width: 5.5em; }
+input[type="range"] { display: block; width: 100%; }
 
 input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), select, textarea {
   height: 28px;
@@ -112,7 +155,7 @@ textarea { height: auto; padding: 6px 8px; font: 12px/1.4 ui-monospace, "Cascadi
 input[type="number"] { width: 6.5em; font-variant-numeric: tabular-nums; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 input[type="checkbox"], input[type="range"] { margin: 0; }
-input[type="checkbox"] { width: 15px; height: 15px; }
+input[type="checkbox"] { width: 15px; height: 15px; flex: none; }
 input[type="color"] { width: 36px; height: 26px; margin-left: auto; padding: 2px; background: var(--field); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
 input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
@@ -152,28 +195,27 @@ fieldset > button, fieldset > .button { margin: 4px 6px 0 0; }
 
 .control { margin-bottom: 4px; }
 .help { margin: -2px 0 8px; color: var(--muted); font-size: 12px; }
-details { margin-top: 6px; }
-summary { color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+details details { margin-top: 6px; }
+details details > summary { color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+summary { cursor: pointer; }
 summary:hover { color: var(--text); }
 .error { margin: 4px 0; color: var(--danger); }
 .warnings { margin: 8px 0 0; padding-left: 1.2em; color: var(--muted); }
 
-.pen { padding: 6px 0 10px; border-bottom: 1px solid var(--border); }
-.pen + button { margin-top: 10px; }
+/* The page: two columns of label over control. */
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.grid label { flex-direction: column; align-items: stretch; gap: 2px; margin: 0; color: var(--muted); font-size: 12px; }
+.grid label > span { display: flex; align-items: center; gap: 4px; color: var(--text); }
+.grid select, .grid input[type="number"] { width: 100%; max-width: none; min-width: 0; margin-left: 0; }
 
-.status ol { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; list-style: none; }
-.status li { display: flex; align-items: center; gap: 8px; color: var(--muted); }
-.status li::before { content: ""; width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--border); }
-.status li[data-state="done"] { color: var(--text); }
-.status li[data-state="done"]::before { background: var(--ok); }
-.status li[data-state="running"] { color: var(--text); }
-.status li[data-state="running"]::before { background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
-.status p { margin: 6px 0 0; color: var(--muted); }
-@keyframes pulse { to { opacity: 0.3; } }
+/* Each pen is one compact row. */
+.pen { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 0; }
+.pen input[type="color"] { width: 30px; flex: none; margin-left: 0; }
+.pen input[type="text"] { flex: 1 1 5em; min-width: 0; }
+.pen input[type="number"] { width: 4.6em; }
+.pen button.icon { width: 28px; height: 28px; }
+
 progress { width: 7em; height: 6px; }
-
-dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
-dd { margin: 0; }
 .loading { display: grid; place-items: center; height: 100vh; margin: 0; color: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) {

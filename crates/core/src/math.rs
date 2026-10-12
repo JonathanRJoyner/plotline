@@ -9,7 +9,10 @@
 //! Gaussian smoothing and bilinear interpolation follow R. C. Gonzalez and R. E. Woods, *Digital
 //! Image Processing*, 3rd ed., Pearson Prentice Hall, 2008, chapter 2 (image interpolation) and
 //! chapter 3 (smoothing spatial filters). Pairwise summation is analysed in N. J. Higham, "The
-//! accuracy of floating point summation", *SIAM J. Sci. Comput.* 14(4), 1993, pp. 783-799.
+//! accuracy of floating point summation", *SIAM J. Sci. Comput.* 14(4), 1993, pp. 783-799. A wide
+//! blur cascades box filters as in W. M. Wells, "Efficient synthesis of Gaussian filters by
+//! cascaded uniform filters", *IEEE Trans. PAMI* 8(2), 1986, pp. 234-239, with the box widths of
+//! P. Kovesi, "Fast almost-Gaussian filtering", *Proc. DICTA*, 2010, pp. 121-125.
 
 /// `e` raised to `x`.
 pub fn exp(x: f64) -> f64 {
@@ -60,9 +63,74 @@ pub fn gaussian_kernel(sigma: f64) -> Vec<f32> {
     w.iter().map(|v| (v / total) as f32).collect()
 }
 
-/// Blur a row-major `width x height` grid with a separable Gaussian of `sigma` pixels, rows
-/// first, then columns. Samples past an edge take the edge value.
+/// From this sigma in pixels up, [`blur`] runs as three box filters, whose cost does not grow
+/// with sigma; below it the true Gaussian is cheap and the boxes would be too coarse.
+const BOX_SIGMA: f64 = 4.0;
+
+/// Blur a row-major `width x height` grid with a Gaussian of `sigma` pixels, rows first, then
+/// columns. Samples past an edge take the edge value. A wide blur is three box filters in each
+/// direction, within a few percent of the Gaussian.
 pub fn blur(values: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32> {
+    if sigma >= BOX_SIGMA {
+        return box_blur(values, width, height, sigma);
+    }
+    gaussian_blur(values, width, height, sigma)
+}
+
+/// The odd widths of three box filters whose cascade has a variance close to `sigma`^2: the
+/// two odd widths around the ideal one, mixed so the variance comes closest, after Kovesi (2010).
+fn box_widths(sigma: f64) -> [usize; 3] {
+    let ideal = (12.0 * sigma * sigma / 3.0 + 1.0).sqrt();
+    let mut lo = ideal.floor() as usize;
+    if lo.is_multiple_of(2) {
+        lo -= 1;
+    }
+    let l = lo as f64;
+    // How many of the three take the lower width.
+    let m = ((12.0 * sigma * sigma - 3.0 * l * l - 12.0 * l - 9.0) / (-4.0 * l - 4.0))
+        .round()
+        .clamp(0.0, 3.0) as usize;
+    [0, 1, 2].map(|i| if i < m { lo } else { lo + 2 })
+}
+
+/// Three box filters along the rows, then three along the columns, each a running sum, so every
+/// pixel costs the same whatever the width (Wells, 1986).
+fn box_blur(values: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32> {
+    let mut v = values.to_vec();
+    for w in box_widths(sigma) {
+        v = box_lines(&v, height, width, |y, x| y * width + x, w);
+    }
+    for w in box_widths(sigma) {
+        v = box_lines(&v, width, height, |x, y| y * width + x, w);
+    }
+    v
+}
+
+/// The mean over a window of odd width `w` along each of `count` lines of `len` samples, where
+/// `at(line, j)` indexes sample `j` of a line. Samples past an edge take the edge value.
+fn box_lines(
+    src: &[f32],
+    count: usize,
+    len: usize,
+    at: impl Fn(usize, usize) -> usize,
+    w: usize,
+) -> Vec<f32> {
+    let r = (w / 2) as isize;
+    let last = len as isize - 1;
+    let mut out = vec![0.0f32; src.len()];
+    for line in 0..count {
+        let get = |j: isize| f64::from(src[at(line, j.clamp(0, last) as usize)]);
+        let mut sum: f64 = (-r..=r).map(get).sum();
+        for j in 0..len {
+            out[at(line, j)] = (sum / w as f64) as f32;
+            sum += get(j as isize + r + 1) - get(j as isize - r);
+        }
+    }
+    out
+}
+
+/// The separable Gaussian of [`gaussian_kernel`], applied tap by tap.
+fn gaussian_blur(values: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32> {
     let kernel = gaussian_kernel(sigma);
     let r = kernel.len() / 2;
     let pass = |src: &[f32], along_x: bool| -> Vec<f32> {
@@ -345,6 +413,35 @@ mod tests {
         assert!((m0 - m1).abs() < 0.05);
         let var = |x: &[f32], m: f32| x.iter().map(|a| (a - m).powi(2)).sum::<f32>();
         assert!(var(&b, m1) < var(&v, m0));
+    }
+    #[test]
+    fn box_widths_are_odd_and_reach_the_asked_sigma() {
+        for sigma in [BOX_SIGMA, 7.3, 25.0, 144.0] {
+            let w = box_widths(sigma);
+            assert!(w.iter().all(|w| w % 2 == 1), "{sigma}: {w:?}");
+            // A box of width w has variance (w^2 - 1) / 12, and variances add under convolution.
+            let var: f64 = w.iter().map(|&w| ((w * w - 1) as f64) / 12.0).sum();
+            assert!((var.sqrt() / sigma - 1.0).abs() < 0.05, "{sigma}: {w:?}");
+        }
+    }
+    #[test]
+    fn a_wide_blur_runs_as_boxes_and_stays_close_to_the_gaussian() {
+        // A step edge across a 400 x 3 grid.
+        let (w, h) = (400, 3);
+        let v: Vec<f32> = (0..w * h)
+            .map(|i| if i % w < 200 { 0.0 } else { 1.0 })
+            .collect();
+        for sigma in [BOX_SIGMA, 20.0] {
+            let fast = blur(&v, w, h, sigma);
+            let exact = gaussian_blur(&v, w, h, sigma);
+            let worst = fast
+                .iter()
+                .zip(&exact)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max);
+            assert!(worst < 0.02, "{sigma}: {worst}");
+            assert!(fast[..w].iter().all(|x| (0.0..=1.0).contains(x)));
+        }
     }
     #[test]
     fn gaussian_kernel_has_radius_three_sigma_and_sums_to_one() {
