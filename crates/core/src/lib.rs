@@ -3,7 +3,11 @@
 pub mod math;
 pub mod settings;
 pub mod stage;
+pub mod style;
 pub mod types;
+
+#[cfg(test)]
+mod test_util;
 
 /// The crate version, in Cargo's semver form.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
