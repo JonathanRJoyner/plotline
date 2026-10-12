@@ -25,3 +25,18 @@ jobs:
       - run: uv run mypy src
       - run: uv run pytest -q
       - run: uv run python scripts/check_licenses.py
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test -p plotline-core
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses

@@ -25,3 +25,9 @@ out/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Rust
+target/
+
+# Web build output
+web/pkg/
