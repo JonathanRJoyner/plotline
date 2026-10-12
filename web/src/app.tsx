@@ -2,6 +2,7 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
+import { Image as ImageIcon, ImageUp, Monitor, Moon, Play, Route, Sparkles, Spline, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { FrameEvent, Machine, Pen, ResultEvent } from "./events";
@@ -43,6 +44,30 @@ function remembered(): unknown {
   }
 }
 
+// The colour theme, kept like the preset. The stylesheet follows the system unless the root says
+// light or dark.
+const THEME = "plotline.theme";
+const THEMES = [["system", Monitor, "System theme"], ["light", Sun, "Light theme"], ["dark", Moon, "Dark theme"]] as const;
+export function savedTheme(): string {
+  try {
+    return localStorage.getItem(THEME) ?? "system";
+  } catch {
+    return "system";
+  }
+}
+
+function ThemeButton() {
+  const [i, setI] = useState(() => Math.max(0, THEMES.findIndex(([t]) => t === document.documentElement.dataset.theme)));
+  const [, Icon, label] = THEMES[i];
+  const next = () => {
+    const j = (i + 1) % THEMES.length;
+    document.documentElement.dataset.theme = THEMES[j][0];
+    try { localStorage.setItem(THEME, THEMES[j][0]); } catch { /* ignored */ }
+    setI(j);
+  };
+  return <button type="button" class="icon" title={label} aria-label={label} onClick={next}><Icon /></button>;
+}
+
 type Status = Pick<State, "run" | "stats" | "layers">;
 
 // The run state, stats and layers, which both replies and run events change, for the parts that
@@ -67,7 +92,7 @@ function useStatus(store: StatusStore): Status {
 }
 
 const Stop = ({ status, onStop }: { status: StatusStore; onStop: () => void }) => (
-  <button type="button" disabled={useStatus(status).run.state !== "running"} onClick={onStop}>Stop</button>
+  <button type="button" disabled={useStatus(status).run.state !== "running"} onClick={onStop}><Square /> Stop</button>
 );
 
 type ExportProps = { status: StatusStore; machine: boolean; onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void };
@@ -265,6 +290,7 @@ export function App() {
       onDrop={(e) => { e.preventDefault(); openImage(imageFile(e.dataTransfer)); }}
     >
       <aside>
+        <h1 class="brand"><Spline /> plotline</h1>
         <fieldset>
           <legend>Style</legend>
           <label>
@@ -278,10 +304,10 @@ export function App() {
       </aside>
       <main>
         <div class="toolbar">
-          <label>
-            Open image{" "}
+          <label class="button">
+            <ImageUp /> Open image
             <input
-              type="file" accept="image/png,image/jpeg"
+              class="visually-hidden" type="file" accept="image/png,image/jpeg"
               onChange={(e) => {
                 const file = e.currentTarget.files?.[0];
                 e.currentTarget.value = ""; // so the same file can be opened again
@@ -289,11 +315,21 @@ export function App() {
               }}
             />
           </label>
-          <button type="button" onClick={() => call("sample")}>Sample image</button>
-          <button type="button" disabled={!state.image} onClick={() => call("run")}>Run</button>
+          <button type="button" onClick={() => call("sample")}><Sparkles /> Sample image</button>
+          <span class="divider" />
+          <button type="button" class="primary" disabled={!state.image} onClick={() => call("run")}><Play /> Run</button>
           <Stop status={status} onStop={() => call("cancel")} />
-          <label><input type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} /> Source</label>
-          <label><input type="checkbox" checked={showTravel} onChange={(e) => setShowTravel(e.currentTarget.checked)} /> Travel</label>
+          <span class="divider" />
+          <label class="chip">
+            <input class="visually-hidden" type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} />
+            <ImageIcon /> Source
+          </label>
+          <label class="chip">
+            <input class="visually-hidden" type="checkbox" checked={showTravel} onChange={(e) => setShowTravel(e.currentTarget.checked)} />
+            <Route /> Travel
+          </label>
+          <span class="spacer" />
+          <ThemeButton />
         </div>
         {errors[""] && <p class="error">{errors[""]}</p>}
         <RunView

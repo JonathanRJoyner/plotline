@@ -9,16 +9,16 @@ export default defineConfig({
   plugins: [
     preact(),
     {
-      // The built bundle contains preact, so ship its licence beside it.
-      name: "preact-licence",
+      // The built bundle contains preact and the lucide icons it uses, so ship their licences beside it.
+      name: "licences",
       closeBundle() {
-        copyFileSync("node_modules/preact/LICENSE", resolve(outDir, "preact-LICENSE.txt"));
+        for (const name of ["preact", "lucide-preact"]) copyFileSync(`node_modules/${name}/LICENSE`, resolve(outDir, `${name}-LICENSE.txt`));
       },
     },
   ],
   base: "./",
   // No modulepreload polyfill: every browser with module workers has modulepreload, and preact
-  // stays the only third-party code in the bundle.
+  // and the icons stay the only third-party code in the bundle.
   build: { outDir, emptyOutDir: true, modulePreload: { polyfill: false } },
   worker: { format: "es" },
   test: { environment: "node", include: ["src/**/*.test.ts"] },

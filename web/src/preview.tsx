@@ -1,3 +1,4 @@
+import { Maximize } from "lucide-preact";
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
@@ -166,37 +167,35 @@ export function Preview(props: Props): JSX.Element {
   }, [props.canvas, props.frame, props.result, props.running, props.showSource, props.showTravel, props.hidden, props.firstPen, props.hasImage, view, size, bitmap]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <button type="button" style={{ alignSelf: "flex-start" }} onClick={() => fit()}>Fit</button>
-      <div ref={box} style={{ position: "relative", flex: 1, minHeight: 0 }}>
-        <canvas
-          ref={cvs}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", touchAction: "none", cursor: "grab" }}
-          onWheel={(e) => {
-            e.preventDefault();
-            const r = e.currentTarget.getBoundingClientRect();
-            const px = e.clientX - r.left;
-            const py = e.clientY - r.top;
-            // In proportion to the delta, so a trackpad's stream of small deltas zooms gradually.
-            const k = Math.exp(-e.deltaY * 0.002);
-            setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));
-          }}
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
-            drag.current = { x: e.clientX, y: e.clientY };
-          }}
-          onPointerMove={(e) => {
-            const d = drag.current;
-            if (!d) return;
-            const dx = e.clientX - d.x;
-            const dy = e.clientY - d.y;
-            drag.current = { x: e.clientX, y: e.clientY };
-            setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
-          }}
-          onPointerUp={() => (drag.current = null)}
-          onPointerCancel={() => (drag.current = null)}
-        />
-      </div>
+    <div ref={box} class="stage">
+      <canvas
+        ref={cvs}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", touchAction: "none", cursor: "grab" }}
+        onWheel={(e) => {
+          e.preventDefault();
+          const r = e.currentTarget.getBoundingClientRect();
+          const px = e.clientX - r.left;
+          const py = e.clientY - r.top;
+          // In proportion to the delta, so a trackpad's stream of small deltas zooms gradually.
+          const k = Math.exp(-e.deltaY * 0.002);
+          setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));
+        }}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          drag.current = { x: e.clientX, y: e.clientY };
+        }}
+        onPointerMove={(e) => {
+          const d = drag.current;
+          if (!d) return;
+          const dx = e.clientX - d.x;
+          const dy = e.clientY - d.y;
+          drag.current = { x: e.clientX, y: e.clientY };
+          setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
+        }}
+        onPointerUp={() => (drag.current = null)}
+        onPointerCancel={() => (drag.current = null)}
+      />
+      <button type="button" class="fit" onClick={() => fit()}><Maximize /> Fit</button>
     </div>
   );
 }

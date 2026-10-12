@@ -85,4 +85,4 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
-      - run: test -f src/plotline/web/index.html && test -f src/plotline/web/preact-LICENSE.txt
+      - run: test -f src/plotline/web/index.html && test -f src/plotline/web/preact-LICENSE.txt && test -f src/plotline/web/lucide-preact-LICENSE.txt

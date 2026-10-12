@@ -1,5 +1,6 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4. Each shows a
 // slice of the state and hands changes back; the app sends them to the engine.
+import { ArrowLeftRight, Download, FolderOpen, Plus, Save, X } from "lucide-preact";
 import type { JSX } from "preact";
 import type { Area, Canvas, Machine, Pen, Stats } from "./events";
 import type { Speeds, State } from "./protocol";
@@ -41,7 +42,7 @@ export function PagePanel({ canvas, onChange }: { canvas: Canvas; onChange: (can
           <option value="fill">fill</option>
         </select>
       </label>
-      <button type="button" onClick={() => set({ width_mm: h, height_mm: w })}>Swap width and height</button>
+      <button type="button" onClick={() => set({ width_mm: h, height_mm: w })}><ArrowLeftRight /> Swap width and height</button>
     </fieldset>
   );
 }
@@ -60,10 +61,10 @@ export function PensPanel({ pens, bank, hidden, onChange, onToggle }: PensProps)
           <label>Colour <input type="color" value={p.color} onChange={(e) => set(i, { color: e.currentTarget.value })} /></label>
           <label><input type="checkbox" checked={!hidden.has(i)} onChange={() => onToggle(i)} /> Show</label>
           {/* The session refuses an empty pen list. */}
-          <button type="button" disabled={pens.length === 1} onClick={() => onChange(pens.filter((_, j) => j !== i))}>Remove</button>
+          <button type="button" disabled={pens.length === 1} onClick={() => onChange(pens.filter((_, j) => j !== i))}><X /> Remove</button>
         </div>
       ))}
-      <button type="button" onClick={() => onChange([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }])}>Add pen</button>
+      <button type="button" onClick={() => onChange([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }])}><Plus /> Add pen</button>
       <label>
         Add from bank{" "}
         <select
@@ -142,8 +143,8 @@ export function StatusBar({ stages, progress, run }: StatusProps): JSX.Element {
       <ol>
         {stages.map((s) => {
           const p = progress[s.name];
-          if (done(s.name)) return <li>{s.label}: done ({p.label})</li>;
-          if (s === current) return <li>{s.label}: {p?.label ?? "running"} <progress value={p?.progress ?? 0} max={1} /></li>;
+          if (done(s.name)) return <li data-state="done">{s.label}: done ({p.label})</li>;
+          if (s === current) return <li data-state="running">{s.label}: {p?.label ?? "running"} <progress value={p?.progress ?? 0} max={1} /></li>;
           return <li>{s.label}: waiting</li>;
         })}
       </ol>
@@ -158,11 +159,11 @@ export function PresetsPanel({ warnings, onSave, onLoad }: PresetsProps): JSX.El
   return (
     <fieldset>
       <legend>Presets</legend>
-      <button type="button" onClick={onSave}>Save preset</button>
-      <label>
-        Load preset{" "}
+      <button type="button" onClick={onSave}><Save /> Save preset</button>
+      <label class="button">
+        <FolderOpen /> Load preset
         <input
-          type="file" accept="application/json,.json"
+          class="visually-hidden" type="file" accept="application/json,.json"
           onChange={(e) => {
             const file = e.currentTarget.files?.[0];
             e.currentTarget.value = ""; // so the same file can be loaded again
@@ -185,10 +186,10 @@ export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: Exp
   return (
     <fieldset>
       <legend>Export</legend>
-      <button type="button" disabled={!drawing} onClick={() => onExport("svg")}>SVG</button>{" "}
-      <button type="button" disabled={!drawing} onClick={() => onExport("json")}>JSON</button>
+      <button type="button" disabled={!drawing} onClick={() => onExport("svg")}><Download /> SVG</button>
+      <button type="button" disabled={!drawing} onClick={() => onExport("json")}><Download /> JSON</button>
       {machine && layers.map((p, i) => (
-        <div><button type="button" disabled={!drawing} onClick={() => onGcode(i)}>G-code: {p.name}</button></div>
+        <div><button type="button" disabled={!drawing} onClick={() => onGcode(i)}><Download /> G-code: {p.name}</button></div>
       ))}
     </fieldset>
   );
