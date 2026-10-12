@@ -8,7 +8,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 plotline is early software. The engine is written in Rust and compiled twice: to a native extension for the Python package, and to WebAssembly for the browser. The Python package and the command line are thin layers over it. The command line runs one style, `grid`: dots on a regular grid, one wherever the image is dark enough, ordered to keep the pen's travel short. A run writes an SVG in millimetres that holds the drawing in one layer, labelled with the name of its pen. It can also write the paths as JSON and a PNG preview that draws each mark at its real pen width. You can set the page size and margin, choose the pen, and change a setting with `--set stage.key=value`, such as `--set points.spacing_mm=3`. `plotline describe grid` lists the settings.
 
-`plotline gui` opens the live preview in the browser. It runs the engine inside the page, as WebAssembly. Building it needs Node: run `npm run wasm`, `npm ci` and `npm run build` in `web/`. The Voronoi styles, Sketch Lines and the MCP server are planned but not built yet, and `plotline mcp` prints a message saying so. The goals, architecture, decisions and everything still planned are in [docs/BRIEF.md](docs/BRIEF.md).
+`plotline gui` opens the live preview in the browser. It runs the engine inside the page, as WebAssembly. Building it needs Node, wasm-pack and the `wasm32-unknown-unknown` Rust target: run `npm run wasm`, `npm ci` and `npm run build` in `web/`. The Voronoi styles, Sketch Lines and the MCP server are planned but not built yet, and `plotline mcp` prints a message saying so. The goals, architecture, decisions and everything still planned are in [docs/BRIEF.md](docs/BRIEF.md).
 
 ## Try it
 

@@ -17,7 +17,9 @@ export default defineConfig({
     },
   ],
   base: "./",
-  build: { outDir, emptyOutDir: true },
+  // No modulepreload polyfill: every browser with module workers has modulepreload, and preact
+  // stays the only third-party code in the bundle.
+  build: { outDir, emptyOutDir: true, modulePreload: { polyfill: false } },
   worker: { format: "es" },
   test: { environment: "node", include: ["src/**/*.test.ts"] },
 });

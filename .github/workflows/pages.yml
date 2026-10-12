@@ -10,6 +10,11 @@ permissions:
   id-token: write
   contents: read
 
+# One deploy at a time, so two quick pushes cannot race; a queued deploy waits instead of cancelling.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   deploy:
     # Deploy only once the repository is public; until then the job is skipped.

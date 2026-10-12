@@ -153,7 +153,7 @@ What the preview should do:
 - **Presets:** save and load full settings as a small file. They should be shareable.
 - **Export:** layered SVG, plus the other formats in §10.
 
-The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D versus WebGL for very large path counts is open (§12). The built assets must ship inside the Python package so `pip install plotline` is all a user needs, and the same assets are deployed as the hosted page.
+The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D was chosen over WebGL on 2026-10-12, see the decision log. The built assets must ship inside the Python package so `pip install plotline` is all a user needs, and the same assets are deployed as the hosted page.
 
 ## 9. MCP server (decided: yes, kept thin)
 
@@ -223,7 +223,7 @@ The ten questions the brief opened with (frontend stack, performance strategy, c
    - add a CHANGELOG and a short CONTRIBUTING (the verification set, the licence rule, the naming rule)
    - scan the full git history for personal paths and secrets
    - restore the full CI matrix (Windows, macOS, Python 3.12)
-   - add the release workflow and register the trusted publisher on PyPI (owner action)
+   - add the release workflow, which builds the Vite bundle before the wheel and fails if `src/plotline/web/index.html` is missing, and register the trusted publisher on PyPI (owner action)
    - bump the version from `0.1.0.dev0` to `0.1.0` and tag `v0.1.0`
 
 Each milestone, or pair of milestones, gets its own spec under `docs/superpowers/specs/` before it is built. Milestones 1 and 2 share the first spec, which also pulls in a minimal ordering stage, the preview PNG, stats and presets so results can be checked visually before the GUI exists. The Rust port, decided on 2026-10-11, sits between milestones 2 and 3 under [its own spec](superpowers/specs/2026-10-11-rust-core-design.md): the Python engine is rewritten in Rust with the same design, so the algorithm milestones are written once, in Rust.
@@ -279,7 +279,7 @@ Milestone 2 was completed in Python and then ported to Rust on 2026-10-12 under 
 | Cache keys (Rust) | blake3 of canonical JSON | Fast and stable across platforms; keys keep supporting a disk cache. |
 | Spatial index | A uniform grid bucket index in the crate; no kd-tree dependency | About sixty lines, deterministic, fast enough in Rust for a hundred thousand endpoints. |
 | Third-party styles (Rust) | New stages and styles are Rust code behind the `Stage` trait in 0.x; the Python entry-point group is dropped | Stages must run in the browser, which Python stages cannot. A Python stage API and JSON-declared styles are open questions. |
-| GUI bundle shipping | The release workflow builds the Vite bundle before the wheel and fails if `web/dist/index.html` is missing; `plotline gui` fails with a clear message when the installed package has no bundle; a Pages workflow deploys the same bundle, gated on the repository being public | Settles the old open question. The wheel and the hosted page are built from the same files. |
+| GUI bundle shipping | Amended on 2026-10-12, see "Bundle location". The release workflow builds the Vite bundle before the wheel and fails if `web/dist/index.html` is missing; `plotline gui` fails with a clear message when the installed package has no bundle; a Pages workflow deploys the same bundle, gated on the repository being public | Settles the old open question. The wheel and the hosted page are built from the same files. |
 | Rust tooling | Stable toolchain pinned in `rust-toolchain.toml`, rustfmt, clippy with warnings denied, cargo-deny for licences, wasm-pack for the browser build, maturin for the extension; CI gains a rust job and a wasm job | Standard tools, all permissively licensed. |
 | LLVM exception (Rust) | cargo-deny allows `Apache-2.0 WITH LLVM-exception` for `target-lexicon` alone, a build-time dependency of the PyO3 build script | The exception only adds a permission to Apache-2.0, so the licence is at least as permissive; scoping it to one crate keeps any other use visible. |
 | Run generations | Each run carries a generation number; a run writes its terminal state and drawing to the session only while it is still the newest run, and `start` shows the new run as running at once | A cancelled older run that finishes late must never overwrite a newer run's state; the session has no threads, so the guard lives in the slot the hosts share. |

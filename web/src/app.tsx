@@ -167,8 +167,12 @@ export function App() {
 
   async function openImage(file: File | undefined) {
     if (!file) return;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    call("setImageBytes", [bytes], "", [bytes.buffer]);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await call("setImageBytes", [bytes], "", [bytes.buffer]);
+    } catch (e) {
+      setErrors((es) => ({ ...es, "": message(e) }));
+    }
   }
 
   async function savePreset() {
@@ -214,7 +218,17 @@ export function App() {
       </aside>
       <main>
         <div class="toolbar">
-          <label>Open image <input type="file" accept="image/png,image/jpeg" onChange={(e) => openImage(e.currentTarget.files?.[0])} /></label>
+          <label>
+            Open image{" "}
+            <input
+              type="file" accept="image/png,image/jpeg"
+              onChange={(e) => {
+                const file = e.currentTarget.files?.[0];
+                e.currentTarget.value = ""; // so the same file can be opened again
+                openImage(file);
+              }}
+            />
+          </label>
           <button type="button" onClick={() => call("sample")}>Sample image</button>
           <button type="button" disabled={!state.image} onClick={() => call("run")}>Run</button>
           <Stop status={status} onStop={() => call("cancel")} />

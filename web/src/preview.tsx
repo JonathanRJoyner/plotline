@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
-import { eachPath } from "./paths";
+import { eachPath, pathCount } from "./paths";
 import { fitView, zoomAt, type View } from "./view";
 
 type Props = {
@@ -16,18 +16,25 @@ type Props = {
   hasImage: boolean;
 };
 
-// Adds vertices a..b of `c` (x, y pairs) to `p`. A one-vertex path is a zero-length
-// segment, which the round cap draws as a dot.
+// A path object past about a million subpaths draws nothing, so long layers stroke in chunks.
+const CHUNK = 200_000;
+
+// Adds vertices a..b of `c` (x, y pairs) to `p`. A one-vertex path becomes a 0.1 µm segment,
+// which the round cap draws as a dot; the canvas spec does not promise a dot for a zero-length one.
 function trace(p: Path2D, c: Float64Array, a: number, b: number) {
   if (b <= a) return;
   p.moveTo(c[2 * a], c[2 * a + 1]);
-  if (b - a === 1) p.lineTo(c[2 * a], c[2 * a + 1]);
+  if (b - a === 1) p.lineTo(c[2 * a] + 1e-4, c[2 * a + 1]);
   for (let v = a + 1; v < b; v++) p.lineTo(c[2 * v], c[2 * v + 1]);
 }
 
 // Draws everything in page millimetres, so a line width is a length on the paper.
 function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h: number, dpr: number, bitmap: ImageBitmap | null) {
-  const { canvas: page, result, firstPen } = s;
+  const { result, firstPen } = s;
+  // While running, the latest frame stands in for the result and is drawn with the first pen;
+  // until the first frame arrives the previous result stays, on the page it was made for.
+  const f = s.running ? s.frame : null;
+  const page = !f && result ? result.canvas : s.canvas;
   const cv = ctx.canvas;
   if (cv.width !== Math.round(w * dpr)) cv.width = Math.round(w * dpr);
   if (cv.height !== Math.round(h * dpr)) cv.height = Math.round(h * dpr);
@@ -40,6 +47,16 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     ctx.strokeStyle = pen.color;
     ctx.lineWidth = pen.width_mm;
     ctx.stroke(p);
+  };
+  // Strokes `n` paths with one pen, `add` putting path i into the chunk's path object.
+  const strokeChunks = (pen: Pen, n: number, add: (p: Path2D, i: number) => void) => {
+    ctx.strokeStyle = pen.color;
+    ctx.lineWidth = pen.width_mm;
+    for (let i = 0; i < n; i += CHUNK) {
+      const p = new Path2D();
+      for (let j = i; j < Math.min(n, i + CHUNK); j++) add(p, j);
+      ctx.stroke(p);
+    }
   };
 
   ctx.save();
@@ -62,22 +79,12 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     ctx.globalAlpha = 1;
   }
 
-  // While running, the latest frame stands in for the result and is drawn with the first pen;
-  // until the first frame arrives the previous result stays.
-  const f = s.running ? s.frame : null;
   const layers: Layer[] = f
     ? f.coords && f.offsets ? [{ pen: firstPen, coords: f.coords, offsets: f.offsets }] : []
     : (result?.layers ?? []).filter((_, i) => !s.hidden.has(i));
-  if (f?.points) {
-    const p = new Path2D();
-    for (let i = 0; i < f.points.length / 2; i++) trace(p, f.points, i, i + 1);
-    stroke(firstPen, p);
-  }
-  for (const l of layers) {
-    const p = new Path2D();
-    eachPath(l.coords, l.offsets, (a, b) => trace(p, l.coords, a, b));
-    stroke(l.pen, p);
-  }
+  const pts = f?.points;
+  if (pts) strokeChunks(firstPen, pts.length / 2, (p, i) => trace(p, pts, i, i + 1));
+  for (const l of layers) strokeChunks(l.pen, pathCount(l.offsets), (p, i) => trace(p, l.coords, l.offsets[i], l.offsets[i + 1]));
 
   if (s.showTravel && !f) {
     const p = new Path2D();
@@ -168,7 +175,11 @@ export function Preview(props: Props): JSX.Element {
           onWheel={(e) => {
             e.preventDefault();
             const r = e.currentTarget.getBoundingClientRect();
-            setView((v) => zoomAt(v, 1.1 ** -Math.sign(e.deltaY), e.clientX - r.left, e.clientY - r.top));
+            const px = e.clientX - r.left;
+            const py = e.clientY - r.top;
+            // In proportion to the delta, so a trackpad's stream of small deltas zooms gradually.
+            const k = Math.exp(-e.deltaY * 0.002);
+            setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));
           }}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId);

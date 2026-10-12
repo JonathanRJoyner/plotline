@@ -14,7 +14,7 @@ self.onmessage = (e: MessageEvent<Command>) => {
   else queue.push(e.data);
 };
 
-// No top-level await: Vite builds workers as IIFE by default, which cannot hold one.
+// Commands can arrive before init() resolves, so the handler above is set first and queues them.
 init().then(() => {
   protocol = new Protocol(new Session(), (msg, transfer) => self.postMessage(msg, { transfer: transfer ?? [] }));
   for (const cmd of queue.splice(0)) protocol.handle(cmd);
