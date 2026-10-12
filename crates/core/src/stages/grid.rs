@@ -125,6 +125,8 @@ impl StageRun for GridRun {
         };
         if self.no_cells {
             self.no_cells = false;
+            // With columns but no rows or the reverse, the rows that remain must not be run.
+            self.next_row = self.rows;
             return Ok(frame(1.0, "no grid cells".into(), Vec::new()));
         }
         if self.next_row >= self.rows {
@@ -220,7 +222,11 @@ impl StageRun for DotRun {
             self.paths = Some(paths);
             return Ok(Step::Frame(frame));
         }
-        let paths = self.paths.take().expect("the dot run has already finished");
+        let Some(paths) = self.paths.take() else {
+            return Err(StageError::Failed(
+                "the dot run has already finished".into(),
+            ));
+        };
         Ok(Step::Done(Artifact::Paths(Arc::new(paths))))
     }
 }
@@ -313,6 +319,7 @@ mod tests {
     fn too_small_map_gives_no_cells() {
         let (frames, pts) = run_grid(tone(vec![1.0; 1], 1, 1), json!({"spacing_mm": 20.0}));
         assert!(pts.0.is_empty());
+        assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].label, "no grid cells");
     }
     #[test]
@@ -393,5 +400,23 @@ mod tests {
             let err = GridPlacer.start(inputs(), &settings, ctx).err().unwrap();
             assert!(matches!(err, StageError::Settings(_)), "{err:?}");
         }
+    }
+    #[test]
+    fn columns_without_rows_and_rows_without_columns_give_one_frame() {
+        // 1 x 100 px at 2 mm per px is 2 x 200 mm: no columns, 50 rows at spacing 4.
+        let (frames, pts) = run_grid(tone(vec![1.0; 100], 1, 100), json!({"spacing_mm": 4.0}));
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].label, "no grid cells");
+        assert!(pts.0.is_empty());
+    }
+    #[test]
+    fn a_finished_dot_run_fails_instead_of_panicking() {
+        let points = Artifact::Points(Arc::new(Points(vec![[1.0, 2.0]])));
+        let inputs = Inputs::new(HashMap::from([(Kind::Points, points)]));
+        let ctx = RunContext::new(Arc::default());
+        let mut run = DotRenderer.start(inputs, &json!({}), ctx).unwrap();
+        assert!(matches!(run.step(), Ok(Step::Frame(_))));
+        assert!(matches!(run.step(), Ok(Step::Done(_))));
+        assert!(matches!(run.step(), Err(StageError::Failed(_))));
     }
 }
