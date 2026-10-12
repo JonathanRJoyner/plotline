@@ -5,10 +5,15 @@
 //! sideways), composite any transparency over white (the colour of blank paper, instead of
 //! whatever colour hides under transparent pixels), shrink with Lanczos resampling so that the
 //! longer edge is [`MAX_EDGE_PX`] if it was longer, then convert to floats clamped to 0..1. A
-//! smaller image is not enlarged. 8-bit samples are divided by 255 and 16-bit samples by 65535, so
+//! smaller image is not enlarged. 8-bit samples are scaled by 255 and 16-bit samples by 65535, so
 //! a 16-bit greyscale scan is scaled rather than clipped; greyscale is repeated into three
-//! channels. A file that needs more memory than the `image` crate's default limit to decode is a
-//! decode error.
+//! channels.
+//!
+//! An image with alpha is composited to f32 before the resize, so while it shrinks it takes 12
+//! bytes per pixel at full size, and the composite briefly holds the decoded pixels beside that.
+//! An image without alpha shrinks at its stored depth and becomes f32 only at its final size. The
+//! `image` crate's default memory limit covers decoding alone: a file that needs more than that to
+//! decode is a decode error, and the later steps are not limited.
 //!
 //! Compositing is the "over" operator of T. Porter and T. Duff, "Compositing digital images",
 //! *Computer Graphics* 18(3) (SIGGRAPH '84), 1984, pp. 253-259. Lanczos resampling is described in
@@ -74,7 +79,8 @@ pub fn decode(bytes: &[u8]) -> Result<Image, ImageError> {
         img = img.resize_exact(fit(img.width()), fit(img.height()), FilterType::Lanczos3);
     }
     let (width, height) = (img.width(), img.height());
-    // Divides u8 samples by 255 and u16 samples by 65535, and repeats grey into three channels.
+    // Scales u8 samples by 255 and u16 samples by 65535 and repeats grey into three channels. The
+    // grey paths multiply by the reciprocal, so they can differ from a division by 1 ulp.
     let mut rgb = img.into_rgb32f().into_raw();
     for v in &mut rgb {
         *v = v.clamp(0.0, 1.0); // Lanczos can overshoot
@@ -83,24 +89,45 @@ pub fn decode(bytes: &[u8]) -> Result<Image, ImageError> {
 }
 
 /// Composite any transparency over white; an image without alpha comes back unchanged.
+///
+/// 8-bit samples use `(a * c / 255 + (255 - a)) / 255` in f32; wider samples are scaled to 0..1
+/// first and use `c * a + (1 - a)`. The source buffer is consumed, not copied.
 fn over_white(img: DynamicImage) -> DynamicImage {
+    if !img.color().has_alpha() {
+        return img;
+    }
     let (w, h) = (img.width(), img.height());
-    let rgb: Vec<f32> = match img {
-        DynamicImage::ImageLumaA8(_) | DynamicImage::ImageRgba8(_) => img
-            .to_rgba8()
-            .pixels()
-            .flat_map(|p| {
-                let a = f32::from(p[3]);
-                [p[0], p[1], p[2]].map(|c| (a * f32::from(c) / 255.0 + (255.0 - a)) / 255.0)
-            })
-            .collect(),
-        _ if img.color().has_alpha() => img
-            .to_rgba32f()
-            .pixels()
-            .flat_map(|p| [p[0], p[1], p[2]].map(|c| c * p[3] + (1.0 - p[3])))
-            .collect(),
-        _ => return img,
+    let mut rgb = Vec::with_capacity(w as usize * h as usize * 3);
+    let over8 = |c: u8, a: u8| {
+        let a = f32::from(a);
+        (a * f32::from(c) / 255.0 + (255.0 - a)) / 255.0
     };
+    let over = |c: f32, a: f32| c * a + (1.0 - a);
+    let unit16 = |v: u16| f32::from(v) / 65535.0;
+    match img {
+        DynamicImage::ImageRgba8(buf) => rgb.extend(
+            buf.pixels()
+                .flat_map(|p| [p[0], p[1], p[2]].map(|c| over8(c, p[3]))),
+        ),
+        DynamicImage::ImageLumaA8(buf) => {
+            rgb.extend(buf.pixels().flat_map(|p| [over8(p[0], p[1]); 3]))
+        }
+        DynamicImage::ImageRgba16(buf) => rgb.extend(
+            buf.pixels()
+                .flat_map(|p| [p[0], p[1], p[2]].map(|c| over(unit16(c), unit16(p[3])))),
+        ),
+        DynamicImage::ImageLumaA16(buf) => rgb.extend(
+            buf.pixels()
+                .flat_map(|p| [over(unit16(p[0]), unit16(p[1])); 3]),
+        ),
+        // Rgba32F, which neither decoder produces, and any alpha layout added later.
+        other => rgb.extend(
+            other
+                .into_rgba32f()
+                .pixels()
+                .flat_map(|p| [p[0], p[1], p[2]].map(|c| over(c, p[3]))),
+        ),
+    }
     DynamicImage::ImageRgb32F(Rgb32FImage::from_raw(w, h, rgb).expect("three floats per pixel"))
 }
 
@@ -242,6 +269,43 @@ mod tests {
         let im = decode(&encode_png_rgba8(4500, 1, &data)).unwrap();
         assert_eq!((im.width, im.height), (4000, 1));
         assert!(im.rgb.iter().all(|&v| v > 0.999), "a pixel is not white");
+    }
+
+    #[test]
+    fn sixteen_bit_alpha_is_composited_over_white() {
+        // Half alpha, RGBA then grey: each channel is c * a + (1 - a), c and a scaled by 65535.
+        let px: [u16; 4] = [60000, 0, 20000, 32768];
+        let bytes: Vec<u8> = px.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let im = decode(&encode_png(1, 1, &bytes, ExtendedColorType::Rgba16)).unwrap();
+        let a = 32768.0 / 65535.0;
+        for (got, c) in im.rgb.iter().zip(&px[..3]) {
+            let want = f32::from(*c) / 65535.0 * a + (1.0 - a);
+            assert!((got - want).abs() < 1e-6, "{got} != {want}");
+        }
+        let grey: Vec<u8> = [20000_u16, 32768]
+            .iter()
+            .flat_map(|v| v.to_ne_bytes())
+            .collect();
+        let im = decode(&encode_png(1, 1, &grey, ExtendedColorType::La16)).unwrap();
+        let want = 20000.0 / 65535.0 * a + (1.0 - a);
+        assert!(
+            im.rgb.iter().all(|v| (v - want).abs() < 1e-6),
+            "{:?}",
+            im.rgb
+        );
+    }
+
+    #[test]
+    fn grey_with_alpha_is_composited_over_white() {
+        // Grey 128 at alpha 128: (128 * 128 / 255 + 127) / 255 in every channel.
+        let im = decode(&encode_png(1, 1, &[128, 128], ExtendedColorType::La8)).unwrap();
+        let want = (128.0 * 128.0 / 255.0 + 127.0) / 255.0;
+        assert!(
+            im.rgb.iter().all(|v| (v - want).abs() < 1e-6),
+            "{:?}",
+            im.rgb
+        );
+        assert_eq!(im.rgb.len(), 3);
     }
 
     #[test]
