@@ -1,27 +1,46 @@
-"""The command line interface: list the styles, describe one, and run one on an image.
+"""The command line interface: list the styles, describe one, run one on an image, and serve the
+web interface.
 
-``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. The other
-commands only read the style registry. The work all happens in the session layer, so this module
-holds no algorithm code. ``gui`` and ``mcp`` are placeholders until those front ends exist.
+``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. ``styles``
+and ``describe`` read the style registry. ``gui`` serves the web bundle that a release wheel
+carries. The work all happens in the session layer, so this module holds no algorithm code.
+``mcp`` is a placeholder until that front end exists.
 """
 
+import http.server
 import json
 import sys
+import webbrowser
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
+from functools import partial
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import click
 
-from plotline.core.registry import get_style, list_styles
-from plotline.core.types import Pen
-from plotline.session.session import Session
+from plotline.registry import get_style, list_styles
+from plotline.session import Session
+from plotline.types import Pen
 
 
-def parse_set(value: str) -> tuple[str, str, str]:
-    """Split ``STAGE.KEY=VALUE`` into ``(stage, key, value)``, all text.
+def coerce(text: str) -> bool | int | float | str:
+    """Read a ``--set`` value: ``true`` and ``false`` as booleans, then an integer, then a
+    float, and anything else as the text itself. The engine checks the value against the setting."""
+    if text in ("true", "false"):
+        return text == "true"
+    for kind in (int, float):
+        try:
+            return kind(text)
+        except ValueError:
+            pass
+    return text
+
+
+def parse_set(value: str) -> tuple[str, str, bool | int | float | str]:
+    """Split ``STAGE.KEY=VALUE`` into ``(stage, key, value)``, with the value read by ``coerce``.
 
     There must be exactly one ``.`` before the ``=`` and exactly one ``=``, and the stage and the
     key must not be empty. Anything else raises ``click.BadParameter``.
@@ -30,15 +49,15 @@ def parse_set(value: str) -> tuple[str, str, str]:
     stage, _, key = target.partition(".")
     if not (equals and stage and key) or "." in key or "=" in text:
         raise click.BadParameter(f"{value!r} must look like STAGE.KEY=VALUE")
-    return stage, key, text
+    return stage, key, coerce(text)
 
 
 def parse_pen(value: str) -> Pen:
     """Split ``NAME:WIDTH_MM:COLOR`` into a ``Pen``, as in ``Red 0.5:0.5:#ff0000``.
 
     Only the last two colons separate the fields, so the name may hold colons and the colour keeps
-    its ``#``. A wrong shape, a width that is not a number and anything else that ``Pen`` refuses
-    raise ``click.BadParameter``.
+    its ``#``. A wrong shape or a width that is not a number raise ``click.BadParameter``; the
+    engine checks the width and colour when the session is given the pen.
     """
     parts = value.rsplit(":", 2)
     if len(parts) != 3:
@@ -52,16 +71,13 @@ def parse_pen(value: str) -> Pen:
 
 @contextmanager
 def _errors() -> Iterator[None]:
-    """Turn the errors that bad input causes in the session into a one-line CLI error.
-
-    pydantic's ``ValidationError`` is a ``ValueError``, so it is covered. A ``KeyError`` is shown by
-    its message, because ``str`` would put the message in quotes.
-    """
+    """Turn the errors that bad input causes in the session into a one-line CLI error. The engine
+    reports a refused value as ``ValueError``, and a file that cannot be read is an
+    ``OSError``."""
     try:
         yield
-    except (ValueError, KeyError, OSError) as error:
-        message = str(error.args[0]) if isinstance(error, KeyError) else str(error)
-        raise click.ClickException(message) from error
+    except (ValueError, OSError) as error:
+        raise click.ClickException(str(error)) from error
 
 
 @click.group()
@@ -90,7 +106,8 @@ def describe(style: str, as_json: bool) -> None:
         if i:
             click.echo()
         click.echo(f"{stage['name']} ({stage['label']})")
-        for name, prop in stage["schema"]["properties"].items():
+        # A stage without settings has no properties in its schema.
+        for name, prop in stage["schema"].get("properties", {}).items():
             fields = [name, prop.get("type", "any"), f"default {json.dumps(prop.get('default'))}"]
             for word, key in (("min", "minimum"), ("max", "maximum")):
                 if key in prop:
@@ -150,7 +167,7 @@ def run(
     margin: float | None,
     fit: str | None,
     pens: list[Pen],
-    sets: list[tuple[str, str, str]],
+    sets: list[tuple[str, str, bool | int | float | str]],
     preset: str | None,
     save_preset: str | None,
     quiet: bool,
@@ -162,10 +179,7 @@ def run(
     with _errors():
         session.load_image(image)
         if preset is not None:
-            try:
-                session.load_preset(preset)
-            except TypeError as error:  # a canvas or pen entry with the wrong keys
-                raise click.ClickException(f"invalid preset: {error}") from error
+            session.load_preset(preset)
         # A preset of the same style keeps its settings, which set_style would reset.
         if session.style.name != style:
             session.set_style(style)
@@ -180,13 +194,8 @@ def run(
             session.set_canvas(replace(session.canvas, **changes))
         if pens:
             session.set_pens(pens)
-        for stage, key, text in sets:
-            if stage not in session.settings:
-                stages = ", ".join(session.settings)
-                raise click.ClickException(
-                    f"style {session.style.name!r} has no stage {stage!r}; its stages are {stages}"
-                )
-            session.update(stage, **{key: text})
+        for stage, key, value in sets:
+            session.update(stage, **{key: value})
         session.run_blocking()
         session.export_svg(out)
         if json_out is not None:
@@ -203,10 +212,25 @@ def run(
 
 
 @main.command()
-def gui() -> None:
-    """Start the local web interface."""
-    click.echo("The GUI is not available yet.", err=True)
-    sys.exit(1)
+@click.option("--port", type=int, default=8765, show_default=True, help="Port to serve on.")
+def gui(port: int) -> None:
+    """Serve the web interface on this computer and open it in the browser."""
+    web = resources.files("plotline") / "web"
+    if not (web / "index.html").is_file():
+        message = "This build has no GUI bundle; install a release wheel or build the web app."
+        click.echo(message, err=True)
+        sys.exit(1)
+    handler = partial(http.server.SimpleHTTPRequestHandler, directory=str(web))
+    with _errors():  # most often the port is taken
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+    with server:
+        url = f"http://127.0.0.1:{server.server_address[1]}/"
+        click.echo(f"Serving the GUI at {url}; press Ctrl-C to stop.")
+        webbrowser.open(url)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
 
 
 @main.command()

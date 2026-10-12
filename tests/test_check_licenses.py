@@ -1,4 +1,5 @@
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, "scripts")
 import check_licenses as cl  # noqa: E402
@@ -24,7 +25,8 @@ def test_denies_copyleft_and_empty():
 
 def test_closure_is_runtime_only():
     names = cl.runtime_closure()
-    assert "numpy" in names and "pydantic" in names and "click" in names
+    assert "numpy" in names and "click" in names
+    assert "pydantic" not in names and "scipy" not in names  # dev group only
     assert "pytest" not in names and "numba" not in names and "plotline" not in names
 
 
@@ -57,8 +59,10 @@ def test_main_fails_on_a_denied_licence(monkeypatch, capsys):
     assert "demo" in capsys.readouterr().out
 
 
-def test_closure_reaches_transitive_dependencies():
-    assert "pydantic-core" in cl.runtime_closure()
+def test_closure_reaches_transitive_dependencies(monkeypatch):
+    graph = {"plotline": ["a>=1"], "a": ["b; python_version >= '3'"], "b": []}
+    monkeypatch.setattr(cl, "distribution", lambda name: SimpleNamespace(requires=graph[name]))
+    assert cl.runtime_closure() == ["a", "b"]
 
 
 def test_matching_is_case_sensitive_and_bounded_on_both_sides():

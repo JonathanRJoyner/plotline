@@ -1,24 +1,25 @@
-"""Tests for the command line interface: listing, a full run with every output, presets, bad input
-and the stubs."""
+"""Tests for the command line interface: listing, a full run with every output, presets, bad input,
+the GUI server and the MCP stub."""
 
+import http.server
 import json
+import webbrowser
 import xml.etree.ElementTree as ET
+from importlib import resources
 
 import click
-import numpy as np
 import pytest
 from click.testing import CliRunner
-from PIL import Image
-from synthetic import gradient
+from pngs import write_png
 
+from plotline import Pen, _core
 from plotline.cli.main import main, parse_pen, parse_set
-from plotline.core.types import Pen
 
 
 @pytest.fixture
 def image(tmp_path):
     p = tmp_path / "i.png"
-    Image.fromarray((gradient(64, 48) * 255).astype(np.uint8)).save(p)
+    write_png(p, _core.synthetic_gradient(64, 48))
     return str(p)
 
 
@@ -29,8 +30,10 @@ def run(*args):
 
 def test_styles_and_describe():
     assert "grid" in run("styles").output and run("styles").exit_code == 0
+    assert "_slow" not in run("styles").output
     out = run("describe", "grid").output
     assert "min_length_mm" in out and "Dots have zero length" in out
+    assert "resolution  integer  default 1000  min 64  max 4000" in out
     assert json.loads(run("describe", "grid", "--json").output)["stages"][0]["name"] == "tone"
     assert run("describe", "nope").exit_code != 0
 
@@ -50,17 +53,23 @@ def test_run_writes_all_outputs(tmp_path, image):
         str(tmp_path / "p.json"),
         "--set",
         "tone.resolution=64",
+        "--set",
+        "tone.invert=false",
         "--pen",
         "Red 0.5:0.5:#ff0000",
         "--width",
         "100",
         "--height",
         "75",
+        "--fit",
+        "fill",
     )
     assert r.exit_code == 0, r.output
     assert ET.parse(tmp_path / "o.svg").getroot()[0].get("stroke") == "#ff0000"
-    assert (tmp_path / "o.json").exists() and (tmp_path / "o.png").exists()
-    assert json.loads((tmp_path / "p.json").read_text())["canvas"]["width_mm"] == 100
+    assert (tmp_path / "o.json").exists() and (tmp_path / "o.png").read_bytes()[:4] == b"\x89PNG"
+    preset = json.loads((tmp_path / "p.json").read_text())
+    assert preset["canvas"]["width_mm"] == 100 and preset["canvas"]["fit"] == "fill"
+    assert preset["settings"]["tone"]["resolution"] == 64
     assert "paths:" in r.output and "tone:" in r.stderr
 
 
@@ -97,26 +106,53 @@ def test_preset_is_applied_and_style_kept(tmp_path, image):
 def test_run_rejects_bad_inputs(tmp_path, image):
     out = str(tmp_path / "o.svg")
     r = run("run", "grid", image, "--out", out, "--set", "order.min_length_mm=abc")
-    assert r.exit_code != 0 and "min_length_mm" in r.output
+    assert r.exit_code == 1 and "min_length_mm" in r.output
     assert run("run", "grid", image, "--out", out, "--set", "nonsense").exit_code == 2
     r = run("run", "grid", image, "--out", out, "--margin", "200")
-    assert r.exit_code != 0 and "margin" in r.output
+    assert r.exit_code == 1 and "margin" in r.output
+    for pen, word in (("p:0:#000000", "width_mm"), ("p:0.5:red", "color")):
+        r = run("run", "grid", image, "--out", out, "--pen", pen)
+        assert r.exit_code == 1 and word in r.stderr, r.output
 
 
-def test_gui_and_mcp_stubs():
-    for cmd in ("gui", "mcp"):
-        r = run(cmd)
-        assert r.exit_code == 1 and "not available" in r.stderr
+def test_gui_without_a_bundle_and_the_mcp_stub(monkeypatch, tmp_path):
+    monkeypatch.setattr(resources, "files", lambda package: tmp_path)
+    r = run("gui")
+    assert r.exit_code == 1 and "This build has no GUI bundle" in r.stderr
+    r = run("mcp")
+    assert r.exit_code == 1 and "not available" in r.stderr
+
+
+def test_gui_serves_the_bundle_on_localhost(monkeypatch, tmp_path):
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "index.html").write_text("<!doctype html>")
+    monkeypatch.setattr(resources, "files", lambda package: tmp_path)
+    opened, served = [], []
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+
+    def serve_forever(server, *args):
+        served.append((server.server_address, server.RequestHandlerClass.keywords["directory"]))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(http.server.ThreadingHTTPServer, "serve_forever", serve_forever)
+    r = run("gui", "--port", "0")
+    assert r.exit_code == 0, r.output
+    (host, port), directory = served[0]
+    assert host == "127.0.0.1" and directory == str(tmp_path / "web")
+    assert opened == [f"http://127.0.0.1:{port}/"]
 
 
 def test_parsers():
-    assert parse_set("order.min_length_mm=1.5") == ("order", "min_length_mm", "1.5")
+    assert parse_set("order.min_length_mm=1.5") == ("order", "min_length_mm", 1.5)
+    values = [parse_set(f"a.b={text}")[2] for text in ("true", "false", "64", "1e3", "abc", "")]
+    assert values == [True, False, 64, 1000.0, "abc", ""]
+    assert [type(v) for v in values[:4]] == [bool, bool, int, float]
     # Only the last two colons split, so the name may hold colons and the colour keeps its '#'.
     assert parse_pen("Fine: red:0.5:#ff0000") == Pen("Fine: red", 0.5, "#ff0000")
     for bad in ("nonsense", "a=1", "a.b", "a.b.c=1", "a.b=c=d", ".b=1", "a.=1"):
         with pytest.raises(click.BadParameter):
             parse_set(bad)
-    for bad in ("black", "0.5:#000000", "p:wide:#000000", "p:0:#000000", "p:0.5:red"):
+    for bad in ("black", "0.5:#000000", "p:wide:#000000"):
         with pytest.raises(click.BadParameter):
             parse_pen(bad)
 
@@ -130,11 +166,11 @@ def test_unknown_names_and_files_are_reported(tmp_path, image):
     no_canvas = tmp_path / "no_canvas.json"
     no_canvas.write_text(json.dumps({**header, **sections}))
     cases = [
-        (("nope", image), "unknown style 'nope'"),
-        (("grid", image, "--set", "ghost.x=1"), "style 'grid' has no stage 'ghost'"),
+        (("nope", image), 'unknown style "nope"'),
+        (("grid", image, "--set", "ghost.x=1"), 'style "grid" has no stage "ghost"'),
         (("grid", str(tmp_path / "gone.png")), gone),
         (("grid", image, "--preset", str(tmp_path / "gone.json")), gone),
-        (("grid", image, "--preset", str(bad_preset)), "invalid preset: "),
+        (("grid", image, "--preset", str(bad_preset)), "canvas: unknown field `bogus`"),
         (("grid", image, "--preset", str(no_canvas)), "preset field 'canvas' must be an object"),
     ]
     for args, message in cases:

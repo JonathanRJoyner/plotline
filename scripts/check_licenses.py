@@ -32,11 +32,7 @@ DENIED: tuple[str, ...] = ("GPL", "LGPL", "AGPL", "MPL", "EPL", "CDDL", "SSPL")
 
 # Normalised package name -> (licence, URL where the licence was checked). For packages whose
 # metadata trips a DENIED token for a reason that does not change their own licence.
-OVERRIDES: dict[str, tuple[str, str]] = {
-    # SciPy's own licence is BSD-3-Clause. Its wheel metadata also carries the notice for a
-    # bundled compiler runtime library under GPL-3.0-or-later with a runtime library exception.
-    "scipy": ("BSD-3-Clause", "https://raw.githubusercontent.com/scipy/scipy/v1.17.1/LICENSE.txt"),
-}
+OVERRIDES: dict[str, tuple[str, str]] = {}
 
 
 def _normalise(name: str) -> str:

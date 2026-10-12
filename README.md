@@ -2,17 +2,17 @@
 
 Turn images into drawings for pen plotters.
 
-plotline is built to convert raster images into vector line art, such as stippling, single continuous lines, dashes and sketched strokes. It will come with a live preview that shows the algorithm at work, so you can see what a setting does before you commit ink to paper.
+plotline converts raster images into vector line art, such as stippling, single continuous lines, dashes and sketched strokes. It comes with a live preview that shows the algorithm at work, so you can see what a setting does before you commit ink to paper.
 
 ## What works now
 
-plotline is early software. The command line runs one style, `grid`: dots on a regular grid, one wherever the image is dark enough, ordered to keep the pen's travel short. A run writes an SVG in millimetres that holds the drawing in one layer, labelled with the name of its pen. It can also write the paths as JSON and a PNG preview that draws each mark at its real pen width. You can set the page size and margin, choose the pen, and change a setting with `--set stage.key=value`, such as `--set points.spacing_mm=3`. `plotline describe grid` lists the settings.
+plotline is early software. The engine is written in Rust and compiled twice: to a native extension for the Python package, and to WebAssembly for the browser. The Python package and the command line are thin layers over it. The command line runs one style, `grid`: dots on a regular grid, one wherever the image is dark enough, ordered to keep the pen's travel short. A run writes an SVG in millimetres that holds the drawing in one layer, labelled with the name of its pen. It can also write the paths as JSON and a PNG preview that draws each mark at its real pen width. You can set the page size and margin, choose the pen, and change a setting with `--set stage.key=value`, such as `--set points.spacing_mm=3`. `plotline describe grid` lists the settings.
 
-The Voronoi styles, Sketch Lines, the live preview GUI and the MCP server are planned but not built yet. `plotline gui` and `plotline mcp` print a message saying so. The goals, architecture, decisions and everything still planned are in [docs/BRIEF.md](docs/BRIEF.md).
+The WebAssembly module builds and passes its tests under Node, but the browser interface that will use it is still to come, so `plotline gui` says so and exits. The Voronoi styles, Sketch Lines and the MCP server are planned but not built yet, and `plotline mcp` also prints a message saying so. The goals, architecture, decisions and everything still planned are in [docs/BRIEF.md](docs/BRIEF.md).
 
 ## Try it
 
-There is no release yet, so work from a clone of this repository. With [uv](https://docs.astral.sh/uv/) installed, run this in the clone:
+There is no release yet, so work from a clone of this repository. Building the Python extension needs a Rust toolchain: install one with [rustup](https://rustup.rs). With [uv](https://docs.astral.sh/uv/) installed as well, run this in the clone, where `uv sync` builds the extension and installs the package:
 
 ```
 uv sync
