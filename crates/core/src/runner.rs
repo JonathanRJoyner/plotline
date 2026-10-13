@@ -5,6 +5,11 @@
 //! after it, and nothing before it. The roots are keyed by their content. Hashes are BLAKE3
 //! (O'Connor, Aumasson, Neves and Wilcox-O'Hearn, "BLAKE3: one function, fast everywhere", 2020).
 //!
+//! A stage that gives tone maps (`Tones`) splits the run into lanes: the stages after it run once
+//! per map, as lane `index` of `count`, with that map and the pen of the same index. A lane's tone
+//! map is keyed by its content and its pen by its own, and the keys of its stages carry
+//! `"{index}/{count}"`, since a stage may read its lane. Each lane gives one layer.
+//!
 //! [`Run`] is driven by its host one [`Run::next_frame`] call at a time, so a host can cancel or
 //! drop it between frames. The cache lock is held only while reading or storing one artifact.
 
@@ -778,7 +783,8 @@ mod tests {
         );
         assert_eq!(x.runs(), 1);
         assert_eq!(cache.lock().unwrap().len(), 2); // t and s
-                                                    // A cancel in lane 1 keeps the split and lane 0.
+
+        // A cancel in lane 1 keeps the split and lane 0.
         let frames = cancel_at(&|f| f.pen == 1);
         assert_eq!(
             seen(&frames),
@@ -793,7 +799,8 @@ mod tests {
         );
         assert_eq!(x.runs(), 3);
         assert_eq!(cache.lock().unwrap().len(), 3); // t, s and lane 0's x
-                                                    // A fresh run reruns only lane 1.
+
+        // A fresh run reruns only lane 1.
         let (run, frames, d) = run_pens(&style, &style.defaults(), two_pens(), &cache);
         assert_eq!(run.state(), RunState::Done);
         assert_eq!(

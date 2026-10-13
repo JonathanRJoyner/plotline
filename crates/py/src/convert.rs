@@ -160,7 +160,7 @@ fn paths_arrays<'py>(
     )
 }
 
-/// A frame as `{"stage", "progress", "label", "points", "coords", "offsets"}`.
+/// A frame as `{"stage", "progress", "label", "pen", "points", "coords", "offsets"}`.
 pub fn frame_to_py<'py>(py: Python<'py>, f: Frame) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("stage", f.stage)?;

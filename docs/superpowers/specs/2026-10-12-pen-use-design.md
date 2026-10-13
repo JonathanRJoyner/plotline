@@ -174,7 +174,7 @@ If every pen drew the same lines, each pen would cover the one before and the in
 ## 8. Decisions recorded in the brief
 
 - **Pen use.** Multi-pen drawing is one shared stage after tone, with three modes, rather than a style family. Every style gains it with no change to its own drawing code, and caching stays per stage. §7.2's multi-pen row and §10's input line are updated to match.
-- **Colour model.** Pens are transparent inks at independent positions (Demichel and Neugebauer). Coverages are solved by exact coordinate descent with a small ink penalty, on encoded colour values, through a 17³ lookup table. Encoded values keep a black pen in colour mode equal to one pen mode, the penalty gives the greys to a black pen, and the table keeps the cost per pixel at one trilinear lookup.
+- **Colour model.** Pens are transparent inks at independent positions (Demichel and Neugebauer). Coverages are solved by exact coordinate descent with a small ink penalty, on encoded colour values, through a 17³ lookup table. Encoded values keep a black pen in colour mode equal to one pen mode on a grey image, the penalty gives the greys to a black pen, and the table keeps the cost per pixel at one trilinear lookup.
 - **Pens kept apart.** Each style spreads its angles, start or grid across the pens, with no setting. That stops pens covering each other and lets the independence the colour model assumes hold.
 - **Frames in the preview** (amends the earlier row). Frames carry their pen, and the preview draws each pen's latest frame in that pen.
 - **Lane cache keys.** A lane's tone map is keyed by its content, so changing a pen or the mode reruns only the lanes whose map changed.

@@ -5,7 +5,7 @@
 //! than the line spacing does not end a run: it could not be seen between neighbouring lines, and
 //! bridging it spares the pen a lift. Further levels add
 //! families at other angles over darker tones, which is cross-hatching. This is the engraver's
-//! technique rather than a published algorithm, so there is nothing to cite.
+//! technique, and there is no published algorithm for the technique itself.
 //!
 //! When the drawing is split between pens, the levels of all the pens together are spread evenly
 //! over the half turn, so that no two pens draw lines at the same angle; lines at close angles
@@ -250,6 +250,7 @@ mod tests {
         // Pen 0 keeps the angle, so both ends of a path share a y; pen 1 turns it 90 degrees.
         assert!(first.iter().all(|p| (p[0][1] - p[1][1]).abs() < 1e-9));
         assert!(second.iter().all(|p| (p[0][0] - p[1][0]).abs() < 1e-9));
+        assert_inside(&second, [10.0, 10.0, 40.0, 40.0]);
     }
 
     #[test]

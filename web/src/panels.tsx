@@ -72,6 +72,8 @@ export function PensPanel({ pens, bank, inks, hidden, error, mode, onChange, onT
   const set = (i: number, patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   // The list order decides which pen draws which part, so a pen moves up past the one above it.
   const moveUp = (i: number) => onChange(pens.map((p, j) => (j === i - 1 ? pens[i] : j === i ? pens[i - 1] : p)));
+  // Rows are unkeyed, so row i - 1's button will hold the moved pen: focusing it lets a second press move the same pen again.
+  const ups = useRef<(HTMLButtonElement | null)[]>([]);
   return (
     <fieldset>
       <legend>Pens</legend>
@@ -81,7 +83,11 @@ export function PensPanel({ pens, bank, inks, hidden, error, mode, onChange, onT
           <input type="text" aria-label="Name" value={p.name} onChange={(e) => set(i, { name: e.currentTarget.value })} />
           <input type="number" aria-label="Width in mm" min="0" step="0.05" value={p.width_mm} onChange={(e) => set(i, { width_mm: e.currentTarget.valueAsNumber })} /> mm
           <input type="checkbox" aria-label="Show in the preview" title="Show in the preview" checked={!hidden.has(i)} onChange={() => onToggle(i)} />
-          <button type="button" class="icon" aria-label="Move up" title="Move up" disabled={i === 0} onClick={() => moveUp(i)}><ArrowUp /></button>
+          <button
+            type="button" class="icon" aria-label={`Move ${p.name} up`} title={`Move ${p.name} up`} disabled={i === 0}
+            ref={(b) => { ups.current[i] = b; }}
+            onClick={() => { moveUp(i); ups.current[i - 1]?.focus(); }}
+          ><ArrowUp /></button>
           {/* The session refuses an empty pen list. */}
           <button type="button" class="icon" aria-label="Remove pen" title="Remove pen" disabled={pens.length === 1} onClick={() => onChange(pens.filter((_, j) => j !== i))}><X /></button>
         </div>
