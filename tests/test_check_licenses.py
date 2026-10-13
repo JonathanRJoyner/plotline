@@ -28,6 +28,8 @@ def test_closure_is_runtime_only():
     assert "numpy" in names and "click" in names
     assert "pydantic" not in names and "scipy" not in names  # dev group only
     assert "pytest" not in names and "numba" not in names and "plotline" not in names
+    with_mcp = cl.runtime_closure(extras=("mcp",))
+    assert "mcp" in with_mcp and "pydantic" in with_mcp
 
 
 def test_environment_passes():
@@ -52,7 +54,7 @@ def test_glued_copyleft_spellings_are_denied():
 
 
 def test_main_fails_on_a_denied_licence(monkeypatch, capsys):
-    monkeypatch.setattr(cl, "runtime_closure", lambda: ["demo"])
+    monkeypatch.setattr(cl, "runtime_closure", lambda **kw: ["demo"])
     monkeypatch.setattr(cl, "distribution", lambda name: None)
     monkeypatch.setattr(cl, "license_text", lambda dist: "GPL-3.0-only")
     assert cl.main() == 1
@@ -63,6 +65,17 @@ def test_closure_reaches_transitive_dependencies(monkeypatch):
     graph = {"plotline": ["a>=1"], "a": ["b; python_version >= '3'"], "b": []}
     monkeypatch.setattr(cl, "distribution", lambda name: SimpleNamespace(requires=graph[name]))
     assert cl.runtime_closure() == ["a", "b"]
+
+
+def test_closure_follows_only_the_roots_chosen_extras(monkeypatch):
+    graph = {
+        "plotline": ["a>=1", 'm>=2; extra == "mcp"'],
+        "a": ['x; extra == "cli"'],
+        "m": [],
+    }
+    monkeypatch.setattr(cl, "distribution", lambda name: SimpleNamespace(requires=graph[name]))
+    assert cl.runtime_closure() == ["a"]
+    assert cl.runtime_closure(extras=("mcp",)) == ["a", "m"]
 
 
 def test_matching_is_case_sensitive_and_bounded_on_both_sides():

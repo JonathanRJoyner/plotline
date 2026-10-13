@@ -11,11 +11,14 @@ dependencies = [
   "click>=8.2",
 ]
 
+[project.optional-dependencies]
+mcp = ["mcp>=2.3,<3"]
+
 [project.scripts]
 plotline = "plotline.cli.main:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "mcp>=2.3,<3"]
 
 [build-system]
 requires = ["maturin>=1.7,<2"]

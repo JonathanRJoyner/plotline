@@ -1,9 +1,10 @@
 """Fail when a runtime dependency of plotline lacks a permissive licence.
 
 Standard library only. The script walks the installed ``Requires-Dist`` graph from the project,
-skips optional extras, and judges each distribution by the licence text in its metadata: the
-``License-Expression`` field (PEP 639), the ``License`` field and the ``License ::``
-classifiers of the core metadata specification.
+follows the project's shipped extras (the ``mcp`` one) and skips every other optional extra, and
+judges each distribution by the licence text in its metadata: the ``License-Expression`` field
+(PEP 639), the ``License`` field and the ``License ::`` classifiers of the core metadata
+specification.
 
 Matching is deliberately crude: a licence passes when its text contains an ALLOWED token as a
 whole word and no DENIED token at the start of a word, case-sensitive. Anything unclear fails. A
@@ -56,16 +57,24 @@ def is_allowed(text: str) -> bool:
     return allowed and not any(re.search(r"\b" + re.escape(t), text) for t in DENIED)
 
 
-def runtime_closure(root: str = "plotline") -> list[str]:
-    """Names of the installed distributions that ``root`` needs at runtime, breadth first."""
+def runtime_closure(root: str = "plotline", extras: tuple[str, ...] = ()) -> list[str]:
+    """Names of the installed distributions that ``root`` needs at runtime, breadth first.
+
+    Only the root's own requirements may follow an extra named in ``extras``.
+    """
     root_name = _normalise(root)
+    chosen = {_normalise(e) for e in extras}
     names: set[str] = set()
-    queue = deque([distribution(root)])  # a missing root fails loudly instead of passing
+    root_dist = distribution(root)  # a missing root fails loudly instead of passing
+    queue = deque([root_dist])
     while queue:
-        for req in queue.popleft().requires or []:
+        current = queue.popleft()
+        for req in current.requires or []:
             spec, _, marker = req.partition(";")
             if "extra ==" in marker:
-                continue
+                wanted = re.search(r"extra\s*==\s*[\"']([^\"']+)[\"']", marker)
+                if current is not root_dist or not wanted or _normalise(wanted[1]) not in chosen:
+                    continue
             name = _normalise(re.split(r"[^A-Za-z0-9._-]", spec.strip(), maxsplit=1)[0])
             if name == root_name or name in names:
                 continue
@@ -80,7 +89,7 @@ def runtime_closure(root: str = "plotline") -> list[str]:
 
 def main() -> int:
     offenders: list[str] = []
-    for name in runtime_closure():
+    for name in runtime_closure(extras=("mcp",)):
         text = license_text(distribution(name))
         override = OVERRIDES.get(name)
         ok = override is not None or is_allowed(text)
