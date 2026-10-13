@@ -56,6 +56,38 @@ fn grid_matches_the_golden_file() {
     }
 }
 #[wasm_bindgen_test]
+fn stipple_matches_the_golden_file() {
+    let golden: serde_json::Value =
+        serde_json::from_str(include_str!("../../core/golden/stipple_gradient.json")).unwrap();
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(64, 48, &plotline_wasm::synthetic_gradient(64, 48))
+        .unwrap();
+    s.set_canvas(r#"{"width_mm":100,"height_mm":75,"margin_mm":5,"fit":"fit"}"#)
+        .unwrap();
+    s.set_style("stipple").unwrap();
+    s.update("tone", r#"{"resolution":64}"#).unwrap();
+    s.update("voronoi", r#"{"count":300,"iterations":10}"#)
+        .unwrap();
+    // Points, so the file pins the relaxation and stays small.
+    s.update("stipple", r#"{"shape":"point"}"#).unwrap();
+    let mut run = s.start().unwrap();
+    while run.next_frame().is_some() {}
+    let actual: serde_json::Value = serde_json::from_str(&s.json().unwrap()).unwrap();
+    let (a, e) = (&actual["layers"][0]["paths"], &golden["layers"][0]["paths"]);
+    let (a, e) = (a.as_array().unwrap(), e.as_array().unwrap());
+    assert_eq!(a.len(), e.len());
+    for (i, (pa, pe)) in a.iter().zip(e).enumerate() {
+        let (pa, pe) = (pa.as_array().unwrap(), pe.as_array().unwrap());
+        assert_eq!(pa.len(), pe.len(), "path {i} length");
+        for (va, ve) in pa.iter().zip(pe) {
+            for k in 0..2 {
+                let (x, y) = (va[k].as_f64().unwrap(), ve[k].as_f64().unwrap());
+                assert!((x - y).abs() <= 1e-3, "path {i}: {va} vs {ve}");
+            }
+        }
+    }
+}
+#[wasm_bindgen_test]
 fn the_pen_bank_is_listed() {
     let pens: serde_json::Value = serde_json::from_str(&plotline_wasm::list_pens()).unwrap();
     assert!(pens.as_array().unwrap().len() >= 30);

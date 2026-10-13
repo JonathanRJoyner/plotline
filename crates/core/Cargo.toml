@@ -3,6 +3,7 @@ name = "plotline-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -15,3 +16,4 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 tiny-skia = { version = "0.11", features = ["png-format"] }
 blake3 = "1"
 thiserror = "2"
+delaunator = "1.1"

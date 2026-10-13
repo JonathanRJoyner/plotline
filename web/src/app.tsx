@@ -2,7 +2,7 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
-import { CircleHelp, Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Spline, Square, Sun } from "lucide-preact";
+import { CircleHelp, Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { BankPen, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
@@ -16,6 +16,15 @@ import { zoomPercent, type View } from "./view";
 
 type Style = { name: string; label: string; description: string };
 type Stage = { name: string; label: string; schema: Record<string, unknown> };
+
+/** The logo's mark, as docs/images/logo-light.svg draws it: a curve between two ring handles. */
+const Mark = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+    <path d="M5 17C5 10 10 5 17 5" />
+    <circle cx="5" cy="19" r="2" />
+    <circle cx="19" cy="5" r="2" />
+  </svg>
+);
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -370,7 +379,7 @@ export function App() {
     >
       <a class="skip" href="#toolbar">Skip to the toolbar</a>
       <aside>
-        <h1 class="brand"><Spline /> plotline</h1>
+        <h1 class="brand"><Mark /> plotline</h1>
         <label data-tour="help">
           <input type="checkbox" checked={help} onChange={(e) => { setHelp(e.currentTarget.checked); keepHelp(e.currentTarget.checked); }} /> Show help
         </label>

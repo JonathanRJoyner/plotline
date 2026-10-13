@@ -170,6 +170,36 @@ pub(crate) fn tone_map(w: u32, h: u32, ink: impl Fn(u32, u32) -> f32) -> ToneMap
     }
 }
 
+/// Run `stage` with `patch` over its defaults, giving it each of `inputs` under its own kind;
+/// returns the frames and the artifact. Panics on an error.
+pub(crate) fn run_stage(
+    stage: &dyn Stage,
+    inputs: Vec<Artifact>,
+    patch: Value,
+) -> (Vec<Frame>, Artifact) {
+    run_stage_in_lane(stage, inputs, patch, Lane::SINGLE)
+}
+
+/// [`run_stage`] for the stage's run in `lane` of a split.
+pub(crate) fn run_stage_in_lane(
+    stage: &dyn Stage,
+    inputs: Vec<Artifact>,
+    patch: Value,
+    lane: Lane,
+) -> (Vec<Frame>, Artifact) {
+    let settings = crate::settings::merge(&stage.defaults(), &patch);
+    let inputs = Inputs::new(inputs.into_iter().map(|a| (a.kind(), a)).collect());
+    let ctx = RunContext::new(Arc::default()).in_lane(lane);
+    let mut run = stage.start(inputs, &settings, ctx).unwrap();
+    let mut frames = Vec::new();
+    loop {
+        match run.step().unwrap() {
+            Step::Frame(f) => frames.push(f),
+            Step::Done(a) => return (frames, a),
+        }
+    }
+}
+
 /// Run a stage that turns a tone map into paths, with `patch` over its defaults; returns the
 /// frames and the paths.
 pub(crate) fn run_tone_stage(
@@ -187,20 +217,9 @@ pub(crate) fn run_tone_stage_in_lane(
     patch: Value,
     lane: Lane,
 ) -> (Vec<Frame>, Arc<Paths>) {
-    let settings = crate::settings::merge(&stage.defaults(), &patch);
-    let inputs = Inputs::new(std::collections::HashMap::from([(
-        Kind::Tone,
-        Artifact::Tone(Arc::new(tone)),
-    )]));
-    let ctx = RunContext::new(Arc::default()).in_lane(lane);
-    let mut run = stage.start(inputs, &settings, ctx).unwrap();
-    let mut frames = Vec::new();
-    loop {
-        match run.step().unwrap() {
-            Step::Frame(f) => frames.push(f),
-            Step::Done(Artifact::Paths(p)) => return (frames, p),
-            Step::Done(a) => panic!("expected paths, got {}", a.kind().name()),
-        }
+    match run_stage_in_lane(stage, vec![Artifact::Tone(Arc::new(tone))], patch, lane) {
+        (frames, Artifact::Paths(p)) => (frames, p),
+        (_, a) => panic!("expected paths, got {}", a.kind().name()),
     }
 }
 
