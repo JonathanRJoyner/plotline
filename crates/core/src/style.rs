@@ -5,6 +5,11 @@
 //! the image, replaces the root as the source for every later stage. Resolution happens once, in
 //! [`Style::new`], so the runner only looks the sources up. This is why a stage may not be named
 //! like a root kind.
+//!
+//! A stage that provides [`Kind::Tones`] splits the drawing between the pens: the stages after it
+//! run once per pen, and read the tone map and the pen of their lane in place of the earlier
+//! `Tone` and `Pens`. A style may split once, and a split style gives paths, not layers, since the
+//! runner makes the layers from the lanes.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,6 +27,9 @@ pub enum Source {
     Root(Kind),
     /// The output of the stage at this index in [`Style::stages`].
     Stage(usize),
+    /// The run's lane after a split: for [`Kind::Tone`] the lane's tone map, for [`Kind::Pens`] a
+    /// list holding the lane's pen.
+    Lane(Kind),
 }
 
 /// Why a style was rejected.
@@ -52,6 +60,18 @@ pub enum StyleError {
         name: String,
         kind: &'static str,
     },
+    /// A second stage provides 'tones'; a style splits into pens once.
+    #[error("style {style:?}: stage {name:?} splits into pens again, after {first:?}")]
+    SecondSplit {
+        style: String,
+        name: String,
+        first: String,
+    },
+    /// A split style ends in 'layers', which the runner makes from the lanes.
+    #[error(
+        "style {style:?}: last stage {name:?} provides 'layers', but the stages after a split give paths, one set per pen"
+    )]
+    LayersAfterSplit { style: String, name: String },
 }
 
 /// A named recipe: stages that run in order, each reading artifacts by kind.
@@ -66,13 +86,16 @@ pub struct Style {
     pub stages: Vec<Arc<dyn Stage>>,
     /// Per stage, in the order of its `requires`, where each input comes from.
     sources: Vec<Vec<(Kind, Source)>>,
+    /// The index of the stage that provides `Tones`, if the style splits into pens.
+    split: Option<usize>,
     /// Settings this style starts from in place of its stages' own defaults, by stage name.
     overrides: Value,
 }
 
 impl Style {
     /// Resolve every stage's inputs, or say why the style cannot work. The checks run in this
-    /// order: repeated names, root names, unmet requirements, no stages, an undrawable last stage.
+    /// order: repeated names, root names, then stage by stage unmet requirements and a second
+    /// split, no stages, an undrawable last stage, 'layers' after a split.
     pub fn new(
         name: &str,
         label: &str,
@@ -99,6 +122,7 @@ impl Style {
         let mut providers: HashMap<Kind, Source> =
             Kind::ROOTS.iter().map(|&k| (k, Source::Root(k))).collect();
         let mut sources = Vec::with_capacity(stages.len());
+        let mut split: Option<usize> = None;
         for (i, stage) in stages.iter().enumerate() {
             let found = stage
                 .requires()
@@ -116,6 +140,18 @@ impl Style {
                 .collect::<Result<Vec<_>, _>>()?;
             sources.push(found);
             providers.insert(stage.provides(), Source::Stage(i));
+            if stage.provides() == Kind::Tones {
+                if let Some(first) = split {
+                    return Err(StyleError::SecondSplit {
+                        style: style(),
+                        name: stage.name().to_string(),
+                        first: stages[first].name().to_string(),
+                    });
+                }
+                split = Some(i);
+                providers.insert(Kind::Tone, Source::Lane(Kind::Tone));
+                providers.insert(Kind::Pens, Source::Lane(Kind::Pens));
+            }
         }
         let Some(last) = stages.last() else {
             return Err(StyleError::NoStages { style: style() });
@@ -127,12 +163,19 @@ impl Style {
                 kind: last.provides().name(),
             });
         }
+        if split.is_some() && last.provides() == Kind::Layers {
+            return Err(StyleError::LayersAfterSplit {
+                style: style(),
+                name: last.name().to_string(),
+            });
+        }
         Ok(Style {
             name: style(),
             label: label.to_string(),
             description: description.to_string(),
             stages,
             sources,
+            split,
             overrides: json!({}),
         })
     }
@@ -156,6 +199,12 @@ impl Style {
     /// `requires`. Panics if the index is out of range.
     pub fn sources(&self, stage_index: usize) -> &[(Kind, Source)] {
         &self.sources[stage_index]
+    }
+
+    /// The index of the stage that provides [`Kind::Tones`], which the stages after it run once
+    /// per pen for; `None` if the style does not split.
+    pub fn split(&self) -> Option<usize> {
+        self.split
     }
 
     /// The style and each stage's settings as JSON Schema, for UIs and tool descriptions:
@@ -205,7 +254,7 @@ impl Style {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{paths, points, tone, Spy};
+    use crate::test_util::{paths, points, tone, tones, Spy};
 
     #[test]
     fn resolves_nearest_provider_and_roots() {
@@ -269,6 +318,74 @@ mod tests {
         assert_eq!(
             msg(vec![p()]),
             r#"style "s": last stage "p" provides "points", not 'paths' or 'layers'"#
+        );
+    }
+    #[test]
+    fn stages_after_a_split_read_their_lane() {
+        let t = Arc::new(Spy::new("t", &[Kind::Image], Kind::Tone, tone()));
+        let s = Arc::new(Spy::new(
+            "s",
+            &[Kind::Tone, Kind::Pens],
+            Kind::Tones,
+            tones(&[0.5]),
+        ));
+        let a = Arc::new(Spy::new(
+            "a",
+            &[Kind::Tone, Kind::Pens, Kind::Canvas],
+            Kind::Points,
+            points(1),
+        ));
+        let b = Arc::new(Spy::new(
+            "b",
+            &[Kind::Points, Kind::Tone],
+            Kind::Paths,
+            paths(1),
+        ));
+        let style = Style::new("x", "X", "d", vec![t, s, a, b]).unwrap();
+        assert_eq!(style.split(), Some(1));
+        assert_eq!(
+            style.sources(1),
+            &[
+                (Kind::Tone, Source::Stage(0)),
+                (Kind::Pens, Source::Root(Kind::Pens))
+            ]
+        );
+        assert_eq!(
+            style.sources(2),
+            &[
+                (Kind::Tone, Source::Lane(Kind::Tone)),
+                (Kind::Pens, Source::Lane(Kind::Pens)),
+                (Kind::Canvas, Source::Root(Kind::Canvas)),
+            ]
+        );
+        assert_eq!(
+            style.sources(3),
+            &[
+                (Kind::Points, Source::Stage(2)),
+                (Kind::Tone, Source::Lane(Kind::Tone))
+            ]
+        );
+    }
+    #[test]
+    fn a_style_without_a_split_has_none() {
+        let p: Arc<dyn Stage> = Arc::new(Spy::new("p", &[Kind::Image], Kind::Paths, paths(1)));
+        assert_eq!(Style::new("s", "S", "d", vec![p]).unwrap().split(), None);
+    }
+    #[test]
+    fn a_second_split_or_layers_after_a_split_is_refused() {
+        let split = |name| -> Arc<dyn Stage> {
+            Arc::new(Spy::new(name, &[Kind::Image], Kind::Tones, tones(&[0.5])))
+        };
+        let msg = |stages| Style::new("x", "X", "d", stages).err().unwrap().to_string();
+        let p: Arc<dyn Stage> = Arc::new(Spy::new("p", &[Kind::Tone], Kind::Paths, paths(1)));
+        assert_eq!(
+            msg(vec![split("s"), split("u"), p]),
+            r#"style "x": stage "u" splits into pens again, after "s""#
+        );
+        let l: Arc<dyn Stage> = Arc::new(Spy::new("l", &[Kind::Tone], Kind::Layers, paths(1)));
+        assert_eq!(
+            msg(vec![split("s"), l]),
+            r#"style "x": last stage "l" provides 'layers', but the stages after a split give paths, one set per pen"#
         );
     }
     #[test]

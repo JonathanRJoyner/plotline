@@ -93,6 +93,7 @@ impl StageRun for ChunkRun {
             label: format!("{end}/{} {}", self.total, self.unit),
             points: None,
             paths: Some(shown),
+            pen: 0,
         }))
     }
 }

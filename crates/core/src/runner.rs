@@ -185,6 +185,7 @@ impl Run {
                     let (artifact, key) = match source {
                         Source::Root(k) => &self.roots[&k],
                         Source::Stage(i) => &self.done[i],
+                        Source::Lane(_) => panic!("lanes are not run yet"),
                     };
                     inputs.insert(kind, artifact.clone());
                     keys.insert(kind.name(), key.as_str());
@@ -199,6 +200,7 @@ impl Run {
                         label: "cached".to_string(),
                         points: None,
                         paths: None,
+                        pen: 0,
                     });
                 }
                 let ctx = RunContext::new(self.cancel.clone());

@@ -121,6 +121,7 @@ impl StageRun for GridRun {
                 label,
                 points: Some(Points(points)),
                 paths: None,
+                pen: 0,
             })
         };
         if self.no_cells {
@@ -218,6 +219,7 @@ impl StageRun for DotRun {
                 label: format!("{} dots", paths.len()),
                 points: None,
                 paths: Some(paths.clone()),
+                pen: 0,
             };
             self.paths = Some(paths);
             return Ok(Step::Frame(frame));

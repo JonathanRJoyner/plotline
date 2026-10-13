@@ -130,6 +130,7 @@ impl StageRun for ToneRun {
                 label: "tone map".into(),
                 points: None,
                 paths: None,
+                pen: 0,
             }));
         }
         let map = self.map.take().expect("the tone run has already finished");

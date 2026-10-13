@@ -41,19 +41,38 @@ pub(crate) fn tone() -> Artifact {
     }))
 }
 
+/// One tone map per value of `inks`, each of one pixel with that ink, 1 mm per pixel, its corner
+/// at the origin.
+pub(crate) fn tones(inks: &[f32]) -> Artifact {
+    let map = |&ink| {
+        Arc::new(ToneMap {
+            width: 1,
+            height: 1,
+            ink: vec![ink],
+            mm_per_px: 1.0,
+            origin_mm: [0.0, 0.0],
+        })
+    };
+    Artifact::Tones(Arc::new(inks.iter().map(map).collect()))
+}
+
 /// Run roots: a 4 by 4 flat grey image, a 100 mm square page with no margin, and one black pen.
 pub(crate) fn roots() -> [Artifact; 3] {
+    roots_with(vec![black()])
+}
+
+/// [`roots`] with `pens` in place of the one black pen.
+pub(crate) fn roots_with(pens: Vec<Pen>) -> [Artifact; 3] {
     let image = Image {
         width: 4,
         height: 4,
         rgb: vec![0.5; 4 * 4 * 3],
     };
     let canvas = Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap();
-    let pen = Pen::new("Black 0.3", 0.3, "#000000").unwrap();
     [
         Artifact::Image(Arc::new(image)),
         Artifact::Canvas(Arc::new(canvas)),
-        Artifact::Pens(Arc::new(vec![pen])),
+        Artifact::Pens(Arc::new(pens)),
     ]
 }
 
@@ -364,6 +383,7 @@ impl StageRun for SpyRun {
             label: format!("{}/{}", self.step, self.frames),
             points: None,
             paths: None,
+            pen: 0,
         }))
     }
 }
