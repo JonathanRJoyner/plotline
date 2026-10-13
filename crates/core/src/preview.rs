@@ -296,7 +296,7 @@ mod tests {
         let mut d = drawing_100(vec![vec![[20.0, 50.0], [80.0, 50.0]]], 10.0, "#ffff00");
         let magenta = drawing_100(vec![vec![[50.0, 20.0], [50.0, 80.0]]], 10.0, "#ff00ff");
         d.layers.extend(magenta.layers);
-        let (_, _, px) = render_rgba(&d, 100, false, false);
+        let (_, _, px) = render_rgba(&d, 100, false, false, None);
         let at = 4 * (50 * 100 + 50);
         let [r, g, b] = [px[at], px[at + 1], px[at + 2]];
         assert!(r > 200 && g < 60 && b < 60, "{:?}", [r, g, b]);
