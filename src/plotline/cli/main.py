@@ -8,6 +8,7 @@ layer, so this module holds no algorithm code.
 """
 
 import http.server
+import importlib.util
 import json
 import sys
 import webbrowser
@@ -240,13 +241,12 @@ def gui(port: int) -> None:
 @main.command()
 def mcp() -> None:
     """Serve the session to an AI assistant over MCP on stdio."""
-    # Imported here so the other commands do not load the SDK.
-    try:
-        from plotline.mcp_server import build_server
-    except ModuleNotFoundError as error:
-        # Any other missing module is a bug, not a missing extra.
-        if error.name != "mcp" and not (error.name or "").startswith("mcp."):
-            raise
+    # Asked first because the server imports other modules of the extra before the SDK; any other
+    # missing module is a bug, not a missing extra.
+    if importlib.util.find_spec("mcp") is None:
         click.echo('The MCP server needs the mcp extra: pip install "plotline[mcp]"', err=True)
         sys.exit(1)
+    # Imported here so the other commands do not load the SDK.
+    from plotline.mcp_server import build_server
+
     build_server().run()

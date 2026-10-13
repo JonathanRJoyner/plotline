@@ -2,6 +2,8 @@ import base64
 import json
 import struct
 import sys
+import time
+from functools import partial
 
 import anyio
 import pytest
@@ -141,6 +143,9 @@ async def test_run_and_preview(tmp_path):
         r = await call(c, "preview", region_mm=[0, 0, 50, 50], width_px=200)
         assert not r.is_error
         assert struct.unpack(">II", png(r.content[0])[16:24]) == (200, 200)
+        r = await call(c, "preview", travel=True, source=True)
+        assert not r.is_error
+        assert struct.unpack(">II", png(r.content[0])[16:24]) == (1000, 1000)
 
         for format, start in [("svg", b"<svg"), ("json", b"{"), ("png", b"\x89PNG")]:
             out = tmp_path / f"o.{format}"
@@ -149,15 +154,20 @@ async def test_run_and_preview(tmp_path):
 
 
 async def test_refused_setting_changes_nothing():
-    async with Client(build_server(Session())) as c:
+    session = Session()
+    session.set_image(_core.synthetic_gradient(8, 8))
+    async with Client(build_server(session)) as c:
+        # A value that is not the default shows that the old settings come back.
+        assert not (await call(c, "run", settings={"tone": {"resolution": 64}})).is_error
         before = data(await call(c, "get_session"))
-        r = await call(
-            c, "run", style="hatch", settings={"tone": {"resolution": 64}, "nope": {"x": 1}}
-        )
-        assert r.is_error
-        assert 'style "hatch" has no stage "nope"' in text(r)
-        after = data(await call(c, "get_session"))
-        assert (after["style"], after["settings"]) == (before["style"], before["settings"])
+        assert before["settings"]["tone"]["resolution"] == 64
+        refused = {"tone": {"resolution": 100}, "nope": {"x": 1}}
+        for style in ("hatch", "grid"):
+            r = await call(c, "run", style=style, settings=refused)
+            assert r.is_error
+            assert f'style "{style}" has no stage "nope"' in text(r)
+            after = data(await call(c, "get_session"))
+            assert (after["style"], after["settings"]) == (before["style"], before["settings"])
 
 
 async def test_run_without_an_image_is_an_error():
@@ -228,6 +238,53 @@ async def test_a_second_run_cancels_the_first():
     assert results["first"].is_error
     assert "the run was cancelled" in text(results["first"])
     assert not results["second"].is_error
+
+
+async def test_preview_waits_for_a_run_to_finish():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(8, 8))
+    async with Client(build_server(session)) as c:
+        r = await call(c, "run", style="_slow", settings={"b": {"frames": 1, "delay_ms": 0}})
+        assert not r.is_error
+        long = {"b": {"frames": 200, "delay_ms": 50}}
+        async with anyio.create_task_group() as group:
+            group.start_soon(partial(call, c, "run", style="_slow", settings=long))
+            while session.state is not RunState.running:
+                await anyio.sleep(0.01)
+            r = await call(c, "preview")
+            assert r.is_error
+            assert "wait for the run to finish" in text(r)
+            group.cancel_scope.cancel()
+
+
+async def test_a_superseded_run_returns_no_drawing():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(8, 8))
+    results = []
+    async with Client(build_server(session)) as c:
+
+        async def older():
+            settings = {"b": {"frames": 2, "delay_ms": 10}}
+            results.append(await call(c, "run", style="_slow", settings=settings))
+
+        # The newer run has finished, or is still under way, when the older call looks again.
+        for newer_frames in (2, 200):
+            async with anyio.create_task_group() as group:
+                group.start_soon(older)
+                while session.state is not RunState.running:
+                    await anyio.sleep(0)
+                # The call now sleeps between polls. Blocking the event loop keeps it asleep while
+                # its run ends and a newer one starts.
+                while session.state is RunState.running:
+                    time.sleep(0.005)
+                session.update("b", frames=newer_frames)
+                newer = session.run()
+                if newer_frames == 2:
+                    newer.wait()
+            newer.cancel()
+            newer.wait()
+    assert [r.is_error for r in results] == [True, True]
+    assert all("the run was cancelled" in text(r) for r in results)
 
 
 async def test_stdio_server_lists_the_tools():

@@ -65,7 +65,7 @@ Each tool's input schema comes from its type hints. Lengths are in mm.
 
 The brief's sketch had a separate `update(settings)`. `run(settings=...)` covers it: the cache already reruns only the stages after a changed setting, and one tool is easier for an assistant to use than two that differ only in when they run.
 
-`preview` refuses a `width_px` outside 100 to 4000, and a picture, of the whole page or of a region, of more than 16 million pixels. Those checks bound the memory a tool call can ask for, since the tool's input comes from outside: a narrow region, or a page set narrow and tall, would otherwise ask for gigabytes. The refusal names the largest `width_px` that fits. The previews that `run` returns and `export` writes as PNG use the largest width up to 1000 px whose picture stays within the cap, so they never fail on it.
+`preview` refuses a `width_px` outside 100 to 4000, and a picture, of the whole page or of a region, of more than 16 million pixels. Those checks bound the memory a tool call can ask for, since the tool's input comes from outside: a narrow region, or a page set narrow and tall, would otherwise ask for gigabytes. The refusal names the largest `width_px` that fits. The previews that `run` returns and `export` writes as PNG use the largest width up to 1000 px whose picture stays within the cap, so they never fail on it. While a run is under way, `preview` and `export` as PNG refuse and ask the assistant to wait for the run to finish: the engine holds the new drawing a moment before `session.result` does, so the cap could be checked against the wrong page.
 
 ## 5. Running
 
@@ -75,7 +75,7 @@ The brief's sketch had a separate `update(settings)`. `run(settings=...)` covers
 2. **Start.** `Session.run()` starts the run on the session's worker thread. It raises `RuntimeError` when no image is loaded, which becomes a tool error.
 3. **Progress.** A subscriber keeps the latest frame. Every 100 ms, while the run is `running`, the tool sends a progress notification when the frame has changed since the last one: the progress value counts the notifications sent, so it always grows as the protocol requires, and the message is `"<stage>: <label>"`, for example `tone: tone map`. Clients that reset their timeout on progress therefore wait for a long run.
 4. **Cancellation.** When the client cancels the request, the tool's task is cancelled; a `finally` block cancels the run if it is still running and removes the subscriber either way.
-5. **End.** `done` returns the stats and the preview. `error` fails with the run's error message. `cancelled` fails with "the run was cancelled".
+5. **End.** `done` returns the stats and the preview. `error` fails with the run's error message. `cancelled` fails with "the run was cancelled". So does a `done` run that a newer run has replaced while the tool slept between polls, so a call never returns another run's drawing.
 
 ## 6. Files
 
@@ -100,7 +100,7 @@ Each tool runs its session calls inside one helper that turns `ValueError`, `OSE
 
 ## 9. The CLI
 
-`plotline mcp` imports `plotline.mcp_server` when it runs, not at start-up, so the other commands do not load the SDK. When that import fails because `mcp` is missing, it prints `The MCP server needs the mcp extra: pip install "plotline[mcp]"` to stderr and exits with status 1. Otherwise it calls `build_server().run()` on stdio and prints nothing to stdout, which carries the protocol.
+`plotline mcp` imports `plotline.mcp_server` when it runs, not at start-up, so the other commands do not load the SDK. When `mcp` cannot be found, which it checks before that import because the server imports other modules of the extra first, it prints `The MCP server needs the mcp extra: pip install "plotline[mcp]"` to stderr and exits with status 1. Otherwise it calls `build_server().run()` on stdio and prints nothing to stdout, which carries the protocol.
 
 The README shows the client configuration as plain JSON, `{"command": "plotline", "args": ["mcp"]}`, and names no client.
 

@@ -88,21 +88,28 @@ def _image_size(session: Session) -> dict[str, int] | None:
 
 
 def _page(session: Session) -> Canvas:
-    # The result's page: the picture shows the result, and the page may have changed since the run.
+    """The result's page: the picture shows the result, and the page may have changed since the
+    run. Raises ``RuntimeError`` while a run is under way, since the engine holds the new drawing
+    a moment before ``session.result`` does, and the picture would then be checked against the
+    wrong page."""
+    if session.state is RunState.running:
+        raise RuntimeError("a run is under way; wait for the run to finish, then try again")
     return session.canvas if session.result is None else session.result.canvas
 
 
 def _pixels(width_px: int, width: float, height: float) -> float:
     """The pixels of a picture ``width_px`` wide of an area ``width`` by ``height`` mm, or ``inf``
-    when its height in pixels is too large for a float."""
+    when its height in pixels is too large for a float. The height rounds half away from zero, as
+    the engine's does."""
     rows = height * (width_px / width)
-    return width_px * round(rows) if math.isfinite(rows) else math.inf
+    return width_px * math.floor(rows + 0.5) if math.isfinite(rows) else math.inf
 
 
-def _widest(width: float, height: float) -> int:
-    """The largest ``width_px`` whose picture of an area ``width`` by ``height`` mm has at most
-    ``MAX_PIXELS``. Rounding the height can push the square-root bound a few pixels over."""
-    most = int(math.sqrt(MAX_PIXELS * (width / height)))
+def _widest(width: float, height: float, limit: int) -> int:
+    """The largest ``width_px`` up to ``limit`` whose picture of an area ``width`` by ``height`` mm
+    has at most ``MAX_PIXELS``. Rounding the height can push the square-root bound a few pixels
+    over."""
+    most = min(limit, int(math.sqrt(MAX_PIXELS * (width / height))))
     while _pixels(most, width, height) > MAX_PIXELS:
         most -= 1
     return most
@@ -112,7 +119,7 @@ def _page_px(session: Session) -> int:
     """The width of the previews that run returns and export writes: the largest up to
     ``PREVIEW_PX`` whose picture of the whole page stays within ``MAX_PIXELS``."""
     page = _page(session)
-    return min(PREVIEW_PX, _widest(page.width_mm, page.height_mm))
+    return _widest(page.width_mm, page.height_mm, PREVIEW_PX)
 
 
 def build_server(session: Session | None = None) -> MCPServer:
@@ -181,8 +188,8 @@ def build_server(session: Session | None = None) -> MCPServer:
         settings: dict[str, dict[str, Any]] | None = None,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
-        px wide. A style that is given replaces the current one and resets the settings to its
-        defaults. settings is {stage: {setting: value}} and changes only the values given; only
+        px wide. A style that differs from the current one replaces it and resets the settings to
+        its defaults. settings is {stage: {setting: value}} and changes only the values given; only
         the stages after a changed setting run again. When a change is refused, nothing changes
         and nothing runs."""
         with _errors(), ExitStack() as stack:
@@ -212,6 +219,9 @@ def build_server(session: Session | None = None) -> MCPServer:
                     await ctx.report_progress(count, None, f"{sent.stage}: {sent.label}")
             if handle.state is not RunState.done:
                 raise handle.error or Cancelled("the run was cancelled")
+            # A newer run that started while this call slept owns the engine's drawing now.
+            if session.state is RunState.running or session.result is not handle.result:
+                raise Cancelled("the run was cancelled")
             png = session.preview_png(_page_px(session))
             return [json.dumps(asdict(session.stats())), Image(data=png, format="png")]
 
@@ -237,7 +247,7 @@ def build_server(session: Session | None = None) -> MCPServer:
                 if (n := _pixels(width_px, width, height)) > MAX_PIXELS:
                     raise ValueError(
                         f"a picture {width_px} px wide would have {n} pixels, over the limit of "
-                        f"{MAX_PIXELS}; use width_px {_widest(width, height)} or less"
+                        f"{MAX_PIXELS}; use width_px {_widest(width, height, width_px)} or less"
                     )
             # The engine refuses a region that is not four numbers.
             region = cast(Any, None if region_mm is None else tuple(region_mm))

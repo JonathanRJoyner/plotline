@@ -121,10 +121,12 @@ def test_gui_without_a_bundle_and_mcp_without_its_extra(monkeypatch, tmp_path):
     r = run("gui")
     assert r.exit_code == 1 and "This build has no GUI bundle" in r.stderr
     # A None entry makes "import mcp..." raise ModuleNotFoundError, as when the extra is absent,
-    # but only for modules not imported yet. Other tests have loaded the SDK, so clear its cache.
-    for name in [n for n in sys.modules if n.startswith("mcp.")]:
+    # but only for modules not imported yet. Other tests have loaded the SDK and anyio, which only
+    # the extra brings, so clear their caches.
+    for name in [n for n in sys.modules if n.startswith(("mcp.", "anyio."))]:
         monkeypatch.delitem(sys.modules, name)
     monkeypatch.setitem(sys.modules, "mcp", None)
+    monkeypatch.setitem(sys.modules, "anyio", None)
     monkeypatch.delitem(sys.modules, "plotline.mcp_server", raising=False)
     r = run("mcp")
     assert r.exit_code == 1 and 'pip install "plotline[mcp]"' in r.stderr
