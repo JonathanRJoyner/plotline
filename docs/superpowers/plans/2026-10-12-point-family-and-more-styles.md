@@ -463,7 +463,7 @@ git commit -m "Add the error-diffusion placer and the dither style"
 - Modify: `stages/mod.rs`, `registry.rs`, both Python tests
 
 **Interfaces:**
-- Consumes: `voronoi::sample_by_density` (Task 1), with exponent 1, for darts.
+- Consumes: `voronoi::sample_by_density` (Task 1), with exponent 1. It is called once at `start` for a batch of `max(expected, 30)` darts, with `expected = rect area / spacing²`. The darts are used in order, and seeding also stops when the batch runs out, because each call rebuilds the density table.
 - Produces:
   - `pub struct PoissonPlacer;`: name `"poisson"`, label `"Poisson disk"`, version 1, requires `[Kind::Tone]`, provides `Kind::Points`.
   - `pub struct PoissonSettings { spacing_mm: f64, seed: u32 }`.
@@ -475,7 +475,7 @@ git commit -m "Add the error-diffusion placer and the dither style"
 #[test] fn settings_schema()
 #[test] fn no_two_points_closer_than_their_radii() // noise-like map (x*7+y*13)%10/9: for every pair, dist >= min(r(p), r(q)) - 1e-9, with r = spacing/sqrt(ink) capped at 20*spacing
 #[test] fn black_packs_at_the_spacing() // flat 1, spacing 2, 20x20 px at 2 mm/px (40 mm square): count between 200 and 462 (the hexagonal packing bound 2·1600/(√3·4))
-#[test] fn a_small_dark_spot_on_white_gets_points() // 50x50 map, ink 1 only in a 2x2 px spot, spacing 1: points not empty, all within the spot ± 1 mm
+#[test] fn a_small_dark_spot_on_white_gets_points() // 50x50 map, ink 1 only in a 2x2 px spot, spacing 1: points not empty, all within the spot ± 1.5 mm (bilinear sampling spreads ink up to a pixel past the spot)
 #[test] fn white_gives_no_points()
 ```
 
@@ -662,7 +662,7 @@ git commit -m "Add the flow lines style"
 #[test] fn settings_schema()
 #[test] fn white_folds_only_to_the_largest_cell() // 32x32 px at 2 mm/px (64 mm square), cell 1, max_cell 8: one path of 64 vertices (8x8 leaves), consecutive vertices 8 mm apart
 #[test] fn black_folds_to_the_smallest_cell() // same map black, cell 2: 1024 vertices, steps 2 mm
-#[test] fn the_curve_is_one_path_on_a_covered_square() // any ink on a square rect: exactly 1 path
+#[test] fn the_curve_is_one_path_on_a_covered_square() // 32x32 px at 2 mm/px (64 mm square, so 64 = cell 1 * 2^6 and no leaf falls outside), ink ((x*7+y*13)%10)/9: exactly 1 path
 #[test] fn every_vertex_stays_on_the_map() // 30x20 px map (non-square, non-power-of-two)
 ```
 
