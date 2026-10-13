@@ -192,7 +192,7 @@ fn paint([r, g, b]: [u8; 3]) -> Paint<'static> {
 
 /// The bytes of a `#rrggbb` colour. Black when `color` is not written that way, which
 /// [`crate::types::Pen::new`] rejects but a pen built field by field can still hold.
-fn rgb(color: &str) -> [u8; 3] {
+pub(crate) fn rgb(color: &str) -> [u8; 3] {
     let hex = color
         .strip_prefix('#')
         .filter(|h| h.len() == 6)
