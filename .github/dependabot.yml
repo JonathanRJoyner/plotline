@@ -1,0 +1,12 @@
+# Bumps the SHA-pinned actions in .github/workflows. Security fixes for the cargo, npm and uv
+# lockfiles come from Dependabot security updates, set in the repository settings; other
+# dependency bumps stay deliberate so each one gets its licence check.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
