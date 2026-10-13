@@ -80,14 +80,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let file = format!("{name}.png");
                 let mut run = session.start()?;
                 while run.next_frame().is_some() {}
-                let (png, cell_stats) =
-                    match (session.error(), session.preview_png(WIDTH_PX, false, false, None)) {
-                        (None, Some(png)) => (png?, serde_json::to_value(session.stats())?),
-                        (error, _) => {
-                            let error = error.unwrap_or_else(|| "the run left no drawing".into());
-                            (Vec::new(), json!({ "error": error }))
-                        }
-                    };
+                let (png, cell_stats) = match (
+                    session.error(),
+                    session.preview_png(WIDTH_PX, false, false, None),
+                ) {
+                    (None, Some(png)) => (png?, serde_json::to_value(session.stats())?),
+                    (error, _) => {
+                        let error = error.unwrap_or_else(|| "the run left no drawing".into());
+                        (Vec::new(), json!({ "error": error }))
+                    }
+                };
                 fs::write(out.join(&file), &png)?;
                 let change = match &baseline {
                     None => Change::NoBaseline,
