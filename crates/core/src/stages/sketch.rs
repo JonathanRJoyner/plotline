@@ -219,7 +219,7 @@ impl Residual {
 /// A stroke that ends with one vertex is dropped, and the ink at its pixel is cleared so that the
 /// pixel is not the darkest again. The run reports a frame of the strokes so far after about a
 /// thirtieth of `max_lines` passes of the loop, or fewer when those passes would read more than
-/// [`SAMPLE_BUDGET`] ink samples, then gives the paths.
+/// `SAMPLE_BUDGET` ink samples, then gives the paths.
 pub struct SketchStage;
 
 impl Stage for SketchStage {

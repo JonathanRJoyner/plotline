@@ -4,8 +4,8 @@
 //! Only the coordinates are compared with a tolerance (1e-3 mm). Everything else must match
 //! exactly: every top-level key except `layers`, the number of layers, and the pen and the path
 //! count of each layer. A rounding difference that flips one grid cell therefore shows up as a
-//! count mismatch. If a platform ever does that, move `threshold` in `produce` farther from every
-//! sampled ink value instead of loosening the comparison. After a deliberate change to the
+//! count mismatch. If a platform ever does that, move the `threshold` in the grid cases' patch
+//! farther from every sampled ink value instead of loosening the comparison. After a deliberate change to the
 //! geometry, rewrite the files with `PLOTLINE_UPDATE_GOLDEN=1 cargo test -p plotline-core --test
 //! golden` and review the diff.
 

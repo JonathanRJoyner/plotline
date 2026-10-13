@@ -10,8 +10,8 @@ use delaunator::{Point, Triangulation};
 
 use super::lines::clamp_to;
 
-/// The Delaunay triangulation of `points`. Points within rounding of an earlier one are left out
-/// of it, and all-collinear input gives no triangles.
+/// The Delaunay triangulation of `points`. Of points within rounding of each other only one is
+/// triangulated, and which copy survives is unspecified; all-collinear input gives no triangles.
 pub(crate) fn triangulate(points: &[[f64; 2]]) -> Triangulation {
     let pts: Vec<Point> = points.iter().map(|p| Point { x: p[0], y: p[1] }).collect();
     delaunator::triangulate(&pts)

@@ -100,8 +100,9 @@ pub(crate) fn sample_by_density(
 /// Place points over the tone map so that their density follows `ink ^ exponent`, then spread them
 /// evenly with Lloyd relaxation.
 ///
-/// The run first reports the scatter, then one frame per step of up to 200000 pixels of each pass. After the last pass, points that won no inked pixel in it are dropped, so no stray
-/// dots sit in white areas. With no passes the scatter is the answer, and nothing is dropped.
+/// The run first reports the scatter, then one frame per step of each pass, a step covering up to
+/// `PIXELS_PER_STEP` pixels. After the last pass, points that won no inked pixel in it are
+/// dropped, so no stray dots sit in white areas. With no passes the scatter is the answer, and nothing is dropped.
 pub struct VoronoiPlacer;
 
 impl Stage for VoronoiPlacer {
