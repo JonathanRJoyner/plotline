@@ -103,7 +103,9 @@ pub fn ink_style() -> Style {
     tone_style(
         "ink",
         "Ink",
-        "Draws the marks of line art, lettering and inked drawings as they are: every ink shape          is outlined and filled with rings, and strokes thinner than the pen get one line down          the middle.",
+        "Draws the marks of line art, lettering and inked drawings as they are: every ink shape \
+         is outlined and filled with rings, and strokes thinner than the pen get one line down \
+         the middle.",
         Arc::new(InkStage),
     )
     .with_defaults("tone", json!({"resolution": 2500}))
@@ -329,6 +331,13 @@ mod tests {
         );
         assert!(get_style("_slow").is_some());
         assert!(get_style("nope").is_none());
+    }
+    #[test]
+    fn descriptions_have_no_runs_of_spaces() {
+        // A string continued onto the next line without a backslash keeps the indent.
+        for style in list_styles() {
+            assert!(!style.description.contains("  "), "{}", style.name);
+        }
     }
     #[test]
     fn every_style_is_deterministic() {
