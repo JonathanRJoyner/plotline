@@ -308,7 +308,7 @@ pub fn get_style(name: &str) -> Option<Arc<Style>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::{flat, gradient};
+    use crate::synthetic::{flat, gradient, radial};
     use crate::test_util::{assert_inside, run_to_drawing};
     use std::collections::BTreeMap;
 
@@ -356,6 +356,19 @@ mod tests {
                 assert_eq!(*label, stage.label(), "stage {:?}", stage.name());
                 assert_eq!(*schema, stage.schema(), "stage {:?}", stage.name());
             }
+        }
+    }
+    /// Prints the time of `stipple` and `line` at their defaults on a 1000 by 750 radial image.
+    /// Run with `cargo test --release -p plotline-core --lib default_timings -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn default_timings() {
+        for name in ["stipple", "line"] {
+            let style = get_style(name).unwrap();
+            let start = std::time::Instant::now();
+            run_to_drawing(&style, radial(1000, 750));
+            println!("{name}: {:.2} s", start.elapsed().as_secs_f64());
         }
     }
     #[test]

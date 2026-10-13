@@ -84,7 +84,7 @@ The tour starts with nearest-neighbour construction from the point nearest the t
 
 - **Open line:** the tour is improved as a cycle, then opened at its longest edge unless `closed` is on.
 - **Segment reversal** reverses the shorter side.
-- **No crossings:** a 2-opt local optimum in the plane has none.
+- **No crossings:** a 2-opt local optimum in the plane has none. Note, 2026-10-13: over neighbour lists the optimum can keep crossings, as probes found, so the build adds a crossing sweep. Once the queue is empty, a scan over a grid uncrosses any remaining crossings and improvement resumes, until a scan finds none.
 - **Frames:** one after construction, then one per step of about 2000 node checks, each holding the current tour, labelled `construction` or `improving: k moves`.
 
 | Setting | Range | Default | Help |
