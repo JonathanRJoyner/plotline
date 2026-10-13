@@ -71,6 +71,7 @@ impl StageRun for SlowPointRun {
             label: "1/1".into(),
             points: Some(points),
             paths: None,
+            pen: 0,
         }))
     }
 }
@@ -165,6 +166,7 @@ impl StageRun for SlowPathsRun {
             label: format!("{}/{}", self.step, s.frames),
             points: None,
             paths: None,
+            pen: 0,
         }))
     }
 }

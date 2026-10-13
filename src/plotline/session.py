@@ -52,7 +52,7 @@ def _split(coords: NDArray[np.float64], offsets: NDArray[np.uint32]) -> list[NDA
 def _frame(f: dict[str, Any]) -> Frame:
     coords = f["coords"]
     paths = None if coords is None else _split(coords, f["offsets"])
-    return Frame(f["stage"], f["progress"], f["label"], f["points"], paths)
+    return Frame(f["stage"], f["progress"], f["label"], f["points"], paths, f["pen"])
 
 
 def _drawing(d: dict[str, Any]) -> Drawing:

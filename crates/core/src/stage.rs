@@ -28,6 +28,8 @@ pub enum Kind {
     Pens,
     /// The tone map.
     Tone,
+    /// One tone map per pen, from the stage that splits the drawing between the pens.
+    Tones,
     /// Points on the page.
     Points,
     /// Paths on the page.
@@ -47,6 +49,7 @@ impl Kind {
             Kind::Canvas => "canvas",
             Kind::Pens => "pens",
             Kind::Tone => "tone",
+            Kind::Tones => "tones",
             Kind::Points => "points",
             Kind::Paths => "paths",
             Kind::Layers => "layers",
@@ -65,6 +68,8 @@ pub enum Artifact {
     Pens(Arc<Vec<Pen>>),
     /// The tone map.
     Tone(Arc<ToneMap>),
+    /// One tone map per pen, from the stage that splits the drawing between the pens.
+    Tones(Arc<Vec<Arc<ToneMap>>>),
     /// Points on the page.
     Points(Arc<Points>),
     /// Paths on the page.
@@ -81,6 +86,7 @@ impl Artifact {
             Artifact::Canvas(_) => Kind::Canvas,
             Artifact::Pens(_) => Kind::Pens,
             Artifact::Tone(_) => Kind::Tone,
+            Artifact::Tones(_) => Kind::Tones,
             Artifact::Points(_) => Kind::Points,
             Artifact::Paths(_) => Kind::Paths,
             Artifact::Layers(_) => Kind::Layers,
@@ -94,6 +100,7 @@ impl Artifact {
             Artifact::Image(i) => i.rgb.len() * 4,
             Artifact::Canvas(_) | Artifact::Pens(_) => 64,
             Artifact::Tone(t) => t.ink.len() * 4,
+            Artifact::Tones(maps) => maps.iter().map(|t| t.ink.len() * 4).sum(),
             Artifact::Points(p) => p.0.len() * 16,
             Artifact::Paths(p) => paths(p),
             Artifact::Layers(l) => l.iter().map(|layer| paths(&layer.paths)).sum(),
@@ -114,6 +121,8 @@ pub struct Frame {
     pub points: Option<Points>,
     /// Paths made so far, if the stage has any to show.
     pub paths: Option<Paths>,
+    /// The pen whose lane gave the frame; 0 outside lanes. The runner sets it.
+    pub pen: usize,
 }
 
 /// What one step of a run produced.
@@ -156,20 +165,50 @@ impl Inputs {
     input!(canvas, Canvas, Canvas);
     input!(pens, Pens, Vec<Pen>);
     input!(tone, Tone, ToneMap);
+    input!(tones, Tones, Vec<Arc<ToneMap>>);
     input!(points, Points, Points);
     input!(paths, Paths, Paths);
     input!(layers, Layers, Vec<Layer>);
 }
 
-/// What a running stage may use besides its inputs: the cancel flag and seeded randomness.
+/// Which of a run's pens a stage after the split is drawing for: `index` of `count`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lane {
+    /// The pen's position in the run's pens.
+    pub index: usize,
+    /// How many pens the run splits between.
+    pub count: usize,
+}
+
+impl Lane {
+    /// The lane of a stage outside any split: the only one.
+    pub const SINGLE: Lane = Lane { index: 0, count: 1 };
+}
+
+/// What a running stage may use besides its inputs: the cancel flag, seeded randomness and the
+/// lane it runs in.
 pub struct RunContext {
     cancel: Arc<AtomicBool>,
+    lane: Lane,
 }
 
 impl RunContext {
-    /// A context that reports cancelled once `cancel` is set.
+    /// A context in [`Lane::SINGLE`] that reports cancelled once `cancel` is set.
     pub fn new(cancel: Arc<AtomicBool>) -> RunContext {
-        RunContext { cancel }
+        RunContext {
+            cancel,
+            lane: Lane::SINGLE,
+        }
+    }
+
+    /// The context for the same run in `lane`.
+    pub fn in_lane(self, lane: Lane) -> RunContext {
+        RunContext { lane, ..self }
+    }
+
+    /// The lane the stage runs in.
+    pub fn lane(&self) -> Lane {
+        self.lane
     }
 
     /// Whether the run has been cancelled.
@@ -253,5 +292,23 @@ mod tests {
             Artifact::Points(Arc::new(Points(vec![[0.0, 0.0]; 3]))).bytes(),
             48
         );
+        let two = crate::test_util::tones(&[0.25, 0.5]);
+        assert_eq!((two.kind(), two.bytes()), (Kind::Tones, 8));
+    }
+    #[test]
+    fn a_context_is_single_unless_put_in_a_lane() {
+        let ctx = RunContext::new(Arc::default());
+        assert_eq!(ctx.lane(), Lane::SINGLE);
+        let lane = Lane { index: 1, count: 3 };
+        assert_eq!(ctx.in_lane(lane).lane(), lane);
+    }
+    #[test]
+    fn tones_input_is_declared_by_kind() {
+        let inputs = Inputs::new(HashMap::from([(
+            Kind::Tones,
+            crate::test_util::tones(&[0.5]),
+        )]));
+        assert_eq!(inputs.tones().len(), 1);
+        assert_eq!(Kind::Tones.name(), "tones");
     }
 }

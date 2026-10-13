@@ -392,6 +392,7 @@ impl TspRun {
             label,
             points: None,
             paths: Some(paths),
+            pen: 0,
         }
     }
 

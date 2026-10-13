@@ -268,6 +268,7 @@ impl StageRun for PoissonRun {
             label: format!("{n} points"),
             points: Some(Points(self.points.clone())),
             paths: None,
+            pen: 0,
         }))
     }
 }

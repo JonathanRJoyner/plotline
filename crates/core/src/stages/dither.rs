@@ -173,6 +173,7 @@ impl StageRun for DitherRun {
                 label,
                 points: Some(Points(points)),
                 paths: None,
+                pen: 0,
             })
         };
         if self.no_cells {

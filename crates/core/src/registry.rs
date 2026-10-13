@@ -18,6 +18,7 @@ use crate::stages::poisson::PoissonPlacer;
 use crate::stages::sketch::SketchStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
+use crate::stages::split::SplitStage;
 use crate::stages::stipple::StippleRenderer;
 use crate::stages::tone::ToneStage;
 use crate::stages::tsp::TspRenderer;
@@ -26,7 +27,8 @@ use crate::stages::waves::WaveStage;
 use crate::style::Style;
 use serde_json::json;
 
-/// A style of tone, a stage that places points, a stage that draws them, and path order.
+/// A style of tone, the split between pens, a stage that places points, a stage that draws them,
+/// and path order.
 fn point_style(
     name: &str,
     label: &str,
@@ -38,12 +40,18 @@ fn point_style(
         name,
         label,
         description,
-        vec![Arc::new(ToneStage), placer, renderer, Arc::new(OrderStage)],
+        vec![
+            Arc::new(ToneStage),
+            Arc::new(SplitStage),
+            placer,
+            renderer,
+            Arc::new(OrderStage),
+        ],
     )
     .expect("a point style is valid")
 }
 
-/// Dots on a regular grid: tone, points, render, order.
+/// Dots on a regular grid: tone, split, points, render, order.
 pub fn grid_style() -> Style {
     point_style(
         "grid",
@@ -55,18 +63,24 @@ pub fn grid_style() -> Style {
     )
 }
 
-/// A style of tone, one stage that turns the tone map into paths, and path order.
+/// A style of tone, the split between pens, one stage that turns the tone map into paths, and
+/// path order.
 fn tone_style(name: &str, label: &str, description: &str, stage: Arc<dyn Stage>) -> Style {
     Style::new(
         name,
         label,
         description,
-        vec![Arc::new(ToneStage), stage, Arc::new(OrderStage)],
+        vec![
+            Arc::new(ToneStage),
+            Arc::new(SplitStage),
+            stage,
+            Arc::new(OrderStage),
+        ],
     )
     .expect("a tone style is valid")
 }
 
-/// Straight lines over the dark areas: tone, hatch, order.
+/// Straight lines over the dark areas: tone, split, hatch, order.
 pub fn hatch_style() -> Style {
     tone_style(
         "hatch",
@@ -82,7 +96,7 @@ pub fn hatch_style() -> Style {
 /// the brief.
 const RIPPLE_GAMMA: f64 = 1.9;
 
-/// Rippling lines: tone, waves, order.
+/// Rippling lines: tone, split, waves, order.
 pub fn waves_style() -> Style {
     tone_style(
         "waves",
@@ -93,7 +107,7 @@ pub fn waves_style() -> Style {
     .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
 }
 
-/// One rippling spiral: tone, spiral, order.
+/// One rippling spiral: tone, split, spiral, order.
 pub fn spiral_style() -> Style {
     tone_style(
         "spiral",
@@ -104,8 +118,9 @@ pub fn spiral_style() -> Style {
     .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
 }
 
-/// An image's own marks, outlined and filled: tone, ink, order. A finer tone map than the other
-/// styles use keeps the hairlines of ink drawings, which averaging into fewer pixels greys out.
+/// An image's own marks, outlined and filled: tone, split, ink, order. A finer tone map than the
+/// other styles use keeps the hairlines of ink drawings, which averaging into fewer pixels greys
+/// out.
 pub fn ink_style() -> Style {
     tone_style(
         "ink",
@@ -118,7 +133,7 @@ pub fn ink_style() -> Style {
     .with_defaults("tone", json!({"resolution": 2500}))
 }
 
-/// Evenly spread dots, each sized by the ink: tone, voronoi, stipple, order.
+/// Evenly spread dots, each sized by the ink: tone, split, voronoi, stipple, order.
 pub fn stipple_style() -> Style {
     point_style(
         "stipple",
@@ -129,7 +144,7 @@ pub fn stipple_style() -> Style {
     )
 }
 
-/// One unbroken, non-crossing line through evenly spread points: tone, voronoi, tsp, order.
+/// One unbroken, non-crossing line through evenly spread points: tone, split, voronoi, tsp, order.
 pub fn line_style() -> Style {
     point_style(
         "line",
@@ -140,7 +155,7 @@ pub fn line_style() -> Style {
     )
 }
 
-/// Short strokes that follow the image's edges: tone, voronoi, dashes, order.
+/// Short strokes that follow the image's edges: tone, split, voronoi, dashes, order.
 pub fn dashes_style() -> Style {
     point_style(
         "dashes",
@@ -151,7 +166,7 @@ pub fn dashes_style() -> Style {
     )
 }
 
-/// Straight strokes chained from dark to dark: tone, sketch, order.
+/// Straight strokes chained from dark to dark: tone, split, sketch, order.
 pub fn sketch_style() -> Style {
     tone_style(
         "sketch",
@@ -161,7 +176,7 @@ pub fn sketch_style() -> Style {
     )
 }
 
-/// The shortest tree joining evenly spread points: tone, voronoi, mst, order.
+/// The shortest tree joining evenly spread points: tone, split, voronoi, mst, order.
 pub fn tree_style() -> Style {
     point_style(
         "tree",
@@ -172,7 +187,7 @@ pub fn tree_style() -> Style {
     )
 }
 
-/// A triangle mesh over evenly spread points: tone, voronoi, delaunay, order.
+/// A triangle mesh over evenly spread points: tone, split, voronoi, delaunay, order.
 pub fn mesh_style() -> Style {
     point_style(
         "mesh",
@@ -183,7 +198,7 @@ pub fn mesh_style() -> Style {
     )
 }
 
-/// The outlines of the points' Voronoi cells: tone, voronoi, cells, order.
+/// The outlines of the points' Voronoi cells: tone, split, voronoi, cells, order.
 pub fn cells_style() -> Style {
     point_style(
         "cells",
@@ -194,7 +209,7 @@ pub fn cells_style() -> Style {
     )
 }
 
-/// Dots on a regular grid, each sized by the ink: tone, points, stipple, order.
+/// Dots on a regular grid, each sized by the ink: tone, split, points, stipple, order.
 pub fn halftone_style() -> Style {
     point_style(
         "halftone",
@@ -207,7 +222,7 @@ pub fn halftone_style() -> Style {
     .with_defaults("stipple", json!({"size_mm": 2.0, "vary": 1.0}))
 }
 
-/// Dots where error diffusion puts them: tone, dither, render, order.
+/// Dots where error diffusion puts them: tone, split, dither, render, order.
 pub fn dither_style() -> Style {
     point_style(
         "dither",
@@ -218,7 +233,7 @@ pub fn dither_style() -> Style {
     )
 }
 
-/// Circles packed without overlapping: tone, poisson, stipple, order.
+/// Circles packed without overlapping: tone, split, poisson, stipple, order.
 pub fn circles_style() -> Style {
     point_style(
         "circles",
@@ -234,7 +249,7 @@ pub fn circles_style() -> Style {
     )
 }
 
-/// Level lines of the image, like a topographic map: tone, contours, order.
+/// Level lines of the image, like a topographic map: tone, split, contours, order.
 pub fn contours_style() -> Style {
     tone_style(
         "contours",
@@ -244,7 +259,7 @@ pub fn contours_style() -> Style {
     )
 }
 
-/// Evenly spaced lines along the image's edges, closer where it is darker: tone, flow, order.
+/// Evenly spaced lines along the image's edges, closer where it is darker: tone, split, flow, order.
 pub fn flow_style() -> Style {
     tone_style(
         "flow",
@@ -255,7 +270,7 @@ pub fn flow_style() -> Style {
 }
 
 /// A space-filling curve that folds tighter where it is darker, broken where it leaves the image:
-/// tone, hilbert, order.
+/// tone, split, hilbert, order.
 pub fn hilbert_style() -> Style {
     tone_style(
         "hilbert",
@@ -361,6 +376,19 @@ mod tests {
                     d2.tone.as_ref().map(|t| t.ink.clone())
                 );
             }
+        }
+    }
+    #[test]
+    fn every_listed_style_splits_right_after_tone() {
+        for style in list_styles() {
+            let tone = style.stage_index("tone");
+            assert!(tone.is_some(), "{} has no tone stage", style.name);
+            assert_eq!(
+                style.stage_index("split"),
+                tone.map(|i| i + 1),
+                "{}",
+                style.name
+            );
         }
     }
     #[test]

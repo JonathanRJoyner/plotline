@@ -130,6 +130,7 @@ impl StageRun for ToneRun {
                 label: "tone map".into(),
                 points: None,
                 paths: None,
+                pen: 0,
             }));
         }
         let map = self.map.take().expect("the tone run has already finished");
@@ -185,7 +186,12 @@ fn tone_map(image: &Image, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
 
 /// Centre-crop a row-major `w x h` grid to a width over height of `aspect`, to the nearest pixel
 /// with halves to even as Python's `round` does. Returns the crop and its width and height.
-fn crop_to_aspect(lum: &[f32], w: usize, h: usize, aspect: f64) -> (Vec<f32>, usize, usize) {
+pub(crate) fn crop_to_aspect(
+    lum: &[f32],
+    w: usize,
+    h: usize,
+    aspect: f64,
+) -> (Vec<f32>, usize, usize) {
     let ch = h.min(((w as f64 / aspect).round_ties_even() as usize).max(1));
     let cw = w.min(((h as f64 * aspect).round_ties_even() as usize).max(1));
     let (y0, x0) = ((h - ch) / 2, (w - cw) / 2);
@@ -198,7 +204,12 @@ fn crop_to_aspect(lum: &[f32], w: usize, h: usize, aspect: f64) -> (Vec<f32>, us
 /// ratio (halves to even) and at least one pixel on the other side. A source at least twice the
 /// target is first averaged in `k x k` blocks, `k = max(w, h) / long_edge`, then resampled.
 /// Returns the grid and its width and height.
-fn resize(lum: &[f32], w: usize, h: usize, long_edge: usize) -> (Vec<f32>, usize, usize) {
+pub(crate) fn resize(
+    lum: &[f32],
+    w: usize,
+    h: usize,
+    long_edge: usize,
+) -> (Vec<f32>, usize, usize) {
     let short = |other: usize, long: usize| {
         let exact = (other * long_edge) as f64 / long as f64;
         (exact.round_ties_even() as usize).max(1)

@@ -44,7 +44,8 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Eighteen styles,** from dots on a grid to one continuous spiral. The table below describes each one.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Short pen travel.** Every run orders its paths to keep the pen's travel short, and the line styles lift the pen far less often than `grid`.
-- **Plotter-ready output.** An SVG in millimetres holds the drawing in one layer, labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI writes one G-code file per pen.
+- **Plotter-ready output.** An SVG in millimetres holds one layer per pen that draws, each labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI writes one G-code file per pen.
+- **Several pens.** Pen use shares a drawing between your pens: light to dark in list order, or each pen by its colour, so cyan, magenta, yellow and black pens can draw a colour image. By default the first pen draws alone.
 - **Real pens.** A bank of common fineliners, technical pens, gel pens, ballpoints and markers gives each pen its maker's line width, and a list of common inks gives it a colour.
 - **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a look and share it.
 - **One engine.** The engine is written in Rust and compiled twice: to a native extension for the Python package, and to WebAssembly for the browser. The Python package and the command line are thin layers over it.
@@ -78,7 +79,7 @@ Open **[jonathanrjoyner.github.io/plotline](https://jonathanrjoyner.github.io/pl
 
 1. Drop or paste a PNG, JPEG or WebP image, or click Sample image.
 2. Pick a style, change its settings and click Run to watch it draw.
-3. Set up your pens in the Pens dialog. The page remembers your setup between visits.
+3. Set up your pens in the Pens dialog, and choose how they share the drawing under Pen use. The page remembers your setup between visits.
 4. Click Export SVG in the toolbar, ready for a pen plotter's own software.
 
 For G-code, enter your machine in the Settings dialog: the drawable area, pen heights, feeds, and start and end G-code. The export panel then writes one G-code file per pen. The preset carries the machine, so save a preset to keep it. A short tour of the page opens on your first visit, and Tour in the toolbar opens it again.
@@ -104,6 +105,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | --- | --- |
 | Set the page and margin, in mm | `--width 210 --height 297 --margin 15` |
 | Choose the pen, by ink name or `#rrggbb` colour | `--pen 'Fine:0.3:blue'` |
+| Share the drawing between pens given with `--pen` more than once; by default only the first draws | `--set split.mode=light_to_dark` or `by_colour` |
 | Change a setting | `--set points.spacing_mm=3` |
 | List a style's settings | `plotline describe grid` |
 | Save the run's look as a preset | `--save-preset my-look.json` |

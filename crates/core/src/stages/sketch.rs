@@ -403,6 +403,7 @@ impl StageRun for SketchRun {
             label: format!("{}/{} segments", self.drawn, self.s.max_lines),
             points: None,
             paths: Some(shown),
+            pen: 0,
         }))
     }
 }

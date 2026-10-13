@@ -229,6 +229,7 @@ impl InkRun {
             label,
             points: None,
             paths: Some(self.paths.clone()),
+            pen: 0,
         })
     }
 }

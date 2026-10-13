@@ -146,6 +146,7 @@ impl StageRun for DashRun {
                 label: format!("{} dashes", paths.len()),
                 points: None,
                 paths: Some(paths.clone()),
+                pen: 0,
             };
             self.paths = Some(paths);
             return Ok(Step::Frame(frame));

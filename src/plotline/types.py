@@ -90,14 +90,16 @@ class Drawing:
 
 @dataclass(frozen=True)
 class Frame:
-    """One step of a run as the preview sees it: the stage, its progress in 0..1, a label and the
-    points or paths it has so far, if any."""
+    """One step of a run as the preview sees it: the stage, its progress in 0..1, a label, the
+    points or paths it has so far, if any, and the pen whose lane gave the frame (0 outside
+    lanes)."""
 
     stage: str
     progress: float
     label: str
     points: NDArray[np.float64] | None
     paths: list[NDArray[np.float64]] | None
+    pen: int
 
 
 @dataclass(frozen=True)

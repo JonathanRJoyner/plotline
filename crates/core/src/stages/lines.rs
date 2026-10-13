@@ -12,6 +12,12 @@ use crate::math;
 use crate::stage::{Artifact, Frame, StageError, StageRun, Step};
 use crate::types::Paths;
 
+/// The ink below which the rippling styles lift the pen when the drawing is split between pens.
+/// They draw a straight line over no ink, so without it a pen whose colour the image lacks would
+/// cover the page; the margin also hides the small residue the colour table's interpolation leaves
+/// where a pen has no share.
+pub const LANE_MIN_INK: f32 = 0.02;
+
 /// Points from `a` to `b` no more than `step` apart, both ends included.
 pub fn sample_line(a: [f64; 2], b: [f64; 2], step: f64) -> impl Iterator<Item = [f64; 2]> {
     let len = math::hypot(b[0] - a[0], b[1] - a[1]);
@@ -93,6 +99,7 @@ impl StageRun for ChunkRun {
             label: format!("{end}/{} {}", self.total, self.unit),
             points: None,
             paths: Some(shown),
+            pen: 0,
         }))
     }
 }

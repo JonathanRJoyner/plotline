@@ -393,7 +393,7 @@ mod tests {
             .update("nope", &json!({}))
             .unwrap_err()
             .to_string()
-            .contains("its stages are tone, points, render, order"));
+            .contains("its stages are tone, split, points, render, order"));
         s.set_style("grid").unwrap();
         assert_eq!(s.settings()["tone"]["resolution"], 1000);
     }
@@ -456,8 +456,8 @@ mod tests {
         while let Some(f) = r.next_frame() {
             labels.push(f.label);
         }
-        assert_eq!(labels, vec!["cached"; 4]);
-        assert_eq!(s.cache_stats().hits, 4);
+        assert_eq!(labels, vec!["cached"; 5]);
+        assert_eq!(s.cache_stats().hits, 5);
     }
     #[test]
     fn switching_voronoi_style_at_the_defaults_reuses_the_points() {
@@ -495,6 +495,20 @@ mod tests {
                 "ignoring unknown stage \"nostage\""
             ]
         );
+    }
+
+    #[test]
+    fn an_old_preset_loads_in_one_pen_mode_and_a_mode_round_trips() {
+        let mut v = Session::new(1 << 20).preset();
+        v["settings"].as_object_mut().unwrap().remove("split");
+        let mut s = Session::new(1 << 20);
+        assert!(s.load_preset(&v).unwrap().is_empty());
+        assert_eq!(s.settings()["split"]["mode"], "one_pen");
+        s.update("split", &json!({"mode": "light_to_dark"}))
+            .unwrap();
+        let mut t = Session::new(1 << 20);
+        assert!(t.load_preset(&s.preset()).unwrap().is_empty());
+        assert_eq!(t.settings()["split"]["mode"], "light_to_dark");
     }
 
     #[test]

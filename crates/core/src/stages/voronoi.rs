@@ -208,6 +208,7 @@ impl VoronoiRun {
             label,
             points: Some(Points(self.points.clone())),
             paths: None,
+            pen: 0,
         }
     }
 
