@@ -44,6 +44,7 @@ def test_registry_lists_public_styles_and_finds_hidden_ones():
         "ink",
         "stipple",
         "line",
+        "dashes",
         "halftone",
     ]
     assert get_style("_slow").label == "Slow" and get_style("grid").schema() == describe("grid")

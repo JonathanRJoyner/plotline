@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use crate::stage::Stage;
+use crate::stages::dashes::DashRenderer;
 use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
 use crate::stages::ink::InkStage;
@@ -123,6 +124,17 @@ pub fn line_style() -> Style {
     )
 }
 
+/// Short strokes that follow the image's edges: tone, voronoi, dashes, order.
+pub fn dashes_style() -> Style {
+    point_style(
+        "dashes",
+        "Dashes",
+        "Short strokes that follow the image's edges.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(DashRenderer),
+    )
+}
+
 /// Dots on a regular grid, each sized by the ink: tone, points, stipple, order.
 pub fn halftone_style() -> Style {
     point_style(
@@ -158,6 +170,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(ink_style()),
         Arc::new(stipple_style()),
         Arc::new(line_style()),
+        Arc::new(dashes_style()),
         Arc::new(halftone_style()),
         Arc::new(slow_style()),
     ]
@@ -190,7 +203,7 @@ mod tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            ["grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "halftone"]
+            ["grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "halftone"]
         );
         assert!(get_style("_slow").is_some());
         assert!(get_style("nope").is_none());
