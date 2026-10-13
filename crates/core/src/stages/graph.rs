@@ -5,7 +5,6 @@
 //! de l'URSS*, 1934, computed by the `delaunator` crate. Polylines are clipped segment by segment
 //! with the slab method: Y.-D. Liang and B. A. Barsky, "A new concept and method for line
 //! clipping", *ACM Transactions on Graphics* 3(1), 1984, pp. 1-22.
-#![cfg_attr(not(test), allow(dead_code))] // used by the graph renderers in later tasks
 
 use delaunator::{Point, Triangulation};
 
@@ -135,9 +134,10 @@ pub(crate) fn clip_polyline(rect: [f64; 4], line: &[[f64; 2]]) -> Vec<Vec<[f64; 
             finish(&mut out, &mut piece);
             continue;
         };
+        // Clamped throughout: a `t` that rounds to 0 or 1 can stand for an end a few ulp outside.
         let at = |t: f64| match t {
-            t if t <= 0.0 => a,
-            t if t >= 1.0 => b,
+            t if t <= 0.0 => clamp_to(rect, a),
+            t if t >= 1.0 => clamp_to(rect, b),
             t => clamp_to(rect, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]),
         };
         let (p0, p1) = (at(t0), at(t1));
@@ -271,6 +271,19 @@ mod tests {
             vec![[7.0, 10.0], [8.0, 5.0]],
         ];
         assert!(close(&pieces, &want), "{pieces:?}");
+    }
+
+    #[test]
+    fn clip_polyline_keeps_an_end_just_outside_inside() {
+        // The end lies one ulp (about 5.7e-14) beyond the right edge. Over a span this long the
+        // clip's `t` rounds to exactly 1, so the end is taken as given unless it is clamped.
+        let edge = 300.0_f64;
+        let beyond = f64::from_bits(edge.to_bits() + 1);
+        assert!(beyond - edge > 5e-14);
+        let rect = [0.0, 0.0, edge, edge];
+        let pieces = clip_polyline(rect, &[[-1000.0, 150.0], [beyond, 150.0]]);
+        let last = pieces[0][pieces[0].len() - 1];
+        assert!(last[0] <= edge, "{last:?}");
     }
 
     #[test]

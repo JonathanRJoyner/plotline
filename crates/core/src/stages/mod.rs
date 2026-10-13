@@ -2,6 +2,7 @@
 
 pub mod dashes;
 pub mod dither;
+pub mod edges;
 pub mod graph;
 pub mod grid;
 pub mod hatch;

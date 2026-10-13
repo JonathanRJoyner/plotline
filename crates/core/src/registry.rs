@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::stage::Stage;
 use crate::stages::dashes::DashRenderer;
 use crate::stages::dither::DitherPlacer;
+use crate::stages::edges::{CellsRenderer, DelaunayRenderer, MstRenderer};
 use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
 use crate::stages::ink::InkStage;
@@ -148,6 +149,39 @@ pub fn sketch_style() -> Style {
     )
 }
 
+/// The shortest tree joining evenly spread points: tone, voronoi, mst, order.
+pub fn tree_style() -> Style {
+    point_style(
+        "tree",
+        "Tree",
+        "The shortest tree joining every point.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(MstRenderer),
+    )
+}
+
+/// A triangle mesh over evenly spread points: tone, voronoi, delaunay, order.
+pub fn mesh_style() -> Style {
+    point_style(
+        "mesh",
+        "Mesh",
+        "A triangle mesh over the points.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(DelaunayRenderer),
+    )
+}
+
+/// The outlines of the points' Voronoi cells: tone, voronoi, cells, order.
+pub fn cells_style() -> Style {
+    point_style(
+        "cells",
+        "Cells",
+        "The outlines of the points' Voronoi cells.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(CellsRenderer),
+    )
+}
+
 /// Dots on a regular grid, each sized by the ink: tone, points, stipple, order.
 pub fn halftone_style() -> Style {
     point_style(
@@ -212,6 +246,9 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(line_style()),
         Arc::new(dashes_style()),
         Arc::new(sketch_style()),
+        Arc::new(tree_style()),
+        Arc::new(mesh_style()),
+        Arc::new(cells_style()),
         Arc::new(halftone_style()),
         Arc::new(dither_style()),
         Arc::new(circles_style()),
@@ -248,7 +285,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
-                "halftone", "dither", "circles"
+                "tree", "mesh", "cells", "halftone", "dither", "circles"
             ]
         );
         assert!(get_style("_slow").is_some());
