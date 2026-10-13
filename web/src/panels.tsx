@@ -1,12 +1,12 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, Copy, Download, FolderOpen, PenLine, Plus, Save, Settings as Gear, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, PenLine, Plus, Save, Settings as Gear, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
 import type { Area, BankPen, Canvas, Ink, Machine, Pen, Stats } from "./events";
-import type { Speeds, State } from "./protocol";
+import type { Patch, Speeds, State, Suggestion } from "./protocol";
 
 const SIZES: [string, number, number][] = [
   ["A5", 148, 210], ["A4", 210, 297], ["A3", 297, 420], ["Letter", 215.9, 279.4], ["Tabloid", 279.4, 431.8],
@@ -55,6 +55,24 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
           </select>
         </label>
       </div>
+      {error && <p class="error">{error}</p>}
+    </fieldset>
+  );
+}
+
+// What the engine suggests for the image: each reason, with an Apply button when it has a change to make.
+export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions: Suggestion[]; error?: string; onApply: (patch: Patch) => void }): JSX.Element {
+  return (
+    <fieldset>
+      <legend>Suggestions</legend>
+      <ul class="suggestions">
+        {suggestions.map((s) => (
+          <li>
+            <p>{s.reason}</p>
+            {s.patch && <button type="button" onClick={() => onApply(s.patch!)}><Check /> Apply</button>}
+          </li>
+        ))}
+      </ul>
       {error && <p class="error">{error}</p>}
     </fieldset>
   );

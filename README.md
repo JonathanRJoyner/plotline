@@ -43,6 +43,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 - **Eighteen styles,** from dots on a grid to one continuous spiral. The table below describes each one.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
+- **Suggestions.** The engine measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
 - **Short pen travel.** Every run orders its paths to keep the pen's travel short, and the line styles lift the pen far less often than `grid`.
 - **Plotter-ready output.** An SVG in millimetres holds the drawing in one layer, labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI writes one G-code file per pen.
 - **Real pens.** A bank of common fineliners, technical pens, gel pens, ballpoints and markers gives each pen its maker's line width, and a list of common inks gives it a colour.
@@ -81,6 +82,8 @@ Open **[jonathanrjoyner.github.io/plotline](https://jonathanrjoyner.github.io/pl
 3. Set up your pens in the Pens dialog. The page remembers your setup between visits.
 4. Click Export SVG in the toolbar, ready for a pen plotter's own software.
 
+For a new image the Suggestions panel, at the top of the right column, lists what would suit it, each with an Apply button. Nothing changes until you click.
+
 For G-code, enter your machine in the Settings dialog: the drawable area, pen heights, feeds, and start and end G-code. The export panel then writes one G-code file per pen. The preset carries the machine, so save a preset to keep it. A short tour of the page opens on your first visit, and Tour in the toolbar opens it again.
 
 ## Command line
@@ -108,13 +111,14 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | List a style's settings | `plotline describe grid` |
 | Save the run's look as a preset | `--save-preset my-look.json` |
 | Start a later run from a preset | `--preset my-look.json` |
+| See an image's statistics and suggested changes as JSON | `plotline analyse your-photo.jpg` |
 | Open the live preview locally | `plotline gui` |
 
 `plotline gui` serves the browser GUI from your machine. Building it needs Node, wasm-pack and the `wasm32-unknown-unknown` Rust target: run `npm run wasm`, `npm ci` and `npm run build` in `web/`.
 
 ## With an AI assistant
 
-`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, run styles, look at previews, also zoomed in on a part of the page, and export the result.
+`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, look at previews, also zoomed in on a part of the page, and export the result.
 
 ## Roadmap
 

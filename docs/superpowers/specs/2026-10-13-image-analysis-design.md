@@ -1,4 +1,4 @@
-# plotline spec 9: image analysis and auto levels
+# plotline spec 10: image analysis and auto levels
 
 Date: 2026-10-13. Status: approved in conversation; written for review.
 

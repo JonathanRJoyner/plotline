@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { BankPen, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
-import { ExportPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar } from "./panels";
+import { ExportPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
@@ -414,6 +414,7 @@ export function App() {
         />
       </main>
       <aside>
+        {state.suggestions.length > 0 && <SuggestionsPanel suggestions={state.suggestions} error={errors.suggestions} onApply={(patch) => call("apply", [patch], "suggestions")} />}
         <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
         <Pens
           status={status} pens={state.pens} hidden={hidden} error={errors.pens}
