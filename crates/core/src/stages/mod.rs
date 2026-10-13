@@ -1,5 +1,6 @@
 //! The engine's built-in stages.
 
+pub mod graph;
 pub mod grid;
 pub mod hatch;
 pub mod ink;
