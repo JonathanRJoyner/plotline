@@ -61,14 +61,14 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
 
 type PensProps = {
   pens: Pen[]; bank: Pen[]; inks: Ink[]; hidden: Set<number>; error?: string;
-  // How many pens the last drawing has layers for, or null before the first drawing.
-  drawn: number | null;
+  // The Pen use setting as the page shows it; unset means one pen.
+  mode?: string;
   onChange: (pens: Pen[]) => void; onToggle: (index: number) => void;
   // Shown right after the pen list: the Pen use setting.
   children?: ComponentChildren;
 };
 
-export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, onToggle, children }: PensProps): JSX.Element {
+export function PensPanel({ pens, bank, inks, hidden, error, mode, onChange, onToggle, children }: PensProps): JSX.Element {
   const set = (i: number, patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   // The list order decides which pen draws which part, so a pen moves up past the one above it.
   const moveUp = (i: number) => onChange(pens.map((p, j) => (j === i - 1 ? pens[i] : j === i ? pens[i - 1] : p)));
@@ -88,7 +88,7 @@ export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, on
       ))}
       {error && <p class="error">{error}</p>}
       {children}
-      {drawn !== null && drawn < pens.length && <p class="help">Pen use is set to one pen, so only the first pen draws.</p>}
+      {(mode ?? "one_pen") === "one_pen" && pens.length > 1 && <p class="help">Pen use is set to one pen, so only the first pen draws.</p>}
       {hidden.size > 0 && <p class="help">A hidden pen is only hidden in the preview: it still exports.</p>}
       <button type="button" onClick={() => onChange([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }])}><Plus /> Add pen</button>
       <label>

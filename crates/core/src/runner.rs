@@ -235,6 +235,15 @@ impl Run {
                 let key = stage_key(&*stage, &settings, &keys);
                 let cached = self.cache.lock().unwrap().get(&key);
                 if let Some(artifact) = cached {
+                    // The last stage's frame carries its paths, so a pen that is wholly cached
+                    // still draws in a preview while the next pen runs. Earlier stages' geometry
+                    // is not what the drawing becomes, and a last stage gives paths or layers.
+                    let paths = match &artifact {
+                        Artifact::Paths(p) if index + 1 == self.style.stages.len() => {
+                            Some(Paths::clone(p))
+                        }
+                        _ => None,
+                    };
                     if let Err(e) = self.land(index, lane, artifact, key) {
                         self.fail(e);
                         return None;
@@ -244,7 +253,7 @@ impl Run {
                         progress: 1.0,
                         label: "cached".to_string(),
                         points: None,
-                        paths: None,
+                        paths,
                         pen,
                     });
                 }
@@ -660,6 +669,45 @@ mod tests {
         assert_eq!(y.runs(), 3);
         assert_eq!(seen(&frames)[2..], [("y", 0, "cached"), ("y", 1, "1/1")]);
         assert_eq!(d.unwrap().layers[1].paths.len(), 1);
+    }
+
+    #[test]
+    fn the_last_stage_of_a_cached_lane_still_shows_its_paths() {
+        let t = Arc::new(Spy::new("t", &[Kind::Image], Kind::Tone, tone()));
+        let s = Arc::new(Spy::new(
+            "s",
+            &[Kind::Tone, Kind::Pens],
+            Kind::Tones,
+            tones(&[0.25, 0.75]),
+        ));
+        let m = Arc::new(Spy::new("m", &[Kind::Tone], Kind::Points, points(2)));
+        let style = Arc::new(Style::new("x", "X", "d", vec![t, s, m, Arc::new(Echo)]).unwrap());
+        let cache = Arc::new(Mutex::new(StageCache::new(1 << 20)));
+        run_pens(&style, &style.defaults(), two_pens(), &cache);
+        // Everything is cached on the second run; only the last stage's frames carry geometry.
+        let (_, frames, _) = run_pens(&style, &style.defaults(), two_pens(), &cache);
+        assert_eq!(
+            seen(&frames),
+            [
+                ("t", 0, "cached"),
+                ("s", 0, "cached"),
+                ("m", 0, "cached"),
+                ("e", 0, "cached"),
+                ("m", 1, "cached"),
+                ("e", 1, "cached")
+            ]
+        );
+        for f in frames.iter().filter(|f| f.stage != "e") {
+            assert!(f.points.is_none() && f.paths.is_none(), "{}", f.stage);
+        }
+        assert_eq!(
+            frames[3].paths.as_ref().unwrap().coords(),
+            [[0.25, 0.3], [0.0, 2.0]]
+        );
+        assert_eq!(
+            frames[5].paths.as_ref().unwrap().coords(),
+            [[0.75, 0.5], [1.0, 2.0]]
+        );
     }
 
     #[test]

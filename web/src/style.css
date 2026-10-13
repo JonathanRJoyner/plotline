@@ -209,12 +209,13 @@ summary:hover { color: var(--text); }
 .grid label > span { display: flex; align-items: center; gap: 4px; color: var(--text); }
 .grid select, .grid input[type="number"] { width: 100%; max-width: none; min-width: 0; margin-left: 0; }
 
-/* Each pen is one compact row. */
-.pen { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 0; }
+/* Each pen is one compact row: the name takes what the rest leaves, and the row wraps only when
+   the column is narrower than the controls. */
+.pen { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; padding: 4px 0; }
 .pen input[type="color"] { width: 30px; flex: none; margin-left: 0; }
-.pen input[type="text"] { flex: 1 1 5em; min-width: 0; }
-.pen input[type="number"] { width: 4.6em; }
-.pen button.icon { width: 28px; height: 28px; }
+.pen input[type="text"] { flex: 1 1 3.5em; min-width: 0; padding: 0 6px; }
+.pen input[type="number"] { width: 4em; }
+.pen button.icon { width: 22px; height: 28px; }
 
 progress { width: 7em; height: 6px; }
 

@@ -115,12 +115,6 @@ function Export({ status, machine, onExport, onGcode }: ExportProps) {
   return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onGcode={onGcode} />;
 }
 
-// The pens panel, told how many layers the last drawing has, so it can say which pens draw.
-function Pens({ status, ...props }: Omit<Parameters<typeof PensPanel>[0], "drawn"> & { status: StatusStore }) {
-  const { stats, layers } = useStatus(status);
-  return <PensPanel {...props} drawn={stats === null ? null : layers.length} />;
-}
-
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
@@ -402,8 +396,9 @@ export function App() {
       </main>
       <aside>
         <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
-        <Pens
-          status={status} pens={state.pens} bank={bank} inks={inks} hidden={hidden} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
+        <PensPanel
+          pens={state.pens} bank={bank} inks={inks} hidden={hidden} error={errors.pens} mode={settings.split?.mode as string | undefined}
+          onChange={(p) => call("setPens", [p], "pens")}
           onToggle={(i) => setHidden((h) => {
             const next = new Set(h); // a new set each time: the preview redraws on its identity
             if (!next.delete(i)) next.add(i);
@@ -411,7 +406,7 @@ export function App() {
           })}
         >
           <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
-        </Pens>
+        </PensPanel>
         <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
         <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
       </aside>

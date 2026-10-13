@@ -69,6 +69,7 @@ pub enum SplitMode {
 #[serde(default, deny_unknown_fields)]
 pub struct SplitSettings {
     /// How the pens share the drawing: the first pen alone, light to dark in list order, or each pen by its colour; list light inks first, since pens plot in list order.
+    #[schemars(extend("x-label" = "Pen use"))]
     pub mode: SplitMode,
 }
 
@@ -433,6 +434,8 @@ mod tests {
         assert_eq!(names, ["one_pen", "light_to_dark", "by_colour"]);
         assert!(variants.iter().all(|v| v["description"].is_string()));
         assert!(schema["properties"]["mode"]["description"].is_string());
+        // The form shows the setting under the stage's own name.
+        assert_eq!(schema["properties"]["mode"]["x-label"], "Pen use");
     }
 
     #[test]
