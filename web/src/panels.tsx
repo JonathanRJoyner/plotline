@@ -4,7 +4,7 @@
 import { Download, FolderOpen, Plus, Save, Settings as Gear, X } from "lucide-preact";
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { Area, Canvas, Machine, Pen, Stats } from "./events";
+import type { Area, Canvas, Ink, Machine, Pen, Stats } from "./events";
 import type { Speeds, State } from "./protocol";
 
 const SIZES: [string, number, number][] = [
@@ -60,20 +60,20 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
 }
 
 type PensProps = {
-  pens: Pen[]; bank: Pen[]; hidden: Set<number>; error?: string;
+  pens: Pen[]; bank: Pen[]; inks: Ink[]; hidden: Set<number>; error?: string;
   // How many pens the last drawing has layers for, or null before the first drawing.
   drawn: number | null;
   onChange: (pens: Pen[]) => void; onToggle: (index: number) => void;
 };
 
-export function PensPanel({ pens, bank, hidden, error, drawn, onChange, onToggle }: PensProps): JSX.Element {
+export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, onToggle }: PensProps): JSX.Element {
   const set = (i: number, patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   return (
     <fieldset>
       <legend>Pens</legend>
       {pens.map((p, i) => (
         <div class="pen">
-          <input type="color" aria-label="Colour" value={p.color} onChange={(e) => set(i, { color: e.currentTarget.value })} />
+          <input type="color" list="inks" aria-label="Colour" value={p.color} onChange={(e) => set(i, { color: e.currentTarget.value })} />
           <input type="text" aria-label="Name" value={p.name} onChange={(e) => set(i, { name: e.currentTarget.value })} />
           <input type="number" aria-label="Width in mm" min="0" step="0.05" value={p.width_mm} onChange={(e) => set(i, { width_mm: e.currentTarget.valueAsNumber })} /> mm
           <input type="checkbox" aria-label="Show in the preview" title="Show in the preview" checked={!hidden.has(i)} onChange={() => onToggle(i)} />
@@ -103,6 +103,9 @@ export function PensPanel({ pens, bank, hidden, error, drawn, onChange, onToggle
           {bank.map((p) => <option value={p.name}>{p.name} ({p.width_mm} mm)</option>)}
         </select>
       </label>
+      {/* Suggested swatches in the colour picker; browsers without them open the plain picker. Kept
+          last, because the rule that clears the floated legend applies to the element after it. */}
+      <datalist id="inks">{inks.map((k) => <option value={k.color} label={k.name} />)}</datalist>
     </fieldset>
   );
 }

@@ -5,7 +5,7 @@ mod convert;
 mod session;
 
 use numpy::PyArray3;
-use plotline_core::{registry, synthetic, SessionError};
+use plotline_core::{pens, registry, synthetic, SessionError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -32,6 +32,16 @@ fn describe<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
     let style = registry::get_style(name)
         .ok_or_else(|| session_error(SessionError::UnknownStyle(name.to_string())))?;
     value_to_py(py, &style.schema())
+}
+
+/// The ink colours as name to `#rrggbb`, in display order; see `plotline_core::pens::INKS`.
+#[pyfunction]
+fn inks(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let d = PyDict::new(py);
+    for (name, color) in pens::INKS {
+        d.set_item(name, color)?;
+    }
+    Ok(d)
 }
 
 #[pyfunction]
@@ -76,6 +86,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<session::Run>()?;
     m.add_function(wrap_pyfunction!(list_styles, m)?)?;
     m.add_function(wrap_pyfunction!(describe, m)?)?;
+    m.add_function(wrap_pyfunction!(inks, m)?)?;
     m.add_function(wrap_pyfunction!(synthetic_gradient, m)?)?;
     m.add_function(wrap_pyfunction!(synthetic_checkerboard, m)?)?;
     m.add_function(wrap_pyfunction!(synthetic_radial, m)?)?;

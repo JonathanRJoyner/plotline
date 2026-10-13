@@ -12,7 +12,7 @@ import pytest
 from click.testing import CliRunner
 from pngs import write_png
 
-from plotline import Pen, _core
+from plotline import Pen, _core, inks
 from plotline.cli.main import main, parse_pen, parse_set
 
 
@@ -110,7 +110,7 @@ def test_run_rejects_bad_inputs(tmp_path, image):
     assert run("run", "grid", image, "--out", out, "--set", "nonsense").exit_code == 2
     r = run("run", "grid", image, "--out", out, "--margin", "200")
     assert r.exit_code == 1 and "margin" in r.output
-    for pen, word in (("p:0:#000000", "width_mm"), ("p:0.5:red", "color")):
+    for pen, word in (("p:0:#000000", "width_mm"), ("p:0.5:crimson", "color")):
         r = run("run", "grid", image, "--out", out, "--pen", pen)
         assert r.exit_code == 1 and word in r.stderr, r.output
 
@@ -149,6 +149,8 @@ def test_parsers():
     assert [type(v) for v in values[:4]] == [bool, bool, int, float]
     # Only the last two colons split, so the name may hold colons and the colour keeps its '#'.
     assert parse_pen("Fine: red:0.5:#ff0000") == Pen("Fine: red", 0.5, "#ff0000")
+    # An ink name in any case stands for its colour.
+    assert parse_pen("Fine:0.3:Blue") == Pen("Fine", 0.3, inks()["blue"])
     for bad in ("nonsense", "a=1", "a.b", "a.b.c=1", "a.b=c=d", ".b=1", "a.=1"):
         with pytest.raises(click.BadParameter):
             parse_set(bad)

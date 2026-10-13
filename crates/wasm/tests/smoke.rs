@@ -63,6 +63,15 @@ fn the_pen_bank_is_listed() {
     assert_eq!(pens[1]["width_mm"], 0.2);
 }
 #[wasm_bindgen_test]
+fn the_inks_are_listed() {
+    let inks: serde_json::Value = serde_json::from_str(&plotline_wasm::list_inks()).unwrap();
+    assert_eq!(
+        inks[0],
+        serde_json::json!({"name": "black", "color": "#000000"})
+    );
+    assert_eq!(inks.as_array().unwrap().len(), 10);
+}
+#[wasm_bindgen_test]
 fn machines_and_gcode() {
     let machine = r#"{"name": "Test printer",
         "area": {"x": 28, "y": 42, "width": 200, "height": 174},
