@@ -276,6 +276,7 @@ mod tests {
     use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
     use crate::types::ToneMap;
     use serde_json::json;
+    use std::sync::Arc;
 
     /// The lengths of a path's segments.
     fn steps(path: &[[f64; 2]]) -> Vec<f64> {
@@ -433,5 +434,21 @@ mod tests {
         assert_inside(&paths, rect);
         let n = paths.coords().len();
         assert!((140_000..155_000).contains(&n), "{n}");
+    }
+
+    #[test]
+    fn bad_settings_are_rejected_at_start() {
+        for patch in [
+            json!({"cell_mm": 0.2}),
+            json!({"max_cell_mm": 41}),
+            json!({"nope": 1}),
+        ] {
+            let settings = crate::settings::merge(&HilbertStage.defaults(), &patch);
+            let tone = crate::stage::Artifact::Tone(Arc::new(tone_map(1, 1, |_, _| 1.0)));
+            let inputs = Inputs::new([(Kind::Tone, tone)].into_iter().collect());
+            let ctx = RunContext::new(Arc::default());
+            let err = HilbertStage.start(inputs, &settings, ctx).err().unwrap();
+            assert!(matches!(err, StageError::Settings(_)), "{err:?}");
+        }
     }
 }

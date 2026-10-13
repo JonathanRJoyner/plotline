@@ -112,6 +112,7 @@ mod tests {
     use super::*;
     use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
     use serde_json::json;
+    use std::sync::Arc;
 
     #[test]
     fn settings_schema() {
@@ -240,5 +241,21 @@ mod tests {
         // One level is one item of work.
         assert_eq!(frames[0].label, "3/64 levels");
         assert_eq!(frames.last().unwrap().label, "64/64 levels");
+    }
+
+    #[test]
+    fn bad_settings_are_rejected_at_start() {
+        for patch in [
+            json!({"levels": 0}),
+            json!({"smooth_mm": 10.5}),
+            json!({"nope": 1}),
+        ] {
+            let settings = crate::settings::merge(&ContourStage.defaults(), &patch);
+            let tone = crate::stage::Artifact::Tone(Arc::new(tone_map(1, 1, |_, _| 1.0)));
+            let inputs = Inputs::new([(Kind::Tone, tone)].into_iter().collect());
+            let ctx = RunContext::new(Arc::default());
+            let err = ContourStage.start(inputs, &settings, ctx).err().unwrap();
+            assert!(matches!(err, StageError::Settings(_)), "{err:?}");
+        }
     }
 }

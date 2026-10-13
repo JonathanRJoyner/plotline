@@ -600,4 +600,22 @@ mod tests {
             last = n;
         }
     }
+
+    #[test]
+    fn bad_settings_are_rejected_at_start() {
+        for patch in [
+            json!({"min_spacing_mm": 0.2}),
+            json!({"max_spacing_mm": 31}),
+            json!({"smooth_mm": -1}),
+            json!({"angle_deg": 181}),
+            json!({"nope": 1}),
+        ] {
+            let settings = crate::settings::merge(&FlowStage.defaults(), &patch);
+            let tone = crate::stage::Artifact::Tone(Arc::new(tone_map(1, 1, |_, _| 1.0)));
+            let inputs = Inputs::new([(Kind::Tone, tone)].into_iter().collect());
+            let ctx = RunContext::new(Arc::default());
+            let err = FlowStage.start(inputs, &settings, ctx).err().unwrap();
+            assert!(matches!(err, StageError::Settings(_)), "{err:?}");
+        }
+    }
 }

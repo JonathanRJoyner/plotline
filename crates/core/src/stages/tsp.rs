@@ -728,4 +728,21 @@ mod tests {
         let (_, two) = run(vec![[3.0, 4.0], [5.0, 6.0]], json!({}));
         assert_eq!((two.len(), two.get(0).len()), (1, 2));
     }
+
+    #[test]
+    fn bad_settings_are_rejected_at_start() {
+        // Both settings are switches, so a value that is not a boolean is the out-of-range case.
+        for patch in [
+            json!({"optimize": "yes"}),
+            json!({"closed": 1}),
+            json!({"nope": 1}),
+        ] {
+            let settings = crate::settings::merge(&TspRenderer.defaults(), &patch);
+            let points = Artifact::Points(Arc::new(Points(vec![])));
+            let inputs = Inputs::new([(Kind::Points, points)].into_iter().collect());
+            let ctx = RunContext::new(Arc::default());
+            let err = TspRenderer.start(inputs, &settings, ctx).err().unwrap();
+            assert!(matches!(err, StageError::Settings(_)), "{err:?}");
+        }
+    }
 }
