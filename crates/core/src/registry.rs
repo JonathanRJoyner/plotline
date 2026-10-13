@@ -77,6 +77,11 @@ pub fn hatch_style() -> Style {
     )
 }
 
+/// The tone gamma the rippling styles start from. Images store grey gamma-encoded while ink and
+/// paper mix linearly, so at a gamma of 1 their midtones drew too light; see "Rippling gamma" in
+/// the brief.
+const RIPPLE_GAMMA: f64 = 1.9;
+
 /// Rippling lines: tone, waves, order.
 pub fn waves_style() -> Style {
     tone_style(
@@ -85,6 +90,7 @@ pub fn waves_style() -> Style {
         "Parallel lines that ripple more where the image is darker, one pen stroke per line.",
         Arc::new(WaveStage),
     )
+    .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
 }
 
 /// One rippling spiral: tone, spiral, order.
@@ -95,6 +101,7 @@ pub fn spiral_style() -> Style {
         "One spiral from the centre out that ripples more where the image is darker.",
         Arc::new(SpiralStage),
     )
+    .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
 }
 
 /// An image's own marks, outlined and filled: tone, ink, order. A finer tone map than the other
@@ -355,6 +362,14 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    fn rippling_styles_darken_their_midtones() {
+        let gamma = |name: &str| get_style(name).unwrap().defaults()["tone"]["gamma"].clone();
+        assert_eq!(gamma("waves"), json!(1.9));
+        assert_eq!(gamma("spiral"), json!(1.9));
+        assert_eq!(gamma("hatch"), json!(1.0));
+        assert_eq!(gamma("grid"), json!(1.0));
     }
     #[test]
     fn every_style_draws_the_colour_scene() {
