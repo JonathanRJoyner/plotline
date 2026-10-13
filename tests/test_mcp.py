@@ -2,6 +2,7 @@ import base64
 import json
 import struct
 import sys
+import threading
 import time
 from functools import partial
 
@@ -31,6 +32,14 @@ def data(r):
 
 def text(r):
     return r.content[0].text
+
+
+async def until(condition, seconds=10.0):
+    """Yield to the event loop until `condition()` holds, and fail rather than hang after
+    `seconds`."""
+    with anyio.fail_after(seconds):
+        while not condition():
+            await anyio.sleep(0.005)
 
 
 async def test_lists_and_describes_styles():
@@ -249,8 +258,7 @@ async def test_preview_waits_for_a_run_to_finish():
         long = {"b": {"frames": 200, "delay_ms": 50}}
         async with anyio.create_task_group() as group:
             group.start_soon(partial(call, c, "run", style="_slow", settings=long))
-            while session.state is not RunState.running:
-                await anyio.sleep(0.01)
+            await until(lambda: session.state is RunState.running)
             r = await call(c, "preview")
             assert r.is_error
             assert "wait for the run to finish" in text(r)
@@ -261,21 +269,28 @@ async def test_a_superseded_run_returns_no_drawing():
     session = Session()
     session.set_image(_core.synthetic_gradient(8, 8))
     results = []
+    # A latch, not the run state: a loaded runner can let the older run end before this task
+    # looks, and a wait for `running` would then never end.
+    started = threading.Event()
+    session.subscribe(lambda frame: started.set())
     async with Client(build_server(session)) as c:
 
-        async def older():
-            settings = {"b": {"frames": 2, "delay_ms": 10}}
+        async def older(frames):
+            settings = {"b": {"frames": frames, "delay_ms": 10}}
             results.append(await call(c, "run", style="_slow", settings=settings))
 
         # The newer run has finished, or is still under way, when the older call looks again.
-        for newer_frames in (2, 200):
+        # Each older run has its own frame count, so the stage cache cannot finish it at once.
+        for older_frames, newer_frames in ((20, 2), (21, 200)):
+            started.clear()
             async with anyio.create_task_group() as group:
-                group.start_soon(older)
-                while session.state is not RunState.running:
-                    await anyio.sleep(0)
+                group.start_soon(older, older_frames)
+                await until(started.is_set)
                 # The call now sleeps between polls. Blocking the event loop keeps it asleep while
                 # its run ends and a newer one starts.
+                deadline = time.monotonic() + 10
                 while session.state is RunState.running:
+                    assert time.monotonic() < deadline, "the older run did not end"
                     time.sleep(0.005)
                 session.update("b", frames=newer_frames)
                 newer = session.run()
