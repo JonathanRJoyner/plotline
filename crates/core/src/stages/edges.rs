@@ -394,13 +394,45 @@ mod tests {
     }
 
     #[test]
-    fn the_tree_joins_the_closest_pairs_first() {
-        // Kruskal on a path of unequal gaps keeps the two short gaps and the long one: the line
-        // is its own spanning tree, in one trail.
-        let points = vec![[10.0, 10.0], [12.0, 10.0], [17.0, 10.0], [18.0, 10.0]];
+    fn the_tree_drops_the_longest_side_of_a_triangle() {
+        // A 3-4-5 right triangle: the tree keeps the sides 3 and 4 and drops the hypotenuse. A
+        // maximum spanning tree would keep 4 and 5 and measure 9.
+        let points = vec![[10.0, 10.0], [13.0, 10.0], [10.0, 14.0]];
         let paths = run(&MstRenderer, points, json!({}));
-        assert_eq!(paths.len(), 1);
-        assert!((paths.total_length() - 8.0).abs() < 1e-9);
+        assert_eq!(segments(&paths), 2);
+        assert!((paths.total_length() - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_tree_is_as_short_as_prims_over_every_pair() {
+        // Prim's algorithm on the complete graph, O(n^2): the Delaunay edges must hold a tree of
+        // the same length.
+        let points = scatter(100);
+        let n = points.len();
+        let dist = |i: usize, j: usize| {
+            math::hypot(points[i][0] - points[j][0], points[i][1] - points[j][1])
+        };
+        let mut best: Vec<f64> = (0..n).map(|j| dist(0, j)).collect();
+        let mut done = vec![false; n];
+        done[0] = true;
+        let mut total = 0.0;
+        for _ in 1..n {
+            let next = (0..n)
+                .filter(|&j| !done[j])
+                .min_by(|&a, &b| best[a].total_cmp(&best[b]))
+                .unwrap();
+            total += best[next];
+            done[next] = true;
+            for (j, b) in best.iter_mut().enumerate() {
+                *b = b.min(dist(next, j));
+            }
+        }
+        let tree = run(&MstRenderer, points, json!({}));
+        assert!(
+            (tree.total_length() - total).abs() < 1e-9,
+            "{} {total}",
+            tree.total_length()
+        );
     }
 
     #[test]
