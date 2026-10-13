@@ -4,6 +4,9 @@
 //! density reaches a threshold, so dark areas get points and light areas stay empty. The renderer
 //! turns each point into a path of one vertex, which is how a dot is stored. Neither is a published
 //! algorithm, so there is nothing to cite.
+//!
+//! When the drawing is split between pens, each pen's grid is shifted along the diagonal by its
+//! share of a cell, so that the pens' dots do not lie on each other.
 
 use std::sync::Arc;
 
@@ -69,18 +72,22 @@ impl Stage for GridPlacer {
         &self,
         inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<GridSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
         let [x0, y0, w, h] = tone.rect_mm();
+        let lane = ctx.lane();
+        // Each pen's grid is shifted along the diagonal by its share of a cell, and loses the cells
+        // that no longer fit.
+        let d = s.spacing_mm * lane.index as f64 / lane.count as f64;
         // The tolerance keeps the last cell when w / spacing is a whole number that rounds just
         // below; a float to usize cast saturates, so a NaN size gives no cells.
-        let cols = (w / s.spacing_mm + 1e-9).floor() as usize;
-        let rows = (h / s.spacing_mm + 1e-9).floor() as usize;
+        let cols = ((w - d) / s.spacing_mm + 1e-9).floor() as usize;
+        let rows = ((h - d) / s.spacing_mm + 1e-9).floor() as usize;
         Ok(Box::new(GridRun {
             tone,
-            origin: [x0, y0],
+            origin: [x0 + d, y0 + d],
             spacing: s.spacing_mm,
             // numpy compares the f32 samples with the threshold rounded to f32.
             threshold: s.threshold as f32,
@@ -237,16 +244,21 @@ impl StageRun for DotRun {
 mod tests {
     use super::*;
     use crate::settings::merge;
+    use crate::stage::Lane;
     use serde_json::json;
     use std::collections::HashMap;
 
     /// Run `stage` to the end with `patch` over its defaults; returns the frames and the artifact.
-    fn run_stage(stage: &dyn Stage, input: Artifact, patch: Value) -> (Vec<Frame>, Artifact) {
+    fn run_stage(
+        stage: &dyn Stage,
+        input: Artifact,
+        patch: Value,
+        lane: Lane,
+    ) -> (Vec<Frame>, Artifact) {
         let settings = merge(&stage.defaults(), &patch);
         let inputs = Inputs::new(HashMap::from([(input.kind(), input)]));
-        let mut run = stage
-            .start(inputs, &settings, RunContext::new(Arc::default()))
-            .unwrap();
+        let ctx = RunContext::new(Arc::default()).in_lane(lane);
+        let mut run = stage.start(inputs, &settings, ctx).unwrap();
         let mut frames = Vec::new();
         loop {
             match run.step().unwrap() {
@@ -257,14 +269,18 @@ mod tests {
     }
 
     fn run_grid(tone: Artifact, patch: Value) -> (Vec<Frame>, Arc<Points>) {
-        match run_stage(&GridPlacer, tone, patch) {
+        run_grid_in_lane(tone, patch, Lane::SINGLE)
+    }
+
+    fn run_grid_in_lane(tone: Artifact, patch: Value, lane: Lane) -> (Vec<Frame>, Arc<Points>) {
+        match run_stage(&GridPlacer, tone, patch, lane) {
             (frames, Artifact::Points(p)) => (frames, p),
             (_, a) => panic!("expected points, got {}", a.kind().name()),
         }
     }
 
     fn run_dots(points: Artifact) -> (Vec<Frame>, Arc<Paths>) {
-        match run_stage(&DotRenderer, points, json!({})) {
+        match run_stage(&DotRenderer, points, json!({}), Lane::SINGLE) {
             (frames, Artifact::Paths(p)) => (frames, p),
             (_, a) => panic!("expected paths, got {}", a.kind().name()),
         }
@@ -295,6 +311,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             [10, 20, 30, 40, 50]
         );
+    }
+    #[test]
+    fn a_second_pen_staggers_the_grid() {
+        let run = |index| {
+            let lane = Lane { index, count: 2 };
+            run_grid_in_lane(tone(vec![1.0; 50], 10, 5), json!({"spacing_mm": 2.0}), lane).1
+        };
+        // Pen 0 keeps the 50 cells. Pen 1's grid sits half a spacing in on both axes: 9 columns,
+        // 4 rows, from (12, 12) to (28, 18).
+        let (first, second) = (run(0), run(1));
+        assert_eq!((first.0.len(), first.0[0]), (50, [11.0, 11.0]));
+        assert_eq!(second.0.len(), 36);
+        assert_eq!((second.0[0], second.0[35]), ([12.0, 12.0], [28.0, 18.0]));
     }
     #[test]
     fn threshold_keeps_only_dark_cells() {

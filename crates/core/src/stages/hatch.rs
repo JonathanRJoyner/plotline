@@ -6,6 +6,11 @@
 //! bridging it spares the pen a lift. Further levels add
 //! families at other angles over darker tones, which is cross-hatching. This is the engraver's
 //! technique rather than a published algorithm, so there is nothing to cite.
+//!
+//! When the drawing is split between pens, the levels of all the pens together are spread evenly
+//! over the half turn, so that no two pens draw lines at the same angle; lines at close angles
+//! make moiré patterns where they overlap (I. Amidror, *The Theory of the Moiré Phenomenon*, 2nd
+//! ed., Springer, 2009).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -75,17 +80,20 @@ impl Stage for HatchStage {
         &self,
         inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<HatchSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
         let rect = tone.rect_mm();
         let step = tone.mm_per_px / 2.0;
         let n = f64::from(s.levels);
+        let lane = ctx.lane();
+        let (pen, pens) = (lane.index as f64, lane.count as f64);
         let mut lines = Vec::new();
         for k in 0..s.levels {
             let k = f64::from(k);
-            let angle = s.angle_deg + 180.0 * k / n;
+            // The levels of all the pens together are spread evenly over the half turn.
+            let angle = s.angle_deg + 180.0 * (k * pens + pen) / (n * pens);
             // The tone map holds f32, so the level is compared in f32 like grid's threshold.
             let level = (s.threshold + (1.0 - s.threshold) * k / n) as f32;
             let family = scanlines(rect, angle, s.spacing_mm);
@@ -131,7 +139,10 @@ impl Stage for HatchStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
+    use crate::stage::Lane;
+    use crate::test_util::{
+        assert_inside, bounds, run_tone_stage, run_tone_stage_in_lane, tone_map,
+    };
     use serde_json::json;
 
     const RECT: [f64; 4] = [10.0, 10.0, 20.0, 10.0];
@@ -225,6 +236,20 @@ mod tests {
         // At 5 mm spacing two lines cross the map, each bridging the gap; at 1 mm, ten lines break.
         assert_eq!(lines(5.0), 2);
         assert_eq!(lines(1.0), 20);
+    }
+
+    #[test]
+    fn a_second_pen_turns_the_hatch() {
+        let patch = || json!({"angle_deg": 0.0, "levels": 1, "spacing_mm": 2.0});
+        let run = |index| {
+            let tone = tone_map(20, 20, |_, _| 1.0);
+            run_tone_stage_in_lane(&HatchStage, tone, patch(), Lane { index, count: 2 }).1
+        };
+        let (first, second) = (run(0), run(1));
+        assert!(!first.is_empty() && !second.is_empty());
+        // Pen 0 keeps the angle, so both ends of a path share a y; pen 1 turns it 90 degrees.
+        assert!(first.iter().all(|p| (p[0][1] - p[1][1]).abs() < 1e-9));
+        assert!(second.iter().all(|p| (p[0][0] - p[1][0]).abs() < 1e-9));
     }
 
     #[test]

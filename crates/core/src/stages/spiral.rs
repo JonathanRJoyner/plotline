@@ -5,6 +5,9 @@
 //! radius by a sine of the arc length, scaled by the ink there, as the waves stage does across its
 //! lines. The spiral runs until it has passed the map's corners; where it is off the map the pen
 //! is up, so it breaks into as few paths as the map's shape allows.
+//!
+//! When the drawing is split between pens, each pen's spiral starts at its share of a full turn, so
+//! that the pens' turns do not lie on each other.
 
 use std::f64::consts::PI;
 
@@ -72,11 +75,14 @@ impl Stage for SpiralStage {
         &self,
         inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<SpiralSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
         let rect = tone.rect_mm();
+        let lane = ctx.lane();
+        // Each pen's spiral starts at its share of a full turn.
+        let phi = 2.0 * PI * lane.index as f64 / lane.count as f64;
         let [x, y, w, h] = rect;
         let centre = [x + w / 2.0, y + h / 2.0];
         let turns = ((math::hypot(w, h) / 2.0 / s.spacing_mm).ceil() as usize).max(1);
@@ -91,7 +97,7 @@ impl Stage for SpiralStage {
                 let end = 2.0 * PI * (k + 1) as f64;
                 while theta < end {
                     let r = s.spacing_mm * theta / (2.0 * PI);
-                    let (sin, cos) = (math::sin(theta), math::cos(theta));
+                    let (sin, cos) = (math::sin(theta + phi), math::cos(theta + phi));
                     let base = [centre[0] + r * cos, centre[1] + r * sin];
                     if inside(rect, base) {
                         let ink = f64::from(tone.sample(base));
@@ -115,7 +121,10 @@ impl Stage for SpiralStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
+    use crate::stage::Lane;
+    use crate::test_util::{
+        assert_inside, bounds, run_tone_stage, run_tone_stage_in_lane, tone_map,
+    };
     use serde_json::json;
 
     const RECT: [f64; 4] = [10.0, 10.0, 20.0, 10.0];
@@ -142,6 +151,23 @@ mod tests {
         // The 10 mm tall rect holds the spiral out to a radius of 5 mm, two and a half turns.
         assert!(r(&first[first.len() - 1]) > 4.5);
         assert!(frames.last().unwrap().label.ends_with("turns"));
+    }
+
+    #[test]
+    fn a_second_pen_turns_the_spiral_half_round() {
+        let run = |index| {
+            let tone = tone_map(10, 5, |_, _| 0.0);
+            let lane = Lane { index, count: 2 };
+            run_tone_stage_in_lane(&SpiralStage, tone, json!({}), lane).1
+        };
+        let (first, second) = (run(0), run(1));
+        assert_eq!(first.offsets(), second.offsets());
+        assert_inside(&second, RECT);
+        // Half a turn about the rect's centre (20, 15) sends each vertex v to 2 c - v.
+        for (v0, v1) in first.coords().iter().zip(second.coords()) {
+            assert!((v1[0] - (40.0 - v0[0])).abs() < 1e-9, "{v0:?} {v1:?}");
+            assert!((v1[1] - (30.0 - v0[1])).abs() < 1e-9, "{v0:?} {v1:?}");
+        }
     }
 
     #[test]

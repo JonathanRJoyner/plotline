@@ -12,7 +12,9 @@ use crate::cache::StageCache;
 use crate::machine::{Area, Machine};
 use crate::runner::{Run, Shared};
 use crate::settings::{defaults_for, schema_for, validate};
-use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
+use crate::stage::{
+    Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
+};
 use crate::style::Style;
 use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap};
 
@@ -175,14 +177,23 @@ pub(crate) fn run_tone_stage(
     tone: ToneMap,
     patch: Value,
 ) -> (Vec<Frame>, Arc<Paths>) {
+    run_tone_stage_in_lane(stage, tone, patch, Lane::SINGLE)
+}
+
+/// [`run_tone_stage`] for the stage's run in `lane` of a split.
+pub(crate) fn run_tone_stage_in_lane(
+    stage: &dyn Stage,
+    tone: ToneMap,
+    patch: Value,
+    lane: Lane,
+) -> (Vec<Frame>, Arc<Paths>) {
     let settings = crate::settings::merge(&stage.defaults(), &patch);
     let inputs = Inputs::new(std::collections::HashMap::from([(
         Kind::Tone,
         Artifact::Tone(Arc::new(tone)),
     )]));
-    let mut run = stage
-        .start(inputs, &settings, RunContext::new(Arc::default()))
-        .unwrap();
+    let ctx = RunContext::new(Arc::default()).in_lane(lane);
+    let mut run = stage.start(inputs, &settings, ctx).unwrap();
     let mut frames = Vec::new();
     loop {
         match run.step().unwrap() {

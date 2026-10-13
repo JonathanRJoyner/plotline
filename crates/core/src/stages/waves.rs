@@ -6,6 +6,9 @@
 //! line, so neighbouring lines ripple in phase. Each line is one path, so the pen lifts once per
 //! line. Amplitude modulation of a carrier is textbook signal processing, not a published plotting
 //! algorithm, so there is nothing to cite.
+//!
+//! When the drawing is split between pens, each pen's lines turn by its share of the half turn, so
+//! that the pens do not draw over each other.
 
 use std::f64::consts::PI;
 
@@ -77,13 +80,16 @@ impl Stage for WaveStage {
         &self,
         inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<WaveSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
         let rect = tone.rect_mm();
-        let lines = scanlines(rect, s.angle_deg, s.spacing_mm);
-        let (dir, normal) = direction(s.angle_deg);
+        let lane = ctx.lane();
+        // Each pen's lines turn by its share of the half turn.
+        let angle = s.angle_deg + 180.0 * lane.index as f64 / lane.count as f64;
+        let lines = scanlines(rect, angle, s.spacing_mm);
+        let (dir, normal) = direction(angle);
         let swing = s.amplitude * s.spacing_mm / 2.0;
         let step = s.wavelength_mm / 12.0;
         Ok(Box::new(ChunkRun::new(
@@ -109,7 +115,10 @@ impl Stage for WaveStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
+    use crate::stage::Lane;
+    use crate::test_util::{
+        assert_inside, bounds, run_tone_stage, run_tone_stage_in_lane, tone_map,
+    };
     use serde_json::json;
 
     const RECT: [f64; 4] = [10.0, 10.0, 20.0, 10.0];
@@ -145,6 +154,19 @@ mod tests {
             .map(|v| (v[1] - 13.0).abs())
             .fold(0.0, f64::max);
         assert!((swing - 0.9).abs() < 0.02, "{swing}");
+    }
+
+    #[test]
+    fn a_second_pen_turns_the_waves() {
+        // With no ink the lines are straight. Pen 0 would draw them level; pen 1 turns them to
+        // 90 degrees, so each keeps one x.
+        let tone = tone_map(10, 5, |_, _| 0.0);
+        let lane = Lane { index: 1, count: 2 };
+        let (_, paths) = run_tone_stage_in_lane(&WaveStage, tone, json!({}), lane);
+        assert!(!paths.is_empty());
+        for p in paths.iter() {
+            assert!(p.len() > 2 && p.iter().all(|v| (v[0] - p[0][0]).abs() < 1e-9));
+        }
     }
 
     #[test]
