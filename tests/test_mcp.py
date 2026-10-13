@@ -233,8 +233,10 @@ async def test_a_second_run_cancels_the_first():
 async def test_stdio_server_lists_the_tools():
     # The real thing: `plotline mcp` as a subprocess speaking the protocol over its pipes.
     command = ["-c", "from plotline.cli.main import main; main()", "mcp"]
-    async with Client(StdioServerParameters(command=sys.executable, args=command)) as c:
-        names = {tool.name for tool in (await c.list_tools()).tools}
+    # A child that hangs at start-up must fail the test, not hang the suite.
+    with anyio.fail_after(30):
+        async with Client(StdioServerParameters(command=sys.executable, args=command)) as c:
+            names = {tool.name for tool in (await c.list_tools()).tools}
     assert names == {
         "list_styles",
         "describe_style",
