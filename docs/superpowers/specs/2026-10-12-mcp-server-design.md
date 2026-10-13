@@ -65,7 +65,7 @@ Each tool's input schema comes from its type hints. Lengths are in mm.
 
 The brief's sketch had a separate `update(settings)`. `run(settings=...)` covers it: the cache already reruns only the stages after a changed setting, and one tool is easier for an assistant to use than two that differ only in when they run.
 
-`preview` refuses a `width_px` outside 100 to 4000, and a region whose picture would be more than 4000 pixels high. Those checks bound the memory a tool call can ask for, since the tool's input comes from outside.
+`preview` refuses a `width_px` outside 100 to 4000, and a picture, of the whole page or of a region, of more than 16 million pixels. Those checks bound the memory a tool call can ask for, since the tool's input comes from outside: a narrow region, or a page set narrow and tall, would otherwise ask for gigabytes. The refusal names the largest `width_px` that fits. The previews that `run` returns and `export` writes as PNG use the largest width up to 1000 px whose picture stays within the cap, so they never fail on it.
 
 ## 5. Running
 
@@ -113,7 +113,7 @@ The README shows the client configuration as plain JSON, `{"command": "plotline"
   - `run` with a refused setting is a tool error, and `get_session` shows the style and settings from before the call.
   - `run` with no image is a tool error.
   - `export` refuses an existing file without `overwrite` and replaces it with; a relative path is refused for all three file tools.
-  - `preview` refuses `width_px` 50 and a region 1 mm wide and 100 mm high at 1000 px.
+  - `preview` refuses `width_px` 50, a region 1 mm wide and 100 mm high at 1000 px, and the whole of a page set to 10 by 1000 mm at 1000 px.
   - A run of the hidden `_slow` style sends at least one progress notification.
   - Cancelling the task that awaits a `_slow` run leaves the session's run `cancelled`.
 - **`tests/test_cli.py`**: with the `mcp` module made unimportable, `plotline mcp` exits 1 with the install message.
