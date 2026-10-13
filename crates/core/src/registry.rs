@@ -10,26 +10,40 @@ use crate::stages::ink::InkStage;
 use crate::stages::order::OrderStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
+use crate::stages::stipple::StippleRenderer;
 use crate::stages::tone::ToneStage;
+use crate::stages::voronoi::VoronoiPlacer;
 use crate::stages::waves::WaveStage;
 use crate::style::Style;
 use serde_json::json;
 
+/// A style of tone, a stage that places points, a stage that draws them, and path order.
+fn point_style(
+    name: &str,
+    label: &str,
+    description: &str,
+    placer: Arc<dyn Stage>,
+    renderer: Arc<dyn Stage>,
+) -> Style {
+    Style::new(
+        name,
+        label,
+        description,
+        vec![Arc::new(ToneStage), placer, renderer, Arc::new(OrderStage)],
+    )
+    .expect("a point style is valid")
+}
+
 /// Dots on a regular grid: tone, points, render, order.
 pub fn grid_style() -> Style {
-    Style::new(
+    point_style(
         "grid",
         "Grid dots",
         "Dots on a regular grid, one wherever the image is dark enough, drawn in an order that \
          keeps the pen's travel short.",
-        vec![
-            Arc::new(ToneStage),
-            Arc::new(GridPlacer),
-            Arc::new(DotRenderer),
-            Arc::new(OrderStage),
-        ],
+        Arc::new(GridPlacer),
+        Arc::new(DotRenderer),
     )
-    .expect("the grid style is valid")
 }
 
 /// A style of tone, one stage that turns the tone map into paths, and path order.
@@ -86,6 +100,30 @@ pub fn ink_style() -> Style {
     .with_defaults("tone", json!({"resolution": 2500}))
 }
 
+/// Evenly spread dots, each sized by the ink: tone, voronoi, stipple, order.
+pub fn stipple_style() -> Style {
+    point_style(
+        "stipple",
+        "Stipple",
+        "Evenly spread dots, dense in dark areas, each dot sized by the ink under it.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(StippleRenderer),
+    )
+}
+
+/// Dots on a regular grid, each sized by the ink: tone, points, stipple, order.
+pub fn halftone_style() -> Style {
+    point_style(
+        "halftone",
+        "Halftone",
+        "Dots on a regular grid, each sized by the ink, like a printed halftone.",
+        Arc::new(GridPlacer),
+        Arc::new(StippleRenderer),
+    )
+    .with_defaults("points", json!({"spacing_mm": 2.0, "threshold": 0.02}))
+    .with_defaults("stipple", json!({"size_mm": 2.0, "vary": 1.0}))
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -106,6 +144,8 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(waves_style()),
         Arc::new(spiral_style()),
         Arc::new(ink_style()),
+        Arc::new(stipple_style()),
+        Arc::new(halftone_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -126,8 +166,9 @@ pub fn get_style(name: &str) -> Option<Arc<Style>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::gradient;
-    use crate::test_util::run_to_drawing;
+    use crate::synthetic::{flat, gradient};
+    use crate::test_util::{assert_inside, run_to_drawing};
+    use std::collections::BTreeMap;
 
     #[test]
     fn lists_builtins_and_hides_test_styles() {
@@ -136,7 +177,7 @@ mod tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            ["grid", "hatch", "waves", "spiral", "ink"]
+            ["grid", "hatch", "waves", "spiral", "ink", "stipple", "halftone"]
         );
         assert!(get_style("_slow").is_some());
         assert!(get_style("nope").is_none());
@@ -154,6 +195,33 @@ mod tests {
                 d1.tone.as_ref().map(|t| t.ink.clone()),
                 d2.tone.as_ref().map(|t| t.ink.clone())
             );
+        }
+    }
+    #[test]
+    fn stages_sharing_a_name_share_label_and_schema() {
+        // The cache key holds a stage's name, version and settings, so two different stages under
+        // one name would hand each other their outputs.
+        let mut seen = BTreeMap::new();
+        for style in builtins() {
+            for stage in &style.stages {
+                let (label, schema) = seen
+                    .entry(stage.name())
+                    .or_insert_with(|| (stage.label(), stage.schema()));
+                assert_eq!(*label, stage.label(), "stage {:?}", stage.name());
+                assert_eq!(*schema, stage.schema(), "stage {:?}", stage.name());
+            }
+        }
+    }
+    #[test]
+    fn every_style_survives_tiny_white_and_black_images() {
+        for style in list_styles() {
+            for image in [flat(1, 1, 0.0), flat(64, 48, 1.0), flat(64, 48, 0.0)] {
+                let drawing = run_to_drawing(&style, image);
+                let rect = drawing.canvas.drawing_rect();
+                for layer in &drawing.layers {
+                    assert_inside(&layer.paths, rect);
+                }
+            }
         }
     }
 }

@@ -31,7 +31,15 @@ def test_validation_errors_are_value_errors():
 
 
 def test_styles_and_schema():
-    assert [s["name"] for s in _core.list_styles()] == ["grid", "hatch", "waves", "spiral", "ink"]
+    assert [s["name"] for s in _core.list_styles()] == [
+        "grid",
+        "hatch",
+        "waves",
+        "spiral",
+        "ink",
+        "stipple",
+        "halftone",
+    ]
     assert (
         _core.describe("grid")["stages"][0]["schema"]["properties"]["resolution"]["default"] == 1000
     )
