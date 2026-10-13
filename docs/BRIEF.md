@@ -40,7 +40,7 @@ The same workflow must also work through the CLI and the MCP.
 
 ## 4. Non-goals (for now)
 
-- **Machine-specific output**, such as G-code for one particular printer or firmware quirks. plotline outputs plain vector data, and adapting it to a machine is the downstream user's job. Generic G-code export belongs in an adapter, not the core (§14).
+- **Machine-specific output**, such as G-code tuned to one particular printer or its firmware quirks. plotline outputs plain vector data, plus generic G-code for a machine the user describes (§14, "G-code adapter"). Nothing is built in for any particular machine, and tuning the output to one is the downstream user's job.
 - **Driving plotters directly** (serial control, job queues).
 - **Image editing** beyond what tone mapping needs (crop, levels, contrast, gamma, blur, invert).
 - **Generative art from nothing.** plotline is image-driven.
@@ -104,7 +104,7 @@ The session holds the state: the image, canvas and pens, the chosen style and se
 - **CLI:** `plotline run <style> image.png --out drawing.svg --set stage.key=value …`, `plotline styles`, `plotline describe <style>`, `plotline gui`, `plotline mcp`.
 - **GUI:** see §8.
 - **MCP:** see §9.
-- **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. None ship in 0.1; which come first is open (§12).
+- **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. The generic G-code writer is the first (§14); which toolchains come next is open (§12).
 
 ## 7. Styles
 
@@ -174,6 +174,7 @@ Rules: no algorithm code in the MCP layer, every tool maps to a session method, 
 - **Output:**
   - SVG in millimetres, with one group per pen layer and pen metadata
   - a plain JSON paths format, so other programs can read results
+  - G-code, one file per pen, for a machine the user describes
   - PNG previews
   - presets (settings files)
 - **Units:** millimetres everywhere in the public API. Pixels exist only inside tone mapping.
@@ -200,13 +201,14 @@ Decide these during design, write the decision and reason into this brief, or as
 
 The ten questions the brief opened with (frontend stack, performance strategy, continuous-line solver, dot geometry, settings schema, cache, toolchain adapters, third-party styles, Python and tooling, preset format) were settled on 2026-10-11. Each decision and its reason is in §14, and the core ones are detailed in [the spec for the first sub-project](superpowers/specs/2026-10-11-core-engine-design.md). Still open:
 
-1. **Scope of the naming rule.** The rule not to name other tools conflicts with vendor-namespaced SVG layer attributes that some plotter software reads, and with adapters that by nature target a named toolchain. The working reading is that the rule covers prose, identifiers and commit messages, and that standard format names are fine. The owner should confirm before the adapter milestone. Until then SVG export uses plain groups only.
+1. **Scope of the naming rule.** The rule not to name other tools conflicts with vendor-namespaced SVG layer attributes that some plotter software reads, and with adapters that by nature target a named toolchain. The working reading is that the rule covers prose, identifiers and commit messages, and that standard format names are fine. The owner should confirm before the adapter milestone. Until then SVG export uses plain groups only. The G-code writer did not need the answer, because G-code is a standard format name and the writer uses no vendor names.
 2. **Which toolchains to adapt first.** Driven by the owner's own setup.
 3. **Canvas 2D or WebGL** was settled on 2026-10-12 in [the GUI spec](superpowers/specs/2026-10-12-gui-design.md): Canvas 2D, revisited if a redraw takes over 100 ms.
 4. **Disk cache.** Whether and when. Cache keys already support it.
 5. **Standalone Rust CLI binary.** Users without Python could get the CLI as one executable. Not before the Python surface settles.
 6. **Python stage API.** Stages written in Python through callbacks would run natively but not in the browser. Decide when someone asks for one.
 7. **JSON-declared styles.** Compositions of existing stages as data, so a new style needs no code. Decide after the Voronoi family shows which compositions people want.
+8. **Candidate additions for 0.1.** Proposed in the 0.1 checklist review and not yet confirmed by the owner: a paper colour for the preview; Ramer–Douglas–Peucker simplification in the ordering stage; the run's settings embedded in SVG and JSON exports as a preset block; an MCP `load_preset` tool; a `plotline testchart` command; and an auto-levels tone setting. Proposed for after 0.1: edge and outline layers, HPGL export, a compare view in the GUI, and a saved pen library.
 
 ## 13. Suggested milestones
 
@@ -256,7 +258,7 @@ Milestone 2 was completed in Python and then ported to Rust on 2026-10-12 under 
 | Canvas modes | `fit` and `fill` in the first release; `crop` is `fill` plus an offset and comes later | Keeps the canvas type small until someone needs the offset. |
 | Presets | JSON with a format name and an integer version, holding style, canvas, pens and per-stage settings; a migration chain per version bump | Same wire format as the GUI and MCP. Unknown keys warn and are dropped; missing keys take defaults. |
 | Third-party styles | Superseded on 2026-10-11, see "Third-party styles (Rust)". The registry discovers an entry-point group from day one; the stage API is documented as unstable until 0.2 | Discovery is cheap. Promising stability before the Voronoi family and GUI exist would be premature. |
-| Toolchain adapters | None in 0.1; output is SVG and JSON. Generic G-code goes in an adapter module later, not the core | Keeps the core machine-agnostic. The owner's own toolchain decides which adapters come first. |
+| Toolchain adapters | Amended on 2026-10-12, see "G-code adapter". None in 0.1; output is SVG and JSON. Generic G-code goes in an adapter module later, not the core | Keeps the core machine-agnostic. The owner's own toolchain decides which adapters come first. |
 | Frontend stack | TypeScript, Vite and Preact; the bundle is built in CI and shipped in the wheel; during frontend work the Vite dev server serves the page directly (amended on 2026-10-11, the proxy flag is gone with the server) | Type checking suits a UI generated from a schema. Preact is tiny, MIT and familiar. Python-only contributors get the GUI from the wheel; only frontend work needs Node. |
 | Frame transport (GUI) | Superseded on 2026-10-11, see "GUI engine". HTTP for commands, a WebSocket carrying frames as binary float32 arrays, throttled server-side | Path data for tens of thousands of points is too heavy as JSON at preview frame rates. |
 | Preview rasterizer | Superseded on 2026-10-11, see "Preview rasterizer (Rust)". Pillow with 4x supersampling | The usual vector rasterizers for Python are LGPL. Pillow is permissive and already a dependency. |
@@ -294,7 +296,7 @@ Milestone 2 was completed in Python and then ported to Rust on 2026-10-12 under 
 | Image size limit | The image library's decode memory limit stays in force; a too-large file is reported as a plain error | The whole image is decoded before downsizing, so the limit protects memory on ordinary machines; users can pre-resize. |
 | Engine route, reconfirmed | On 2026-10-12 the owner chose the Rust branch over running the Python engine in the browser with Pyodide, and it was merged into `main` | For a hosted page the live preview of the relaxation stage decides it: near-native speed in WebAssembly against minutes under Pyodide, a 1.2 MB module against a 15 to 20 MB runtime, and no copyleft exception, since Pyodide is MPL-2.0. The cost, a Rust toolchain for contributors and a wheel matrix, was accepted. |
 | Milestone order | The GUI (milestone 6) is built right after the engine port, before the Voronoi family and Sketch Lines | The owner wants to test the engine through the GUI, and the GUI is generated from the stage declarations, so the styles that come later need no GUI changes. |
-| Preview renderer | Canvas 2D, one path object per pen layer; WebGL is revisited when a redraw takes over 100 ms | A layer of a hundred thousand vertices strokes in tens of milliseconds, which covers the planned styles, and Canvas 2D needs no shaders or buffer management. |
+| Preview renderer | Canvas 2D, a path object per 200,000 paths of a pen layer, and the same for the travel overlay; WebGL is revisited when a redraw takes over 100 ms | A layer of a hundred thousand vertices strokes in tens of milliseconds, which covers the planned styles, and Canvas 2D needs no shaders or buffer management. A path object past about a million subpaths draws nothing, hence the chunks. |
 | Worker protocol | Commands as `{id, method, args}` answered with the whole state; frames, results and run ends as events; geometry as typed arrays in the transfer list | One reply shape keeps the page simple, and transferring the arrays means no copy between the worker and the page. |
 | Driver cadence | The worker posts at most 30 frames a second plus every stage's final frame, and yields to its event loop every 50 ms of work through a zero-delay macrotask | Fine-grained stages would otherwise pay a timer clamp per frame, and 50 ms bounds how long a cancel waits. |
 | Bundle location | `vite build` writes `src/plotline/web`, git-ignored; `plotline gui`, the wheel and the hosted page all use that one directory | One location for all three means they cannot drift apart. |
