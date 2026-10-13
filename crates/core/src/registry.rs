@@ -4,39 +4,68 @@
 use std::sync::Arc;
 
 use crate::stage::Stage;
+use crate::stages::contours::ContourStage;
+use crate::stages::dashes::DashRenderer;
+use crate::stages::dither::DitherPlacer;
+use crate::stages::edges::{CellsRenderer, DelaunayRenderer, MstRenderer};
+use crate::stages::flow::FlowStage;
 use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
+use crate::stages::hilbert::HilbertStage;
 use crate::stages::ink::InkStage;
 use crate::stages::order::OrderStage;
+use crate::stages::poisson::PoissonPlacer;
+use crate::stages::sketch::SketchStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
 use crate::stages::split::SplitStage;
+use crate::stages::stipple::StippleRenderer;
 use crate::stages::tone::ToneStage;
+use crate::stages::tsp::TspRenderer;
+use crate::stages::voronoi::VoronoiPlacer;
 use crate::stages::waves::WaveStage;
 use crate::style::Style;
 use serde_json::json;
 
+/// A style of tone, the split between pens, a stage that places points, a stage that draws them,
+/// and path order.
+fn point_style(
+    name: &str,
+    label: &str,
+    description: &str,
+    placer: Arc<dyn Stage>,
+    renderer: Arc<dyn Stage>,
+) -> Style {
+    Style::new(
+        name,
+        label,
+        description,
+        vec![
+            Arc::new(ToneStage),
+            Arc::new(SplitStage),
+            placer,
+            renderer,
+            Arc::new(OrderStage),
+        ],
+    )
+    .expect("a point style is valid")
+}
+
 /// Dots on a regular grid: tone, split, points, render, order.
 pub fn grid_style() -> Style {
-    Style::new(
+    point_style(
         "grid",
         "Grid dots",
         "Dots on a regular grid, one wherever the image is dark enough, drawn in an order that \
          keeps the pen's travel short.",
-        vec![
-            Arc::new(ToneStage),
-            Arc::new(SplitStage),
-            Arc::new(GridPlacer),
-            Arc::new(DotRenderer),
-            Arc::new(OrderStage),
-        ],
+        Arc::new(GridPlacer),
+        Arc::new(DotRenderer),
     )
-    .expect("the grid style is valid")
 }
 
 /// A style of tone, the split between pens, one stage that turns the tone map into paths, and
 /// path order.
-fn line_style(name: &str, label: &str, description: &str, stage: Arc<dyn Stage>) -> Style {
+fn tone_style(name: &str, label: &str, description: &str, stage: Arc<dyn Stage>) -> Style {
     Style::new(
         name,
         label,
@@ -48,12 +77,12 @@ fn line_style(name: &str, label: &str, description: &str, stage: Arc<dyn Stage>)
             Arc::new(OrderStage),
         ],
     )
-    .expect("a line style is valid")
+    .expect("a tone style is valid")
 }
 
 /// Straight lines over the dark areas: tone, split, hatch, order.
 pub fn hatch_style() -> Style {
-    line_style(
+    tone_style(
         "hatch",
         "Hatching",
         "Straight parallel lines wherever the image is dark enough; more levels cross them over \
@@ -69,7 +98,7 @@ const RIPPLE_GAMMA: f64 = 1.9;
 
 /// Rippling lines: tone, split, waves, order.
 pub fn waves_style() -> Style {
-    line_style(
+    tone_style(
         "waves",
         "Waves",
         "Parallel lines that ripple more where the image is darker, one pen stroke per line.",
@@ -80,7 +109,7 @@ pub fn waves_style() -> Style {
 
 /// One rippling spiral: tone, split, spiral, order.
 pub fn spiral_style() -> Style {
-    line_style(
+    tone_style(
         "spiral",
         "Spiral",
         "One spiral from the centre out that ripples more where the image is darker.",
@@ -93,13 +122,163 @@ pub fn spiral_style() -> Style {
 /// other styles use keeps the hairlines of ink drawings, which averaging into fewer pixels greys
 /// out.
 pub fn ink_style() -> Style {
-    line_style(
+    tone_style(
         "ink",
         "Ink",
-        "Draws the marks of line art, lettering and inked drawings as they are: every ink shape          is outlined and filled with rings, and strokes thinner than the pen get one line down          the middle.",
+        "Draws the marks of line art, lettering and inked drawings as they are: every ink shape \
+         is outlined and filled with rings, and strokes thinner than the pen get one line down \
+         the middle.",
         Arc::new(InkStage),
     )
     .with_defaults("tone", json!({"resolution": 2500}))
+}
+
+/// Evenly spread dots, each sized by the ink: tone, split, voronoi, stipple, order.
+pub fn stipple_style() -> Style {
+    point_style(
+        "stipple",
+        "Stipple",
+        "Evenly spread dots, dense in dark areas, each dot sized by the ink under it.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(StippleRenderer),
+    )
+}
+
+/// One unbroken, non-crossing line through evenly spread points: tone, split, voronoi, tsp, order.
+pub fn line_style() -> Style {
+    point_style(
+        "line",
+        "Single line",
+        "One unbroken, non-crossing line through every point.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(TspRenderer),
+    )
+}
+
+/// Short strokes that follow the image's edges: tone, split, voronoi, dashes, order.
+pub fn dashes_style() -> Style {
+    point_style(
+        "dashes",
+        "Dashes",
+        "Short strokes that follow the image's edges.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(DashRenderer),
+    )
+}
+
+/// Straight strokes chained from dark to dark: tone, split, sketch, order.
+pub fn sketch_style() -> Style {
+    tone_style(
+        "sketch",
+        "Sketch lines",
+        "Straight strokes chained from dark to dark, like a quick pencil sketch.",
+        Arc::new(SketchStage),
+    )
+}
+
+/// The shortest tree joining evenly spread points: tone, split, voronoi, mst, order.
+pub fn tree_style() -> Style {
+    point_style(
+        "tree",
+        "Tree",
+        "The shortest tree joining every point.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(MstRenderer),
+    )
+}
+
+/// A triangle mesh over evenly spread points: tone, split, voronoi, delaunay, order.
+pub fn mesh_style() -> Style {
+    point_style(
+        "mesh",
+        "Mesh",
+        "A triangle mesh over the points.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(DelaunayRenderer),
+    )
+}
+
+/// The outlines of the points' Voronoi cells: tone, split, voronoi, cells, order.
+pub fn cells_style() -> Style {
+    point_style(
+        "cells",
+        "Cells",
+        "The outlines of the points' Voronoi cells.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(CellsRenderer),
+    )
+}
+
+/// Dots on a regular grid, each sized by the ink: tone, split, points, stipple, order.
+pub fn halftone_style() -> Style {
+    point_style(
+        "halftone",
+        "Halftone",
+        "Dots on a regular grid, each sized by the ink, like a printed halftone.",
+        Arc::new(GridPlacer),
+        Arc::new(StippleRenderer),
+    )
+    .with_defaults("points", json!({"spacing_mm": 2.0, "threshold": 0.02}))
+    .with_defaults("stipple", json!({"size_mm": 2.0, "vary": 1.0}))
+}
+
+/// Dots where error diffusion puts them: tone, split, dither, render, order.
+pub fn dither_style() -> Style {
+    point_style(
+        "dither",
+        "Dither",
+        "Dots where error diffusion puts them.",
+        Arc::new(DitherPlacer),
+        Arc::new(DotRenderer),
+    )
+}
+
+/// Circles packed without overlapping: tone, split, poisson, stipple, order.
+pub fn circles_style() -> Style {
+    point_style(
+        "circles",
+        "Circles",
+        "Circles packed without overlapping, larger and closer where it is darker.",
+        Arc::new(PoissonPlacer),
+        Arc::new(StippleRenderer),
+    )
+    .with_defaults("poisson", json!({"spacing_mm": 3.0}))
+    .with_defaults(
+        "stipple",
+        json!({"size_mm": 3.0, "vary": 1.0, "shape": "circle"}),
+    )
+}
+
+/// Level lines of the image, like a topographic map: tone, split, contours, order.
+pub fn contours_style() -> Style {
+    tone_style(
+        "contours",
+        "Contours",
+        "Level lines of the image, like a topographic map.",
+        Arc::new(ContourStage),
+    )
+}
+
+/// Evenly spaced lines along the image's edges, closer where it is darker: tone, split, flow, order.
+pub fn flow_style() -> Style {
+    tone_style(
+        "flow",
+        "Flow lines",
+        "Evenly spaced lines that follow the image's edges, closer together where it is darker.",
+        Arc::new(FlowStage),
+    )
+}
+
+/// A space-filling curve that folds tighter where it is darker, broken where it leaves the image:
+/// tone, split, hilbert, order.
+pub fn hilbert_style() -> Style {
+    tone_style(
+        "hilbert",
+        "Hilbert curve",
+        "A space-filling curve that folds tighter where it is darker, broken where it leaves the \
+         image.",
+        Arc::new(HilbertStage),
+    )
 }
 
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
@@ -122,6 +301,19 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(waves_style()),
         Arc::new(spiral_style()),
         Arc::new(ink_style()),
+        Arc::new(stipple_style()),
+        Arc::new(line_style()),
+        Arc::new(dashes_style()),
+        Arc::new(sketch_style()),
+        Arc::new(tree_style()),
+        Arc::new(mesh_style()),
+        Arc::new(cells_style()),
+        Arc::new(halftone_style()),
+        Arc::new(dither_style()),
+        Arc::new(circles_style()),
+        Arc::new(contours_style()),
+        Arc::new(flow_style()),
+        Arc::new(hilbert_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -142,8 +334,9 @@ pub fn get_style(name: &str) -> Option<Arc<Style>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::{gradient, scene};
-    use crate::test_util::run_to_drawing;
+    use crate::synthetic::{flat, gradient, radial, scene};
+    use crate::test_util::{assert_inside, run_to_drawing};
+    use std::collections::BTreeMap;
 
     #[test]
     fn lists_builtins_and_hides_test_styles() {
@@ -152,10 +345,21 @@ mod tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            ["grid", "hatch", "waves", "spiral", "ink"]
+            [
+                "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
+                "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
+                "hilbert"
+            ]
         );
         assert!(get_style("_slow").is_some());
         assert!(get_style("nope").is_none());
+    }
+    #[test]
+    fn descriptions_have_no_runs_of_spaces() {
+        // A string continued onto the next line without a backslash keeps the indent.
+        for style in list_styles() {
+            assert!(!style.description.contains("  "), "{}", style.name);
+        }
     }
     #[test]
     fn every_style_is_deterministic() {
@@ -200,6 +404,57 @@ mod tests {
         for style in list_styles() {
             let d = run_to_drawing(&style, scene(64, 48));
             assert!(!d.layers[0].paths.is_empty(), "{} drew nothing", style.name);
+        }
+    }
+    #[test]
+    fn stages_sharing_a_name_share_label_and_schema() {
+        // The cache key holds a stage's name, version and settings, so two different stages under
+        // one name would hand each other their outputs.
+        let mut seen = BTreeMap::new();
+        for style in builtins() {
+            for stage in &style.stages {
+                let (label, schema) = seen
+                    .entry(stage.name())
+                    .or_insert_with(|| (stage.label(), stage.schema()));
+                assert_eq!(*label, stage.label(), "stage {:?}", stage.name());
+                assert_eq!(*schema, stage.schema(), "stage {:?}", stage.name());
+            }
+        }
+    }
+    #[test]
+    fn the_voronoi_styles_share_tone_and_point_defaults() {
+        // Equal settings give equal cache keys, so switching between these styles at their
+        // defaults reuses the points.
+        let first = get_style("stipple").unwrap().defaults();
+        for name in ["line", "dashes", "tree", "mesh", "cells"] {
+            let d = get_style(name).unwrap().defaults();
+            assert_eq!(d["tone"], first["tone"], "{name}");
+            assert_eq!(d["voronoi"], first["voronoi"], "{name}");
+        }
+    }
+    /// Prints the time of `stipple` and `line` at their defaults on a 1000 by 750 radial image.
+    /// Run with `cargo test --release -p plotline-core --lib default_timings -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn default_timings() {
+        for name in ["stipple", "line"] {
+            let style = get_style(name).unwrap();
+            let start = std::time::Instant::now();
+            run_to_drawing(&style, radial(1000, 750));
+            println!("{name}: {:.2} s", start.elapsed().as_secs_f64());
+        }
+    }
+    #[test]
+    fn every_style_survives_tiny_white_and_black_images() {
+        for style in list_styles() {
+            for image in [flat(1, 1, 0.0), flat(64, 48, 1.0), flat(64, 48, 0.0)] {
+                let drawing = run_to_drawing(&style, image);
+                let rect = drawing.canvas.drawing_rect();
+                for layer in &drawing.layers {
+                    assert_inside(&layer.paths, rect);
+                }
+            }
         }
     }
 }

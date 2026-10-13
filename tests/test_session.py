@@ -37,7 +37,26 @@ def test_defaults():
 
 
 def test_registry_lists_public_styles_and_finds_hidden_ones():
-    assert [s.name for s in list_styles()] == ["grid", "hatch", "waves", "spiral", "ink"]
+    assert [s.name for s in list_styles()] == [
+        "grid",
+        "hatch",
+        "waves",
+        "spiral",
+        "ink",
+        "stipple",
+        "line",
+        "dashes",
+        "sketch",
+        "tree",
+        "mesh",
+        "cells",
+        "halftone",
+        "dither",
+        "circles",
+        "contours",
+        "flow",
+        "hilbert",
+    ]
     assert get_style("_slow").label == "Slow" and get_style("grid").schema() == describe("grid")
     with pytest.raises(ValueError, match="unknown style"):
         get_style("nope")
