@@ -31,7 +31,8 @@ def slow(s, **values):
 def test_defaults():
     s = Session()
     assert s.canvas == Canvas(210, 297, 10) and s.pens == (Pen("Black 0.3", 0.3, "#000000"),)
-    assert s.style.name == "grid" and set(s.settings) == {"tone", "points", "render", "order"}
+    assert s.style.name == "grid"
+    assert set(s.settings) == {"tone", "split", "points", "render", "order"}
     assert s.state == RunState.idle and s.result is None and s.image is None
 
 
@@ -219,7 +220,7 @@ def test_run_blocking_delivers_every_frame_while_running():
     seen = []
     s._deliver = lambda frame: seen.append((frame.stage, s.state))
     s.run_blocking()
-    assert {stage for stage, _ in seen} == {"tone", "points", "render", "order"}
+    assert {stage for stage, _ in seen} == {"tone", "split", "points", "render", "order"}
     assert {state for _, state in seen} == {RunState.running}
 
 

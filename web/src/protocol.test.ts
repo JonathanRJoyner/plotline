@@ -93,7 +93,7 @@ test("describe and listStyles", () => {
   expect(styles.some((s) => s.name === "grid")).toBe(true);
   expect(styles.some((s) => s.name.startsWith("_"))).toBe(false);
   const schema = ok("describe", "grid").value as { stages: unknown[] };
-  expect(schema.stages).toHaveLength(4);
+  expect(schema.stages).toHaveLength(5);
 });
 
 test("svg and json after a run", async () => {

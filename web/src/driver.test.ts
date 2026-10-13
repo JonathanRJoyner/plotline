@@ -15,7 +15,7 @@ function session(): Session {
   return s;
 }
 
-const stages = ["tone", "points", "render", "order"];
+const stages = ["tone", "split", "points", "render", "order"];
 
 test("grid runs to a result", async () => {
   const s = session();
