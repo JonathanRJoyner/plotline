@@ -28,6 +28,36 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "min_length_mm",
         "every wave line crosses the whole drawing, far longer than the 10 mm limit",
     ),
+    (
+        "grid",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
+        "hatch",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
+        "waves",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
+        "spiral",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
+        "ink",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
 ];
 
 /// A legal value of `prop` other than `default`: the other boolean, the number halfway to the
