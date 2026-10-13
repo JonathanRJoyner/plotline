@@ -9,12 +9,13 @@
 //! Each line is traced both ways from its seed with second-order Runge-Kutta (midpoint) steps of
 //! `min_spacing / 2`. It stops at the rect's edge, after 20000 steps each way, where the field
 //! vanishes, or within `d / 2` of a sample of another line, or of its own line more than `d`
-//! back along it. Seeds lie `d(p)` to either side of each sample `p` of the lines kept, taken first
-//! in first out, and such a seed `q` needs every sample at least `min(d(q), d(p))` away, so seeds
-//! spread towards lighter tone as well as darker. The first seed is the rect's centre; when the
-//! seeds run out, a coarse grid at `max_spacing` is scanned for points with every sample at least
-//! `d(q)` away. A line shorter than `2 * min_spacing` is dropped, and its samples are taken back
-//! out of the bucket grid, so it blocks nothing.
+//! back along it, or within half a step of its own sample 3 or more back, so that an orbit shorter
+//! than `d` is not drawn round and round. Seeds lie `d(p)` to either side of each sample `p` of the
+//! lines kept, taken first in first out, and such a seed `q` needs every sample at least
+//! `min(d(q), d(p))` away, so seeds spread towards lighter tone as well as darker. The first seed
+//! is the rect's centre; when the seeds run out, a coarse grid at `max_spacing` is scanned for
+//! points with every sample at least `d(q)` away. A line shorter than `2 * min_spacing` is
+//! dropped, and its samples are taken back out of the bucket grid, so it blocks nothing.
 
 use std::sync::Arc;
 
@@ -34,6 +35,8 @@ const DRIFT: f64 = 0.05;
 const MAX_STEPS: i64 = 20000;
 /// The most lines traced per step.
 const LINES_PER_FRAME: usize = 50;
+/// A line stops within half a step of its own sample this many samples back, or more.
+const RETRACE: i64 = 3;
 /// How far inside a seed's separation, in mm, a sample may lie without blocking it.
 const SLACK: f64 = 1e-9;
 /// The end of a bucket's list of samples, and the line of a seed being checked.
@@ -332,10 +335,13 @@ impl FlowRun {
             if !inside(self.rect, q) {
                 return;
             }
-            // Samples of this line within an arc of `d` behind `q` never block it.
+            // Samples of this line within an arc of `d` behind `q` never block it at `d / 2`, but
+            // any 3 or more back block it at half a step, so a small orbit is not retraced.
             let d = self.spacing(q);
             let (seq, skip) = (sign * n, (d / self.step).ceil() as i64);
-            if self.crowded(q, d / 2.0, line, seq, skip) {
+            if self.crowded(q, d / 2.0, line, seq, skip)
+                || self.crowded(q, self.step / 2.0, line, seq, RETRACE - 1)
+            {
                 return;
             }
             self.store(q, line, seq);
@@ -535,11 +541,10 @@ mod tests {
 
     #[test]
     fn no_line_retraces_itself() {
-        // Half a step at the default spacing. The noise sits on a 4 mm lattice, which makes
-        // vortices with orbits of a few mm. An orbit shorter than `d` can still be retraced, and
-        // this map at these settings has none.
+        // Half a step at the default spacing. The lattice noise, on a 4 mm lattice, makes orbits
+        // of a few mm; the per-pixel noise without smoothing makes orbits a few steps long.
         let near = 0.8 / 4.0;
-        let smooth = |x: u32, y: u32| {
+        let lattice = |x: u32, y: u32| {
             let (fx, fy) = ((x as f32 + 0.5) / 2.0, (y as f32 + 0.5) / 2.0);
             let (x0, y0) = (fx.floor() as u32, fy.floor() as u32);
             let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
@@ -547,16 +552,21 @@ mod tests {
             let bottom = noise(x0, y0 + 1) * (1.0 - tx) + noise(x0 + 1, y0 + 1) * tx;
             top * (1.0 - ty) + bottom * ty
         };
-        let (_, paths) = run_tone_stage(&FlowStage, tone_map(40, 30, smooth), json!({}));
-        assert!(paths.len() > 10, "{} lines", paths.len());
-        for (k, path) in paths.iter().enumerate() {
-            for i in 3..path.len() {
-                for j in 0..i - 2 {
-                    let (p, q) = (path[i], path[j]);
-                    assert!(
-                        math::hypot(p[0] - q[0], p[1] - q[1]) >= near,
-                        "line {k}: vertex {i} meets vertex {j}"
-                    );
+        for (tone, patch) in [
+            (tone_map(40, 30, lattice), json!({})),
+            (tone_map(40, 30, noise), json!({"smooth_mm": 0.0})),
+        ] {
+            let (_, paths) = run_tone_stage(&FlowStage, tone, patch.clone());
+            assert!(paths.len() > 10, "{} lines", paths.len());
+            for (k, path) in paths.iter().enumerate() {
+                for i in 3..path.len() {
+                    for j in 0..i - 2 {
+                        let (p, q) = (path[i], path[j]);
+                        assert!(
+                            math::hypot(p[0] - q[0], p[1] - q[1]) >= near - 1e-9,
+                            "{patch}, line {k}: vertex {i} meets vertex {j}"
+                        );
+                    }
                 }
             }
         }
