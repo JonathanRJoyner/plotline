@@ -1,4 +1,4 @@
-//! The Hilbert curve stage: one space-filling line that folds tighter where the image is darker.
+//! The Hilbert curve stage: a space-filling curve that folds tighter where the image is darker.
 //!
 //! This is an adaptive Hilbert curve after L. Velho and J. de M. Gomes, "Digital halftoning with
 //! space filling curves", *Proc. SIGGRAPH*, 1991, pp. 81-90. Their patent, US5602943, is listed as

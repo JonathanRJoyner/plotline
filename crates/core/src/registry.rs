@@ -245,12 +245,14 @@ pub fn flow_style() -> Style {
     )
 }
 
-/// One space-filling line that folds tighter where it is darker: tone, hilbert, order.
+/// A space-filling curve that folds tighter where it is darker, broken where it leaves the image:
+/// tone, hilbert, order.
 pub fn hilbert_style() -> Style {
     tone_style(
         "hilbert",
         "Hilbert curve",
-        "One space-filling line that folds tighter where it is darker.",
+        "A space-filling curve that folds tighter where it is darker, broken where it leaves the \
+         image.",
         Arc::new(HilbertStage),
     )
 }
