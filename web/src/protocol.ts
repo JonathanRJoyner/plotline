@@ -5,6 +5,9 @@ import { describe, listInks, listPens, listStyles, syntheticStillLife, type Run,
 import { drive } from "./driver";
 import type { Canvas, Event, Machine, Pen, Stats } from "./events";
 
+/** A change the engine suggests, in the shape of `Session::analysis`: `settings` apply after `style`. */
+export type Patch = { style?: string; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
+export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
 export type State = {
   image: boolean; style: string; canvas: Canvas; pens: Pen[]; machine: Machine | null;
@@ -12,12 +15,14 @@ export type State = {
   run: { id: number; state: string; error: string | null }; stats: Stats | null;
   /** The pens of the last drawing's layers; empty without a drawing. */
   layers: Pen[];
+  /** What would suit the image, from the current settings; empty without an image. */
+  suggestions: Suggestion[];
 };
 export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
 // The commands that change what a drawing is made from: each one redraws once it succeeds.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "update", "loadPreset"]);
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "update", "loadPreset", "apply"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
 
@@ -45,6 +50,13 @@ export class Protocol {
       setPens: (pens: Pen[]) => s.setPens(JSON.stringify(pens)),
       setStyle: (name: string) => s.setStyle(name),
       update: (stage: string, values: Record<string, unknown>) => s.update(stage, JSON.stringify(values)),
+      // The session calls, not `methods`, so the whole patch redraws once. A refusal partway leaves
+      // the earlier parts applied; only a stale suggestion can cause one.
+      apply: ({ style, settings, page }: Patch) => {
+        if (style) s.setStyle(style);
+        for (const [stage, values] of Object.entries(settings ?? {})) s.update(stage, JSON.stringify(values));
+        if (page) s.setCanvas(JSON.stringify({ ...JSON.parse(s.preset()).canvas, ...page }));
+      },
       setSpeeds: (speeds: Speeds) => s.setSpeeds(JSON.stringify(speeds)),
       run: () => this.start(),
       cancel: () => this.current?.cancel(),
@@ -96,8 +108,10 @@ export class Protocol {
         drawing.free();
       }
     }
+    const analysis = s.analysis();
     return {
       image: this.image, style, canvas, pens, machine, settings, speeds: JSON.parse(s.speeds()), layers,
+      suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       run: { id: this.counter, state: s.state(), error: s.error() ?? null },
       stats: stats ? JSON.parse(stats) : null,
     };

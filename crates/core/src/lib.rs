@@ -1,5 +1,6 @@
 //! Core engine for plotline.
 
+pub mod analysis;
 pub mod cache;
 pub mod export;
 pub mod image;

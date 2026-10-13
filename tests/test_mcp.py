@@ -186,6 +186,19 @@ async def test_run_without_an_image_is_an_error():
         assert "no image is loaded" in text(r)
 
 
+async def test_analyse_image(tmp_path):
+    path = tmp_path / "i.png"
+    write_png(path, _core.synthetic_gradient(64, 48))
+    async with Client(build_server(Session())) as c:
+        r = await call(c, "analyse_image")
+        assert r.is_error
+        assert "no image is loaded" in text(r)
+        await call(c, "load_image", path=str(path))
+        r = await call(c, "analyse_image")
+        assert not r.is_error
+        assert set(data(r)) == {"stats", "suggestions"}
+
+
 async def test_preview_limits(tmp_path):
     path = tmp_path / "i.png"
     write_png(path, _core.synthetic_gradient(64, 48))
@@ -313,6 +326,7 @@ async def test_stdio_server_lists_the_tools():
         "list_styles",
         "describe_style",
         "load_image",
+        "analyse_image",
         "set_page",
         "set_pens",
         "run",

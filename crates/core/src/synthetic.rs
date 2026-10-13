@@ -2,8 +2,9 @@
 //!
 //! Each function returns an RGB [`Image`] with values in 0..1. The grey images have three equal
 //! channels and follow the Python engine's test images, except [`noise`], which is only
-//! deterministic, and [`still_life`], the GUI's sample. [`color_bars`] and [`scene`] are in
-//! colour, for the colour-to-tone path.
+//! deterministic, [`still_life`], the GUI's sample, and [`strokes`], [`ramp`] and [`flat_noise`],
+//! made for the image analysis. [`color_bars`] and [`scene`] are in colour, for the
+//! colour-to-tone path.
 
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;
@@ -256,6 +257,31 @@ pub fn flat(w: u32, h: u32, value: f32) -> Image {
         height: h,
         rgb,
     }
+}
+
+/// Line art: `ink` in 2-pixel lines every 16 pixels in both directions, `paper` between them.
+pub fn strokes(w: u32, h: u32, ink: f32, paper: f32) -> Image {
+    let value = |(x, y): (u32, u32)| if x % 16 < 2 || y % 16 < 2 { ink } else { paper };
+    grey(w, h, pixels(w, h).map(value))
+}
+
+/// Luminance from `from` at the left edge to `to` at the right, in equal steps; an image one
+/// pixel wide is `from`.
+pub fn ramp(w: u32, h: u32, from: f32, to: f32) -> Image {
+    let span = f64::from(w.saturating_sub(1).max(1));
+    let (from, to) = (f64::from(from), f64::from(to));
+    let value = |(x, _): (u32, u32)| (from + (to - from) * f64::from(x) / span) as f32;
+    grey(w, h, pixels(w, h).map(value))
+}
+
+/// `value` plus uniform noise of standard deviation `sigma` (half-width `sigma * sqrt(3)`), equal
+/// in all channels, clamped to 0..1. Deterministic from a [`Pcg64`] seeded with `seed`.
+pub fn flat_noise(w: u32, h: u32, value: f32, sigma: f32, seed: u64) -> Image {
+    let mut rng = Pcg64::seed_from_u64(seed);
+    let half = f64::from(sigma) * 3f64.sqrt();
+    let value = f64::from(value);
+    let v = |_| (value + half * (2.0 * rng.random::<f64>() - 1.0)).clamp(0.0, 1.0) as f32;
+    grey(w, h, pixels(w, h).map(v))
 }
 
 /// Eight vertical bars in the corners of the RGB cube, light to dark by luminance: white, yellow,

@@ -205,6 +205,12 @@ summary:hover { color: var(--text); }
 .error { margin: 4px 0; color: var(--danger); }
 .warnings { margin: 8px 0 0; padding-left: 1.2em; color: var(--muted); }
 
+/* The suggestions: a reason, then its button, with a rule between items. */
+.suggestions { margin: 0; padding: 0; list-style: none; }
+.suggestions li + li { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.suggestions p { margin: 0 0 6px; }
+.suggestions button { margin: 0; }
+
 /* The page: two columns of label over control. */
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
 .grid label { flex-direction: column; align-items: stretch; gap: 2px; margin: 0; color: var(--muted); font-size: 12px; }

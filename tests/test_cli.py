@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from importlib import resources
 
 import click
+import numpy as np
 import pytest
 from click.testing import CliRunner
 from pngs import write_png
@@ -124,6 +125,34 @@ def test_run_rejects_bad_inputs(tmp_path, image):
     for pen, word in (("p:0:#000000", "width_mm"), ("p:0.5:crimson", "color")):
         r = run("run", "grid", image, "--out", out, "--pen", pen)
         assert r.exit_code == 1 and word in r.stderr, r.output
+
+
+def kinds(path, *options):
+    r = run("analyse", str(path), *options)
+    assert r.exit_code == 0, r.output
+    return [s["kind"] for s in json.loads(r.stdout)["suggestions"]]
+
+
+def test_analyse_prints_json(tmp_path):
+    lines = np.ones((128, 128, 3))
+    lines[np.arange(128) % 16 < 2] = 0  # 2-pixel black lines on white
+    write_png(tmp_path / "lines.png", lines)
+    r = run("analyse", str(tmp_path / "lines.png"))
+    assert r.exit_code == 0, r.output
+    assert set(json.loads(r.stdout)) == {"stats", "suggestions"}
+    assert "line_art" in kinds(tmp_path / "lines.png")
+
+
+def test_analyse_turns_the_page(tmp_path):
+    write_png(tmp_path / "wide.png", _core.synthetic_gradient(400, 200))
+    assert "orientation" in kinds(tmp_path / "wide.png")
+    assert "orientation" not in kinds(tmp_path / "wide.png", "--width", "297", "--height", "210")
+
+
+def test_analyse_refuses_a_non_image(tmp_path):
+    (tmp_path / "t.txt").write_text("not an image")
+    r = run("analyse", str(tmp_path / "t.txt"))
+    assert r.exit_code == 1 and r.stderr.startswith("Error: unsupported image"), r.output
 
 
 def test_gui_without_a_bundle_and_mcp_without_its_extra(monkeypatch, tmp_path):

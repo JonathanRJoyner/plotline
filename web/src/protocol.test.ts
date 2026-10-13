@@ -168,3 +168,35 @@ test("gcode needs a drawing, whose layers the state lists", async () => {
   expect(ok("preset").state.layers.map((p) => p.name)).toEqual(["Black 0.3"]);
   expect(ok("gcode", 0).value as string).toContain("G1 Z4 F1200");
 });
+
+test("suggestions come with the state", () => {
+  const { ok } = setup();
+  expect(ok("preset").state.suggestions).toEqual([]);
+  // 400 x 200 on the portrait A4 default: turning the page would draw it larger.
+  const { state } = ok("setImage", 400, 200, syntheticGradient(400, 200));
+  expect(state.suggestions.map((s) => s.kind)).toEqual(["orientation"]);
+  expect(state.suggestions[0].patch).toEqual({ page: { width_mm: 297, height_mm: 210 } });
+});
+
+test("apply runs the patch and redraws once", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", 400, 200, syntheticGradient(400, 200));
+  await ended(1);
+  const runs = () => posted.filter((m) => m.type === "run").length;
+  expect(runs()).toBe(1);
+  const { state } = ok("apply", { style: "ink", settings: { tone: { levels: "auto" } }, page: { width_mm: 297, height_mm: 210 } });
+  expect(state.style).toBe("ink");
+  expect((state.settings.tone as { levels: string }).levels).toBe("auto");
+  expect(state.canvas).toMatchObject({ width_mm: 297, height_mm: 210 });
+  expect(state.suggestions.map((s) => s.kind)).not.toContain("orientation");
+  expect(runs()).toBe(2);
+  await ended(2);
+});
+
+test("a refused patch redraws nothing", async () => {
+  const { posted, call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  expect(call("apply", { style: "no such style" }).ok).toBe(false);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+});

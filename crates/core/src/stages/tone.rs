@@ -5,6 +5,11 @@
 //! wide-screen 16:9 aspect ratios"). A source much larger than the tone map is averaged in blocks
 //! before it is sampled bilinearly, so fine detail is averaged rather than skipped.
 //!
+//! With `levels` auto, the black and white points come from the resized map: the single-channel
+//! case of the "Simplest Color Balance" (N. Limare, J.-L. Lisani, J.-M. Morel, A. B. Petro and
+//! C. Sbert, *Image Processing On Line* 1, 2011, doi:10.5201/ipol.2011.llmps-scb), written from
+//! the paper's description. See [`crate::analysis::levels`].
+//!
 //! Every step runs in f32 in the Python engine's order, with each setting rounded to f32 where
 //! numpy rounds it, so both engines give the same values.
 
@@ -14,10 +19,21 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::analysis;
 use crate::math;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
 use crate::types::{Canvas, Fit, Image, ToneMap};
+
+/// Where the tone stage takes its black and white points from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Levels {
+    /// The Black and White settings.
+    Manual,
+    /// The tones of the image itself.
+    Auto,
+}
 
 // Each help text stays on one line: schemars keeps the line breaks of a doc comment.
 /// Settings for the tone stage.
@@ -35,6 +51,11 @@ pub struct ToneSettings {
     /// Luminance at or above this level becomes white, which takes no ink.
     #[schemars(range(min = 0.0, max = 1.0), extend("x-step" = 0.01))]
     pub white: f64,
+    /// Manual uses Black and White. Auto sets them from the image so that Clip percent of its pixels turn full black and as many full white.
+    pub levels: Levels,
+    /// Share of pixels, in percent, that auto levels turn full black and, again, full white; used only when Levels is Auto.
+    #[schemars(range(min = 0.0, max = 10.0), extend("x-step" = 0.1))]
+    pub clip_percent: f64,
     /// Midtone curve applied to the luminance: above 1 darkens the midtones, below 1 lightens them.
     #[schemars(range(min = 0.1, max = 5.0), extend("x-step" = 0.05))]
     pub gamma: f64,
@@ -56,6 +77,8 @@ impl Default for ToneSettings {
             invert: false,
             black: 0.0,
             white: 1.0,
+            levels: Levels::Manual,
+            clip_percent: 0.5,
             gamma: 1.0,
             contrast: 0.0,
             blur_mm: 0.0,
@@ -63,8 +86,8 @@ impl Default for ToneSettings {
     }
 }
 
-/// Turn the image into a tone map. In order: luminance, a centre crop for `fill`, resize, levels,
-/// gamma, contrast, invert and blur.
+/// Turn the image into a tone map. In order: luminance, a centre crop for `fill`, resize, levels
+/// (found from the resized map when `levels` is auto), gamma, contrast, invert and blur.
 pub struct ToneStage;
 
 impl Stage for ToneStage {
@@ -150,9 +173,21 @@ fn tone_map(image: &Image, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
         (lum, w, h) = crop_to_aspect(&lum, w, h, dw / dh);
     }
     let (y, tw, th) = resize(&lum, w, h, s.resolution as usize);
+    let (black, white) = match s.levels {
+        Levels::Manual => (s.black, s.white),
+        Levels::Auto => {
+            let (b, w) = analysis::levels(&y, s.clip_percent);
+            // A near-flat image keeps full levels, so its noise is not stretched into ink.
+            if w - b < 1.0 / 64.0 {
+                (0.0, 1.0)
+            } else {
+                (b, w)
+            }
+        }
+    };
     // numpy takes `max(white - black, 1e-6)` and `1 + contrast` in f64 and rounds the result to
     // f32; white <= black makes the levels a hard threshold at black instead of dividing by zero.
-    let (black, span) = (s.black as f32, (s.white - s.black).max(1e-6) as f32);
+    let (black, span) = (black as f32, (white - black).max(1e-6) as f32);
     let (gamma, gain) = (s.gamma as f32, (1.0 + s.contrast) as f32);
     let ink: Vec<f32> = y
         .iter()
@@ -231,7 +266,7 @@ pub(crate) fn resize(
 mod tests {
     use super::*;
     use crate::settings::merge;
-    use crate::synthetic::{checkerboard, color_bars, flat, gradient, noise, still_life};
+    use crate::synthetic::{checkerboard, color_bars, flat, gradient, noise, ramp, still_life};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -366,6 +401,32 @@ mod tests {
                     && ink[12 * 64 + 32..13 * 64].iter().all(|v| *v == 0.0)
             );
         }
+    }
+    #[test]
+    fn auto_levels_stretch_a_narrow_ramp() {
+        // A bin edge is off by up to 1/4096, which the span of about 0.4 turns into 1/1024.
+        let patch = json!({"levels": "auto", "clip_percent": 0});
+        let (_, t) = run_tone(ramp(256, 64, 0.3, 0.7), SQUARE, patch);
+        let lo = t.ink.iter().copied().fold(1.0, f32::min);
+        let hi = t.ink.iter().copied().fold(0.0, f32::max);
+        assert!(lo <= 1.0 / 1024.0, "least ink {lo}");
+        assert!(hi >= 1.0 - 1.0 / 1024.0, "most ink {hi}");
+    }
+    #[test]
+    fn auto_levels_leave_a_flat_image_flat() {
+        let auto = run_tone(flat(64, 64, 0.5), SQUARE, json!({"levels": "auto"})).1;
+        let manual = run_tone(flat(64, 64, 0.5), SQUARE, json!({"levels": "manual"})).1;
+        assert_eq!(auto.ink, manual.ink);
+    }
+    #[test]
+    fn auto_levels_ignore_black_and_white() {
+        let image = || ramp(256, 64, 0.3, 0.7);
+        let auto = json!({"levels": "auto", "clip_percent": 0});
+        let moved = json!({"levels": "auto", "clip_percent": 0, "black": 0.4, "white": 0.6});
+        assert_eq!(
+            run_tone(image(), SQUARE, auto).1.ink,
+            run_tone(image(), SQUARE, moved).1.ink
+        );
     }
     #[test]
     fn fill_crops_to_the_drawing_aspect() {

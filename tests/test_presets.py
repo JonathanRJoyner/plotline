@@ -79,6 +79,17 @@ def test_missing_keys_take_defaults(files):
     assert s.settings["order"]["min_length_mm"] == 0.0
 
 
+def test_a_preset_without_levels_takes_manual(files):
+    read, apply = files
+    s = Session()
+    s.update("tone", levels="auto")
+    d = read(s)
+    assert d["settings"]["tone"]["levels"] == "auto"
+    del d["settings"]["tone"]["levels"]
+    apply(s, d)
+    assert s.settings["tone"]["levels"] == "manual"
+
+
 def test_bad_format_and_future_version_raise(files):
     read, apply = files
     s = Session()
