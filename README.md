@@ -41,7 +41,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 ## Features
 
-- **Five styles,** from dots on a grid to one continuous spiral. The table below describes each one.
+- **Eighteen styles,** from dots on a grid to one continuous spiral. The table below describes each one.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Short pen travel.** Every run orders its paths to keep the pen's travel short, and the line styles lift the pen far less often than `grid`.
 - **Plotter-ready output.** An SVG in millimetres holds the drawing in one layer, labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI writes one G-code file per pen.
@@ -56,6 +56,21 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `waves` | Parallel lines that ripple more where the image is darker, one pen stroke per line. |
 | `spiral` | One spiral from the centre out that ripples the same way. |
 | `ink` | Line art, lettering and inked drawings. It outlines every ink shape and fills it with rings, and draws strokes thinner than the pen once down the middle, so the drawing keeps its own shapes and weights. |
+| `stipple` | Points that spread evenly while staying dense in dark areas (weighted Voronoi relaxation), each drawn as a dot sized by the ink under it. |
+| `line` | The same points joined into one unbroken line that does not cross itself. |
+| `dashes` | A short stroke at each point, along the image's edges. |
+| `tree` | The points joined by the shortest tree. |
+| `mesh` | A triangle mesh over the points. |
+| `cells` | The outlines of the points' Voronoi cells. |
+| `sketch` | Straight strokes chained from dark to dark, like a quick pencil sketch. |
+| `halftone` | Dots on a regular grid, each sized by the ink, like a printed halftone. |
+| `dither` | Dots placed by error diffusion. |
+| `circles` | Circles packed without overlap, larger and closer where the image is darker. |
+| `contours` | Level lines of the image, like a topographic map. |
+| `flow` | Evenly spaced lines that follow the image's edges, closer together where it is darker. |
+| `hilbert` | A space-filling curve that folds tighter where the image is darker, broken where it leaves the image. |
+
+`stipple`, `line`, `dashes`, `tree`, `mesh` and `cells` share one placement of points, so switching between them at their default settings reuses the points. A style switch resets the settings to the new style's defaults.
 
 ## In the browser
 
@@ -99,7 +114,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 
 ## Roadmap
 
-plotline is early software. The Voronoi styles, Sketch Lines and the MCP server are planned but not built yet, and `plotline mcp` prints a message saying so. The goals, architecture, decisions and everything still planned are in the [design brief](docs/BRIEF.md).
+plotline is early software. The MCP server is planned but not built yet, and `plotline mcp` prints a message saying so. The goals, architecture, decisions and everything still planned are in the [design brief](docs/BRIEF.md).
 
 ## License
 

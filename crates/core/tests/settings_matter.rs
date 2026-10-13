@@ -28,6 +28,36 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "min_length_mm",
         "every wave line crosses the whole drawing, far longer than the 10 mm limit",
     ),
+    (
+        "line",
+        "order",
+        "min_length_mm",
+        "the one line runs through every point, far longer than the 5 mm it is tested at",
+    ),
+    (
+        "sketch",
+        "order",
+        "min_length_mm",
+        "at its defaults the style draws one stroke on the noise image, far longer than 5 mm; a higher stop ends strokes sooner and then it drops the short ones",
+    ),
+    (
+        "sketch",
+        "order",
+        "optimize",
+        "at its defaults the style draws one stroke on the noise image, so there is nothing to reorder; a higher stop gives many strokes and then it reorders them",
+    ),
+    (
+        "hilbert",
+        "hilbert",
+        "max_cell_mm",
+        "on the noise image every large cell averages mid-grey, so the ink rule folds to the smallest cell before the largest fold is reached; over white it acts, as a white A4 page shows",
+    ),
+    (
+        "hilbert",
+        "order",
+        "min_length_mm",
+        "every path of the curve on the noise image is over 9 mm long; on a black A4 page the 0.6 mm fragments at the map's edge are dropped, 216 paths becoming 75",
+    ),
 ];
 
 /// A legal value of `prop` other than `default`: the other boolean, the number halfway to the
@@ -74,12 +104,11 @@ fn enum_values(prop: &Value, defs: &Value) -> Option<Vec<Value>> {
         .map(|vs| vs.iter().map(|v| v["const"].clone()).collect())
 }
 
-/// The drawing of `style` on the noise image with `patch` over `stage`, as paths JSON.
-fn draw(style: &str, stage: &str, patch: &Value) -> Value {
-    let mut s = Session::new(64 << 20);
-    s.set_image(noise(64, 48, 1));
-    s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
-    s.set_style(style).unwrap();
+/// The drawing of `style` on the session's noise image with `patch` over `stage`, as paths JSON.
+/// The session is shared between draws, so its cache gives stages upstream of the change back
+/// instead of running them again, which matters for the relaxation of every Voronoi style.
+fn draw(s: &mut Session, style: &str, stage: &str, patch: &Value) -> Value {
+    s.set_style(style).unwrap(); // resets every stage to its defaults
     s.update(stage, patch).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
@@ -90,13 +119,16 @@ fn draw(style: &str, stage: &str, patch: &Value) -> Value {
 
 #[test]
 fn every_setting_changes_the_drawing() {
+    let mut s = Session::new(512 << 20);
+    s.set_image(noise(64, 48, 1));
+    s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
     let mut failures = Vec::new();
     for style in list_styles() {
         let schema = style.schema();
         let defaults = style.defaults();
         for stage in schema["stages"].as_array().unwrap() {
             let name = stage["name"].as_str().unwrap();
-            let base = draw(&style.name, name, &json!({}));
+            let base = draw(&mut s, &style.name, name, &json!({}));
             let props = stage["schema"]["properties"]
                 .as_object()
                 .cloned()
@@ -104,7 +136,7 @@ fn every_setting_changes_the_drawing() {
             for (key, prop) in &props {
                 let default = &defaults[name][key];
                 let value = another(prop, default, &stage["schema"]["$defs"]);
-                let changed = draw(&style.name, name, &json!({ key: value })) != base;
+                let changed = draw(&mut s, &style.name, name, &json!({ key: value })) != base;
                 let listed = NO_OPS
                     .iter()
                     .any(|(s, g, k, _)| (*s, *g, *k) == (style.name.as_str(), name, key.as_str()));
