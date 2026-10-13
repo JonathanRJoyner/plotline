@@ -68,6 +68,8 @@ fn stipple_matches_the_golden_file() {
     s.update("tone", r#"{"resolution":64}"#).unwrap();
     s.update("voronoi", r#"{"count":300,"iterations":10}"#)
         .unwrap();
+    // Points, so the file pins the relaxation and stays small.
+    s.update("stipple", r#"{"shape":"point"}"#).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
     let actual: serde_json::Value = serde_json::from_str(&s.json().unwrap()).unwrap();

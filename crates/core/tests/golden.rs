@@ -62,7 +62,7 @@ fn header(v: &Value) -> Vec<(&String, &Value)> {
 }
 
 #[test]
-fn grid_matches_golden_files() {
+fn styles_match_golden_files() {
     let cases = [
         (
             "grid_gradient",
@@ -82,7 +82,12 @@ fn grid_matches_golden_files() {
             "stipple_gradient",
             "stipple",
             gradient(64, 48),
-            json!({"tone": {"resolution": 64}, "voronoi": {"count": 300, "iterations": 10}}),
+            // The dots are points, so the file pins the relaxation and stays small.
+            json!({
+                "tone": {"resolution": 64},
+                "voronoi": {"count": 300, "iterations": 10},
+                "stipple": {"shape": "point"}
+            }),
         ),
     ];
     for (name, style, image, patch) in cases {
