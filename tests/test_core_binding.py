@@ -43,6 +43,7 @@ def test_styles_and_schema():
         "sketch",
         "halftone",
         "dither",
+        "circles",
     ]
     assert (
         _core.describe("grid")["stages"][0]["schema"]["properties"]["resolution"]["default"] == 1000

@@ -10,6 +10,7 @@ use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
 use crate::stages::ink::InkStage;
 use crate::stages::order::OrderStage;
+use crate::stages::poisson::PoissonPlacer;
 use crate::stages::sketch::SketchStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
@@ -171,6 +172,22 @@ pub fn dither_style() -> Style {
     )
 }
 
+/// Circles packed without overlapping: tone, poisson, stipple, order.
+pub fn circles_style() -> Style {
+    point_style(
+        "circles",
+        "Circles",
+        "Circles packed without overlapping, larger and closer where it is darker.",
+        Arc::new(PoissonPlacer),
+        Arc::new(StippleRenderer),
+    )
+    .with_defaults("poisson", json!({"spacing_mm": 3.0}))
+    .with_defaults(
+        "stipple",
+        json!({"size_mm": 3.0, "vary": 1.0, "shape": "circle"}),
+    )
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -197,6 +214,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(sketch_style()),
         Arc::new(halftone_style()),
         Arc::new(dither_style()),
+        Arc::new(circles_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -230,7 +248,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
-                "halftone", "dither"
+                "halftone", "dither", "circles"
             ]
         );
         assert!(get_style("_slow").is_some());
