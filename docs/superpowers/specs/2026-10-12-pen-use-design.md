@@ -110,7 +110,7 @@ A pen whose colour the image does not contain gets an empty map. Its lane draws 
 
 **The run.** The runner runs the stages before and including the split once, as now. Then it runs the rest lane by lane: every stage of lane 0, then lane 1, and so on. The cancel flag is checked before every step, as now. `RunContext::lane()` returns `Lane { index, count }`, which is `{0, 1}` outside the lanes.
 
-**Cache keys.** A lane's tone map is keyed by the BLAKE3 hash of its content: width, height, pixel size, origin and every ink value, in the byte layout `root_key` uses for the image. Its pen list is keyed like the pens root. A lane stage's key adds `"lane": [index, count]` to the key JSON, because a stage may read its lane. So:
+**Cache keys.** A lane's tone map is keyed by the BLAKE3 hash of its content: width, height, pixel size, origin and every ink value, in the byte layout `root_key` uses for the image. Its pen list is keyed like the pens root. A lane stage's key adds a `lane` entry, `"{index}/{count}"`, to the key's inputs, because a stage may read its lane. So:
 - an unchanged lane map reruns nothing downstream, whatever else changed;
 - a pen's colour or width reruns only the lanes that read it;
 - changing order settings reruns only the order stage of each lane.
@@ -126,7 +126,7 @@ If every pen drew the same lines, each pen would cover the one before and the in
 - **hatch.** Level `k` of pen `i` is drawn at `angle_deg + 180 (k n + i) / (levels n)`. With one level and two pens, the second pen's lines are square to the first.
 - **waves.** Pen `i`'s lines run at `angle_deg + 180 i / n`.
 - **spiral.** Pen `i`'s spiral is turned by `360 i / n` degrees about the centre. The arms of an Archimedean spiral turned this way interleave and never cross.
-- **grid.** Pen `i`'s cell centres move by `spacing i / n` across and down. A cell is kept only while its centre stays inside the tone rect, so two pens give a staggered (quincunx) lattice.
+- **grid.** Pen `i`'s grid moves by `spacing i / n` across and down, and keeps the whole cells of the moved grid that fit in the tone rect. Two pens give a staggered (quincunx) lattice.
 - **ink** and **order** do not change.
 
 ## 6. Hosts and GUI
