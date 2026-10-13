@@ -9,6 +9,7 @@ use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
 use crate::stages::ink::InkStage;
 use crate::stages::order::OrderStage;
+use crate::stages::sketch::SketchStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
 use crate::stages::stipple::StippleRenderer;
@@ -135,6 +136,16 @@ pub fn dashes_style() -> Style {
     )
 }
 
+/// Straight strokes chained from dark to dark: tone, sketch, order.
+pub fn sketch_style() -> Style {
+    tone_style(
+        "sketch",
+        "Sketch lines",
+        "Straight strokes chained from dark to dark, like a quick pencil sketch.",
+        Arc::new(SketchStage),
+    )
+}
+
 /// Dots on a regular grid, each sized by the ink: tone, points, stipple, order.
 pub fn halftone_style() -> Style {
     point_style(
@@ -171,6 +182,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(stipple_style()),
         Arc::new(line_style()),
         Arc::new(dashes_style()),
+        Arc::new(sketch_style()),
         Arc::new(halftone_style()),
         Arc::new(slow_style()),
     ]
@@ -203,7 +215,10 @@ mod tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            ["grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "halftone"]
+            [
+                "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
+                "halftone"
+            ]
         );
         assert!(get_style("_slow").is_some());
         assert!(get_style("nope").is_none());

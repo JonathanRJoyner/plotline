@@ -7,6 +7,7 @@ pub mod hatch;
 pub mod ink;
 pub mod lines;
 pub mod order;
+pub mod sketch;
 pub mod slow;
 pub mod spiral;
 pub mod stipple;

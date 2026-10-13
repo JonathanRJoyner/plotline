@@ -40,6 +40,7 @@ def test_styles_and_schema():
         "stipple",
         "line",
         "dashes",
+        "sketch",
         "halftone",
     ]
     assert (

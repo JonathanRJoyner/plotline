@@ -34,6 +34,18 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "min_length_mm",
         "the one line runs through every point, far longer than the 5 mm it is tested at",
     ),
+    (
+        "sketch",
+        "order",
+        "min_length_mm",
+        "at its defaults the style draws one stroke on the noise image, far longer than 5 mm; a higher stop ends strokes sooner and then it drops the short ones",
+    ),
+    (
+        "sketch",
+        "order",
+        "optimize",
+        "at its defaults the style draws one stroke on the noise image, so there is nothing to reorder; a higher stop gives many strokes and then it reorders them",
+    ),
 ];
 
 /// A legal value of `prop` other than `default`: the other boolean, the number halfway to the
