@@ -7,5 +7,6 @@ pub mod lines;
 pub mod order;
 pub mod slow;
 pub mod spiral;
+pub mod split;
 pub mod tone;
 pub mod waves;

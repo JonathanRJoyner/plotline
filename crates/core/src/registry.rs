@@ -10,12 +10,13 @@ use crate::stages::ink::InkStage;
 use crate::stages::order::OrderStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
+use crate::stages::split::SplitStage;
 use crate::stages::tone::ToneStage;
 use crate::stages::waves::WaveStage;
 use crate::style::Style;
 use serde_json::json;
 
-/// Dots on a regular grid: tone, points, render, order.
+/// Dots on a regular grid: tone, split, points, render, order.
 pub fn grid_style() -> Style {
     Style::new(
         "grid",
@@ -24,6 +25,7 @@ pub fn grid_style() -> Style {
          keeps the pen's travel short.",
         vec![
             Arc::new(ToneStage),
+            Arc::new(SplitStage),
             Arc::new(GridPlacer),
             Arc::new(DotRenderer),
             Arc::new(OrderStage),
@@ -32,18 +34,24 @@ pub fn grid_style() -> Style {
     .expect("the grid style is valid")
 }
 
-/// A style of tone, one stage that turns the tone map into paths, and path order.
+/// A style of tone, the split between pens, one stage that turns the tone map into paths, and
+/// path order.
 fn line_style(name: &str, label: &str, description: &str, stage: Arc<dyn Stage>) -> Style {
     Style::new(
         name,
         label,
         description,
-        vec![Arc::new(ToneStage), stage, Arc::new(OrderStage)],
+        vec![
+            Arc::new(ToneStage),
+            Arc::new(SplitStage),
+            stage,
+            Arc::new(OrderStage),
+        ],
     )
     .expect("a line style is valid")
 }
 
-/// Straight lines over the dark areas: tone, hatch, order.
+/// Straight lines over the dark areas: tone, split, hatch, order.
 pub fn hatch_style() -> Style {
     line_style(
         "hatch",
@@ -54,7 +62,7 @@ pub fn hatch_style() -> Style {
     )
 }
 
-/// Rippling lines: tone, waves, order.
+/// Rippling lines: tone, split, waves, order.
 pub fn waves_style() -> Style {
     line_style(
         "waves",
@@ -64,7 +72,7 @@ pub fn waves_style() -> Style {
     )
 }
 
-/// One rippling spiral: tone, spiral, order.
+/// One rippling spiral: tone, split, spiral, order.
 pub fn spiral_style() -> Style {
     line_style(
         "spiral",
@@ -74,8 +82,9 @@ pub fn spiral_style() -> Style {
     )
 }
 
-/// An image's own marks, outlined and filled: tone, ink, order. A finer tone map than the other
-/// styles use keeps the hairlines of ink drawings, which averaging into fewer pixels greys out.
+/// An image's own marks, outlined and filled: tone, split, ink, order. A finer tone map than the
+/// other styles use keeps the hairlines of ink drawings, which averaging into fewer pixels greys
+/// out.
 pub fn ink_style() -> Style {
     line_style(
         "ink",
@@ -156,6 +165,19 @@ mod tests {
                     d2.tone.as_ref().map(|t| t.ink.clone())
                 );
             }
+        }
+    }
+    #[test]
+    fn every_listed_style_splits_right_after_tone() {
+        for style in list_styles() {
+            let tone = style.stage_index("tone");
+            assert!(tone.is_some(), "{} has no tone stage", style.name);
+            assert_eq!(
+                style.stage_index("split"),
+                tone.map(|i| i + 1),
+                "{}",
+                style.name
+            );
         }
     }
     #[test]
