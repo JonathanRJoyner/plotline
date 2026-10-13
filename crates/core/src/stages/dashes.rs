@@ -271,6 +271,17 @@ mod tests {
     }
 
     #[test]
+    fn a_dash_on_a_diagonal_ramp_runs_across_the_gradient() {
+        // Ink grows to the right and down the page, so the edge runs from lower left to upper
+        // right: one of dx and dy (y down) is positive and the other negative. Reading the
+        // gradient's y with the page's sign instead would lay the dash along the gradient.
+        let ramp = |x: u32, y: u32| (x + y) as f32 / 38.0;
+        let [dx, dy] = span(&run(vec![[30.0, 30.0]], ramp, json!({"angle_deg": 0})));
+        assert!(dx * dy < 0.0, "{dx} {dy}");
+        assert!((dx.abs() - dy.abs()).abs() < 1e-6, "{dx} {dy}");
+    }
+
+    #[test]
     fn dashes_stay_on_the_map() {
         let rect = [10.0, 10.0, 40.0, 40.0];
         let corners = vec![[10.0, 10.0], [50.0, 10.0], [10.0, 50.0], [50.0, 50.0]];
