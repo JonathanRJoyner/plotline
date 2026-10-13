@@ -49,7 +49,7 @@ Every value is a deterministic function of the pixels: integer histograms with f
 | `kind` | When | Patch |
 |---|---|---|
 | `line_art` | `two_level` ≥ 0.85 and `mid` ≤ 0.15, and the style is not `ink` | `{"style": "ink"}` |
-| `levels` | `p_high − p_low` < 0.6, and `tone.levels` is `manual` | `{"settings": {"tone": {"levels": "auto"}}}` |
+| `levels` | `p_high − p_low` < 0.6 and at least 1/64, and `tone.levels` is `manual` | `{"settings": {"tone": {"levels": "auto"}}}` |
 | `invert` | `border` < 0.3, `mean` < 0.5 and `two_level` ≥ 0.85 (light marks on a dark ground, not a dark photograph), and `tone.invert` is false | `{"settings": {"tone": {"invert": true}}}` |
 | `noise` | `noise` > 0.03, and `tone.blur_mm` is 0 | `{"settings": {"tone": {"blur_mm": b}}}`, `b` = one tone-map pixel, the drawing area's longer side over `tone.resolution`, in mm rounded up to 0.1 mm |
 | `orientation` | `canvas.fit` is `fit`, the image and the drawing area are on opposite sides of square, and swapping the page would draw the image at least 1.3 times larger | `{"page": {"width_mm": h, "height_mm": w}}` |

@@ -277,7 +277,9 @@ pub fn suggest(
     if stats.two_level >= 0.85 && stats.mid <= 0.15 && style != "ink" {
         add("line_art", LINE_ART, Some(json!({"style": "ink"})));
     }
-    if stats.p_high - stats.p_low < 0.6
+    // Under 1/64 the tone stage keeps black 0 and white 1, so there is nothing to stretch.
+    let range = stats.p_high - stats.p_low;
+    if (1.0 / 64.0..0.6).contains(&range)
         && tone("levels").and_then(Value::as_str).unwrap_or("manual") == "manual"
     {
         let patch = json!({"settings": {"tone": {"levels": "auto"}}});
@@ -294,7 +296,8 @@ pub fn suggest(
     let [_, _, dw, dh] = canvas.drawing_rect();
     if stats.noise > 0.03 && tone("blur_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0 {
         let resolution = tone("resolution").and_then(Value::as_f64).unwrap_or(1000.0);
-        let blur = (dw.max(dh) / resolution.max(1.0) * 10.0).ceil() / 10.0;
+        // The schema's largest blur is 10 mm.
+        let blur = ((dw.max(dh) / resolution.max(1.0) * 10.0).ceil() / 10.0).min(10.0);
         let patch = json!({"settings": {"tone": {"blur_mm": blur}}});
         add("noise", NOISY, Some(patch));
     }
@@ -433,6 +436,38 @@ mod tests {
         );
         settings["tone"]["levels"] = json!("auto");
         assert!(find(&run(&image, "grid", &settings), "levels").is_none());
+    }
+
+    #[test]
+    fn a_flat_image_gets_no_levels() {
+        // The tone stage ignores a range under 1/64, so the hint would change nothing.
+        let all = run(&flat(256, 256, 0.5), "grid", &defaults("grid"));
+        assert!(find(&all, "levels").is_none());
+    }
+
+    #[test]
+    fn missing_tone_settings_count_as_defaults() {
+        let none = json!({});
+        let narrow = run(&ramp(256, 64, 0.4, 0.6), "grid", &none);
+        assert!(find(&narrow, "levels").is_some());
+        let noisy = run(&flat_noise(256, 256, 0.5, 0.1, 7), "grid", &none);
+        assert_eq!(
+            patch(&noisy, "noise"),
+            Some(json!({"settings": {"tone": {"blur_mm": 0.3}}}))
+        );
+        let marks = run(&strokes(256, 256, 1.0, 0.0), "grid", &none);
+        assert!(find(&marks, "invert").is_some());
+    }
+
+    #[test]
+    fn the_blur_stays_within_the_schema() {
+        let mut settings = defaults("grid");
+        settings["tone"]["resolution"] = json!(1);
+        let all = run(&flat_noise(256, 256, 0.5, 0.1, 7), "grid", &settings);
+        assert_eq!(
+            patch(&all, "noise"),
+            Some(json!({"settings": {"tone": {"blur_mm": 10.0}}}))
+        );
     }
 
     #[test]
