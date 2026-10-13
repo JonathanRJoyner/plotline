@@ -141,8 +141,8 @@ def describe(style: str, as_json: bool) -> None:
     metavar="NAME:WIDTH_MM:COLOR",
     help=(
         "A pen, such as 'Red:0.5:#ff0000' or 'Fine:0.3:blue'. The colour is #rrggbb or one of "
-        f"the inks {', '.join(inks())}. The current style draws with the first pen. "
-        "Repeat the option to give more pens, which are kept for multi-pen styles to come."
+        f"the inks {', '.join(inks())}. "
+        "Repeat the option to give more pens; set split.mode to share the drawing between them."
     ),
 )
 @click.option(

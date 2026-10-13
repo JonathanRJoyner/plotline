@@ -72,6 +72,28 @@ fn the_inks_are_listed() {
     assert_eq!(inks.as_array().unwrap().len(), 10);
 }
 #[wasm_bindgen_test]
+fn frames_carry_their_pen() {
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(64, 48, &plotline_wasm::synthetic_gradient(64, 48))
+        .unwrap();
+    s.set_pens(
+        r##"[{"name":"A","width_mm":0.3,"color":"#000000"},
+            {"name":"B","width_mm":0.3,"color":"#ff0000"}]"##,
+    )
+    .unwrap();
+    s.update("tone", r#"{"resolution":64}"#).unwrap();
+    s.update("split", r#"{"mode":"light_to_dark"}"#).unwrap();
+    let mut run = s.start().unwrap();
+    let mut pens = std::collections::BTreeSet::new();
+    while let Some(frame) = run.next_frame() {
+        pens.insert(frame.pen());
+    }
+    assert!(
+        pens.contains(&1),
+        "no frame came from the second pen: {pens:?}"
+    );
+}
+#[wasm_bindgen_test]
 fn machines_and_gcode() {
     let machine = r#"{"name": "Test printer",
         "area": {"x": 28, "y": 42, "width": 200, "height": 174},

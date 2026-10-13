@@ -231,3 +231,21 @@ def test_run_blocking_uses_a_snapshot_of_the_settings():
     s._deliver = lambda frame: s.update("order", min_length_mm=10)
     r = s.run_blocking()
     assert s.settings["order"]["min_length_mm"] == 10 and len(r.layers[0].paths) > 0
+
+
+def test_two_pens_by_colour_draw_one_layer_each():
+    img = np.ones((48, 64, 3))
+    img[:, :32] = [1.0, 0.0, 0.0]
+    img[:, 32:] = [0.0, 0.0, 1.0]
+    s = Session(max_fps=1e9)
+    s.set_image(img)
+    s.set_pens([Pen("Red", 0.3, "#ff0000"), Pen("Blue", 0.3, "#0000ff")])
+    s.set_style("hatch")
+    s.update("tone", resolution=64)
+    s.update("split", mode="by_colour")
+    frames = []
+    s.subscribe(frames.append)
+    r = s.run_blocking()
+    assert [layer.pen.name for layer in r.layers] == ["Red", "Blue"]
+    assert all(len(layer.paths) > 0 for layer in r.layers)
+    assert {f.pen for f in frames if f.stage == "hatch"} == {0, 1}

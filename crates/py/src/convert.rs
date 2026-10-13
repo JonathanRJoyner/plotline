@@ -166,6 +166,7 @@ pub fn frame_to_py<'py>(py: Python<'py>, f: Frame) -> PyResult<Bound<'py, PyDict
     d.set_item("stage", f.stage)?;
     d.set_item("progress", f.progress)?;
     d.set_item("label", f.label)?;
+    d.set_item("pen", f.pen)?;
     d.set_item("points", f.points.map(|p| xy_array(py, &p.0)))?;
     let (coords, offsets) = f.paths.map(|p| paths_arrays(py, &p)).unzip();
     d.set_item("coords", coords)?;
