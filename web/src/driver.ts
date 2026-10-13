@@ -64,7 +64,7 @@ export async function drive(
         const progress = frame.progress();
         if (progress >= 1 || t - lastPost >= frameMs) {
           const geometry = { points: frame.points(), coords: frame.coords(), offsets: frame.offsets() };
-          const event: FrameEvent = { type: "frame", id, stage: frame.stage(), progress, label: frame.label(), ...geometry };
+          const event: FrameEvent = { type: "frame", id, stage: frame.stage(), progress, label: frame.label(), pen: frame.pen(), ...geometry };
           post(event, buffers(Object.values(geometry)));
           lastPost = t;
         }

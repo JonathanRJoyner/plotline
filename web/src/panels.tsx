@@ -1,8 +1,8 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { Download, FolderOpen, Plus, Save, Settings as Gear, X } from "lucide-preact";
-import type { JSX } from "preact";
+import { ArrowUp, Download, FolderOpen, Plus, Save, Settings as Gear, X } from "lucide-preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Area, Canvas, Ink, Machine, Pen, Stats } from "./events";
 import type { Speeds, State } from "./protocol";
@@ -64,10 +64,14 @@ type PensProps = {
   // How many pens the last drawing has layers for, or null before the first drawing.
   drawn: number | null;
   onChange: (pens: Pen[]) => void; onToggle: (index: number) => void;
+  // Shown right after the pen list: the Pen use setting.
+  children?: ComponentChildren;
 };
 
-export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, onToggle }: PensProps): JSX.Element {
+export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, onToggle, children }: PensProps): JSX.Element {
   const set = (i: number, patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  // The list order decides which pen draws which part, so a pen moves up past the one above it.
+  const moveUp = (i: number) => onChange(pens.map((p, j) => (j === i - 1 ? pens[i] : j === i ? pens[i - 1] : p)));
   return (
     <fieldset>
       <legend>Pens</legend>
@@ -77,16 +81,14 @@ export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, on
           <input type="text" aria-label="Name" value={p.name} onChange={(e) => set(i, { name: e.currentTarget.value })} />
           <input type="number" aria-label="Width in mm" min="0" step="0.05" value={p.width_mm} onChange={(e) => set(i, { width_mm: e.currentTarget.valueAsNumber })} /> mm
           <input type="checkbox" aria-label="Show in the preview" title="Show in the preview" checked={!hidden.has(i)} onChange={() => onToggle(i)} />
+          <button type="button" class="icon" aria-label="Move up" title="Move up" disabled={i === 0} onClick={() => moveUp(i)}><ArrowUp /></button>
           {/* The session refuses an empty pen list. */}
           <button type="button" class="icon" aria-label="Remove pen" title="Remove pen" disabled={pens.length === 1} onClick={() => onChange(pens.filter((_, j) => j !== i))}><X /></button>
         </div>
       ))}
       {error && <p class="error">{error}</p>}
-      {drawn !== null && drawn < pens.length && (
-        <p class="help">
-          {drawn === 1 ? "This style draws with the first pen only" : `This drawing uses the first ${drawn} pens`}; the others stay empty.
-        </p>
-      )}
+      {children}
+      {drawn !== null && drawn < pens.length && <p class="help">Pen use is set to one pen, so only the first pen draws.</p>}
       {hidden.size > 0 && <p class="help">A hidden pen is only hidden in the preview: it still exports.</p>}
       <button type="button" onClick={() => onChange([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }])}><Plus /> Add pen</button>
       <label>

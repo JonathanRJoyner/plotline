@@ -11,6 +11,8 @@ type Props = {
   values: State["settings"];
   errors: Record<string, string>;
   help: boolean;
+  // "pens" shows only the pen use stage, for the Pens panel; the default shows all the others.
+  part?: "style" | "pens";
   onChange: (stage: string, key: string, value: unknown) => void;
 };
 
@@ -51,8 +53,8 @@ function Field({ c, value, help, set }: { c: Control; value: unknown; help: bool
   return <div class="control">{input}{help && c.help && <p class="help">{c.help}</p>}</div>;
 }
 
-export function Settings({ stages, values, errors, help, onChange }: Props): JSX.Element {
-  const { own, shared } = splitStages(stages);
+export function Settings({ stages, values, errors, help, part = "style", onChange }: Props): JSX.Element {
+  const { own, shared, pens } = splitStages(stages);
   const stage = (s: Stage, open: boolean) => {
     const controls = controlsFor(s.schema);
     // A stage with no settings, such as the dot renderer, would open on nothing.
@@ -69,5 +71,6 @@ export function Settings({ stages, values, errors, help, onChange }: Props): JSX
       </details>
     );
   };
+  if (part === "pens") return <>{pens.map((s) => stage(s, true))}</>;
   return <>{own.map((s) => stage(s, true))}{shared.map((s) => stage(s, false))}</>;
 }

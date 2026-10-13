@@ -57,10 +57,23 @@ test("definitions, enum and a default step", () => {
   expect(controlsFor({})).toEqual([]);
 });
 
+const st = (name: string) => ({ name, label: name.toUpperCase(), schema: {} });
+
 test("splitStages puts the style's own stages first, then order, then tone as Image", () => {
-  const st = (name: string) => ({ name, label: name.toUpperCase(), schema: {} });
   const { own, shared } = splitStages([st("tone"), st("points"), st("render"), st("order")]);
   expect(own.map((s) => s.name)).toEqual(["points", "render"]);
   expect(shared.map((s) => [s.name, s.label])).toEqual([["order", "ORDER"], ["tone", "Image"]]);
-  expect(splitStages([st("a")])).toEqual({ own: [st("a")], shared: [] });
+  expect(splitStages([st("a")])).toEqual({ own: [st("a")], shared: [], pens: [] });
+});
+
+test("underscores in enum values read as spaces", () => {
+  const [c] = controlsFor({ properties: { mode: { enum: ["one_pen", "by_colour"], default: "one_pen" } } });
+  expect(c.kind === "select" && c.options.map((o) => o.label)).toEqual(["one pen", "by colour"]);
+});
+
+test("splitStages sets the pen use stage apart", () => {
+  const { own, shared, pens } = splitStages([st("tone"), st("split"), st("hatch"), st("order")]);
+  expect(own.map((s) => s.name)).toEqual(["hatch"]);
+  expect(shared.map((s) => s.name)).toEqual(["order", "tone"]);
+  expect(pens.map((s) => s.name)).toEqual(["split"]);
 });
