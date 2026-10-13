@@ -102,7 +102,8 @@ pub(crate) fn sample_by_density(
 ///
 /// The run first reports the scatter, then one frame per step of each pass, a step covering up to
 /// `PIXELS_PER_STEP` pixels. After the last pass, points that won no inked pixel in it are
-/// dropped, so no stray dots sit in white areas. With no passes the scatter is the answer, and nothing is dropped.
+/// dropped, so no stray dots sit in white areas. With no passes the scatter is the answer, and
+/// nothing is dropped.
 pub struct VoronoiPlacer;
 
 impl Stage for VoronoiPlacer {

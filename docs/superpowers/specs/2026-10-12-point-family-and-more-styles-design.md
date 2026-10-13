@@ -72,6 +72,8 @@ Each point becomes a dot of diameter `d = size_mm * sqrt(1 - vary + vary * ink)`
 - **Sampling:** arcs are sampled at most a quarter pen width apart.
 - **Frames:** one frame, then the paths.
 
+*Amended on 2026-10-13, after the final review:* arcs are sampled at most `max(w / 4, 2π r / 64)` apart, so a dot's vertex count grows with its turns rather than its area. The run reports about 30 frames, and it fails at the start when the dots would need more than 20 million vertices. The brief's "Dot geometry" row records this.
+
 | Setting | Range | Default | Help |
 |---|---|---|---|
 | `size_mm` | 0.1 to 10 | 0.8 | Dot diameter over full ink |

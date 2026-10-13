@@ -184,7 +184,7 @@ impl Session {
     }
 
     /// Switch to the built-in style called `name` and reset every stage to its defaults. The cache
-    /// is kept, so stages the styles share are not run again.
+    /// is kept, so a stage the styles share, with the same settings and inputs, is not run again.
     pub fn set_style(&mut self, name: &str) -> Result<(), SessionError> {
         let style = get_style(name).ok_or_else(|| SessionError::UnknownStyle(name.to_string()))?;
         self.settings = style.defaults();

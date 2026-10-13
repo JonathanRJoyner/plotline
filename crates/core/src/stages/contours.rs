@@ -3,9 +3,9 @@
 //! The tone map is blurred, padded by one empty pixel on every side so every level closes, and
 //! traced at `levels` evenly spaced values between white and full ink, one level at a time, which
 //! crowds the lines where the tone changes fast. Each line is simplified to within half a pixel,
-//! mapped to page mm and clamped to the map. Equally spaced levels of a smoothed field follow no published plotting
-//! algorithm, so there is nothing to cite for them; the iso-line tracer, [`raster::iso_lines`],
-//! cites its source in `raster.rs`, and so does the simplification.
+//! mapped to page mm and clamped to the map. Equally spaced levels of a smoothed field follow no
+//! published plotting algorithm, so there is nothing to cite for them; the iso-line tracer,
+//! [`raster::iso_lines`], cites its source in `raster.rs`, and so does the simplification.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
