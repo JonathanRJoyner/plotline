@@ -108,7 +108,7 @@ Strokes oriented by the image gradient follow A. Hertzmann, "Painterly rendering
 
 This is the greedy loop of the brief's §7.1. It keeps a residual copy of the tone map. From the pen's position it tries `candidates` segments of length `length_mm` at angles from the seeded generator, and scores each by the mean residual ink along it, sampled every half pixel. The best segment is drawn as the next vertex of the current stroke, and the residual under it is lowered by `lighten`, clamped at 0. Each pixel is lowered at most once per segment.
 
-- **When the best score falls under `stop`**, the stroke ends and the pen moves to the darkest residual pixel, with ties going to the lowest index.
+- **When the best score falls under `stop`**, the stroke ends and the pen moves to the darkest residual pixel. It is found through the maxima of 16 by 16 pixel blocks, kept up to date for the blocks a segment touches, so a restart does not scan the whole map. Ties go to the first block in row-major order, then the first pixel in it.
 - **The run ends** when that pixel is under `stop` too, or after `max_lines` segments.
 - **Frames** come every 1/30 of `max_lines`, holding the strokes so far.
 
@@ -140,7 +140,7 @@ Variable-radius Poisson-disk sampling, after R. Bridson, "Fast Poisson disk samp
 
 - **Radius:** a point at `p` needs every other point at least `r(p) = spacing_mm / sqrt(ink(p))` away, capped at `20 * spacing_mm`. Ink under 1/400 takes no point.
 - **Growth** runs from an active list, with 30 candidates per active point in the annulus `[r, 2r]`.
-- **Seeds:** when the active list empties, the next seed comes from the seeded generator's darts over the rect, until 30 darts in a row fail.
+- **Seeds:** when the active list empties, the next seed is a dart drawn by ink with the voronoi stage's sampler, so a small dark area on a white page still gets one. Seeding stops after 30 darts in a row fail.
 - **Neighbour checks** use a bucket grid with cells of `spacing_mm`.
 - **Frames** come about every 1/30 of the points expected.
 
