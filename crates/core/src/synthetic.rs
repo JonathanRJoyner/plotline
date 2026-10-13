@@ -2,8 +2,9 @@
 //!
 //! Each function returns an RGB [`Image`] with values in 0..1. The grey images have three equal
 //! channels and follow the Python engine's test images, except [`noise`], which is only
-//! deterministic, and [`still_life`], the GUI's sample. [`color_bars`] and [`scene`] are in
-//! colour, for the colour-to-tone path.
+//! deterministic, [`still_life`], the GUI's sample, and [`strokes`], [`ramp`] and [`flat_noise`],
+//! made for the image analysis. [`color_bars`] and [`scene`] are in colour, for the
+//! colour-to-tone path.
 
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;

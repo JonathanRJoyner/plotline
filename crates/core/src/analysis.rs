@@ -27,7 +27,7 @@ const OTSU_BINS: usize = 256;
 const ANALYSIS_PX: usize = 1024;
 
 /// What [`measure`] reports about an image. Luminance is 0..1; the shares are 0..1.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ImageStats {
     /// The image's own size, not the analysis grid's.
     pub width_px: u32,
@@ -180,9 +180,17 @@ fn border(lum: &[f32], w: usize, h: usize) -> f64 {
     sum / count as f64
 }
 
-/// Measure `image`; see [`ImageStats`].
+/// Measure `image`; see [`ImageStats`]. An image with no pixels reports its size and zero for
+/// everything else.
 pub fn measure(image: &Image) -> ImageStats {
     let (w, h) = (image.width as usize, image.height as usize);
+    if w == 0 || h == 0 {
+        return ImageStats {
+            width_px: image.width,
+            height_px: image.height,
+            ..ImageStats::default()
+        };
+    }
     let k = w.max(h).div_ceil(ANALYSIS_PX).max(1);
     let (lum, gw, gh) = math::block_average(&image.luminance(), w, h, k);
     let [r, g, b] = [0, 1, 2].map(|c| {
@@ -263,6 +271,15 @@ mod tests {
     fn tiny_images_measure() {
         assert_eq!(measure(&flat(1, 1, 0.5)).noise, 0.0);
         assert_eq!(measure(&flat(2, 2, 0.5)).noise, 0.0);
+    }
+
+    #[test]
+    fn empty_images_measure() {
+        for (w, h) in [(0, 0), (0, 5), (5, 0)] {
+            let s = measure(&flat(w, h, 0.5));
+            assert_eq!((s.width_px, s.height_px), (w, h));
+            assert_eq!(s.two_level, 0.0);
+        }
     }
 
     #[test]
