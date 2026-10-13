@@ -1,0 +1,11 @@
+plotline's wheels and its web page contain compiled code from the Rust crates below. Each
+licence is followed by the crates it covers and its text.
+{{#each licenses}}
+
+================================================================================
+{{{name}}}
+Used by: {{#each used_by}}{{{crate.name}}} {{{crate.version}}}{{#unless @last}}, {{/unless}}{{/each}}
+================================================================================
+
+{{{text}}}
+{{/each}}
