@@ -30,16 +30,16 @@ const PIXELS_PER_STEP: usize = 200_000;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct VoronoiSettings {
-    /// Points to place; more points give finer detail and a longer plot
+    /// Points to place; more points give finer detail and a longer plot.
     #[schemars(range(min = 100, max = 50000))]
     pub count: u32,
-    /// Relaxation passes; more passes spread the points more evenly
+    /// Relaxation passes; more passes spread the points more evenly.
     #[schemars(range(min = 0, max = 200))]
     pub iterations: u32,
-    /// Density follows ink to this power; 2 suits the line, tree, mesh and cells renderers, which put more ink between close points
+    /// Density follows ink to this power; 2 suits the line, tree, mesh and cells renderers, which put more ink between close points.
     #[schemars(range(min = 0.5, max = 3.0), extend("x-step" = 0.1))]
     pub exponent: f64,
-    /// Starting scatter
+    /// Starting scatter.
     #[schemars(range(min = 0, max = 9999))]
     pub seed: u32,
 }
@@ -311,10 +311,10 @@ mod tests {
         assert_eq!(bounds(&s, "exponent"), (0.5, 3.0, 1.0));
         assert_eq!(bounds(&s, "seed"), (0.0, 9999.0, 1.0));
         for (key, help) in [
-            ("count", "Points to place; more points give finer detail and a longer plot"),
-            ("iterations", "Relaxation passes; more passes spread the points more evenly"),
-            ("exponent", "Density follows ink to this power; 2 suits the line, tree, mesh and cells renderers, which put more ink between close points"),
-            ("seed", "Starting scatter"),
+            ("count", "Points to place; more points give finer detail and a longer plot."),
+            ("iterations", "Relaxation passes; more passes spread the points more evenly."),
+            ("exponent", "Density follows ink to this power; 2 suits the line, tree, mesh and cells renderers, which put more ink between close points."),
+            ("seed", "Starting scatter."),
         ] {
             assert_eq!(s["properties"][key]["description"], help, "{key}");
         }
@@ -363,6 +363,40 @@ mod tests {
         assert_eq!(pts.0.len(), 100);
         assert_eq!((frames.len(), frames[0].label.as_str()), (1, "scatter"));
         assert_eq!(frames[0].progress, 1.0);
+    }
+
+    #[test]
+    fn relaxation_collapses_onto_a_lone_inked_pixel() {
+        // Every scattered point starts inside pixel (3, 3). One pass gives the whole pixel to one
+        // point, which moves to its centre, (10 + 3.5 * 2, 10 + 3.5 * 2) mm, and the rest are dropped.
+        let map = tone_map(8, 8, |x, y| if (x, y) == (3, 3) { 1.0 } else { 0.0 });
+        let (_, pts) = run_voronoi(map, json!({"count": 100, "iterations": 1}));
+        assert_eq!(pts.0.len(), 1, "{:?}", pts.0);
+        assert!((pts.0[0][0] - 17.0).abs() < 1e-9 && (pts.0[0][1] - 17.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn relaxation_spreads_the_points() {
+        // The distance between the two closest points.
+        let tightest = |pts: &Points| {
+            let mut best = f64::INFINITY;
+            for (i, a) in pts.0.iter().enumerate() {
+                for b in &pts.0[i + 1..] {
+                    best = best.min(math::hypot(a[0] - b[0], a[1] - b[1]));
+                }
+            }
+            best
+        };
+        let run = |iterations: u32| {
+            let map = tone_map(40, 40, |_, _| 1.0);
+            let patch = json!({"count": 200, "iterations": iterations, "seed": 1});
+            run_voronoi(map, patch).1
+        };
+        let (scattered, relaxed) = (tightest(&run(0)), tightest(&run(30)));
+        assert!(
+            relaxed > scattered,
+            "{relaxed} mm after 30 passes, {scattered} mm before"
+        );
     }
 
     #[test]
