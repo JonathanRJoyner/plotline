@@ -57,6 +57,8 @@ def test_new_run_cancels_the_previous_one():
     s = session()
     h1 = s.run()
     time.sleep(0.05)
+    # A short second run: sleeps run long on macOS runners, where 100 frames can outlast the wait.
+    s.update("b", frames=3)
     h2 = s.run()
     assert h1.state == RunState.cancelled and h2.wait(5) == RunState.done
 
