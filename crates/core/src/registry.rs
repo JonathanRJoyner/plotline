@@ -12,6 +12,7 @@ use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
 use crate::stages::stipple::StippleRenderer;
 use crate::stages::tone::ToneStage;
+use crate::stages::tsp::TspRenderer;
 use crate::stages::voronoi::VoronoiPlacer;
 use crate::stages::waves::WaveStage;
 use crate::style::Style;
@@ -47,19 +48,19 @@ pub fn grid_style() -> Style {
 }
 
 /// A style of tone, one stage that turns the tone map into paths, and path order.
-fn line_style(name: &str, label: &str, description: &str, stage: Arc<dyn Stage>) -> Style {
+fn tone_style(name: &str, label: &str, description: &str, stage: Arc<dyn Stage>) -> Style {
     Style::new(
         name,
         label,
         description,
         vec![Arc::new(ToneStage), stage, Arc::new(OrderStage)],
     )
-    .expect("a line style is valid")
+    .expect("a tone style is valid")
 }
 
 /// Straight lines over the dark areas: tone, hatch, order.
 pub fn hatch_style() -> Style {
-    line_style(
+    tone_style(
         "hatch",
         "Hatching",
         "Straight parallel lines wherever the image is dark enough; more levels cross them over \
@@ -70,7 +71,7 @@ pub fn hatch_style() -> Style {
 
 /// Rippling lines: tone, waves, order.
 pub fn waves_style() -> Style {
-    line_style(
+    tone_style(
         "waves",
         "Waves",
         "Parallel lines that ripple more where the image is darker, one pen stroke per line.",
@@ -80,7 +81,7 @@ pub fn waves_style() -> Style {
 
 /// One rippling spiral: tone, spiral, order.
 pub fn spiral_style() -> Style {
-    line_style(
+    tone_style(
         "spiral",
         "Spiral",
         "One spiral from the centre out that ripples more where the image is darker.",
@@ -91,7 +92,7 @@ pub fn spiral_style() -> Style {
 /// An image's own marks, outlined and filled: tone, ink, order. A finer tone map than the other
 /// styles use keeps the hairlines of ink drawings, which averaging into fewer pixels greys out.
 pub fn ink_style() -> Style {
-    line_style(
+    tone_style(
         "ink",
         "Ink",
         "Draws the marks of line art, lettering and inked drawings as they are: every ink shape          is outlined and filled with rings, and strokes thinner than the pen get one line down          the middle.",
@@ -108,6 +109,17 @@ pub fn stipple_style() -> Style {
         "Evenly spread dots, dense in dark areas, each dot sized by the ink under it.",
         Arc::new(VoronoiPlacer),
         Arc::new(StippleRenderer),
+    )
+}
+
+/// One unbroken, non-crossing line through evenly spread points: tone, voronoi, tsp, order.
+pub fn line_style() -> Style {
+    point_style(
+        "line",
+        "Single line",
+        "One unbroken, non-crossing line through every point.",
+        Arc::new(VoronoiPlacer),
+        Arc::new(TspRenderer),
     )
 }
 
@@ -145,6 +157,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(spiral_style()),
         Arc::new(ink_style()),
         Arc::new(stipple_style()),
+        Arc::new(line_style()),
         Arc::new(halftone_style()),
         Arc::new(slow_style()),
     ]
@@ -177,7 +190,7 @@ mod tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
-            ["grid", "hatch", "waves", "spiral", "ink", "stipple", "halftone"]
+            ["grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "halftone"]
         );
         assert!(get_style("_slow").is_some());
         assert!(get_style("nope").is_none());

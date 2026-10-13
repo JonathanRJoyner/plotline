@@ -10,5 +10,6 @@ pub mod slow;
 pub mod spiral;
 pub mod stipple;
 pub mod tone;
+pub mod tsp;
 pub mod voronoi;
 pub mod waves;

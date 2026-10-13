@@ -28,6 +28,12 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "min_length_mm",
         "every wave line crosses the whole drawing, far longer than the 10 mm limit",
     ),
+    (
+        "line",
+        "order",
+        "min_length_mm",
+        "the one line runs through every point, far longer than the 5 mm it is tested at",
+    ),
 ];
 
 /// A legal value of `prop` other than `default`: the other boolean, the number halfway to the

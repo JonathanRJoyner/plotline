@@ -38,6 +38,7 @@ def test_styles_and_schema():
         "spiral",
         "ink",
         "stipple",
+        "line",
         "halftone",
     ]
     assert (
