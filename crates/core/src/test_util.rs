@@ -149,18 +149,15 @@ pub(crate) fn tone_map(w: u32, h: u32, ink: impl Fn(u32, u32) -> f32) -> ToneMap
     }
 }
 
-/// Run a stage that turns a tone map into paths, with `patch` over its defaults; returns the
-/// frames and the paths.
-pub(crate) fn run_tone_stage(
+/// Run `stage` with `patch` over its defaults, giving it each of `inputs` under its own kind;
+/// returns the frames and the artifact. Panics on an error.
+pub(crate) fn run_stage(
     stage: &dyn Stage,
-    tone: ToneMap,
+    inputs: Vec<Artifact>,
     patch: Value,
-) -> (Vec<Frame>, Arc<Paths>) {
+) -> (Vec<Frame>, Artifact) {
     let settings = crate::settings::merge(&stage.defaults(), &patch);
-    let inputs = Inputs::new(std::collections::HashMap::from([(
-        Kind::Tone,
-        Artifact::Tone(Arc::new(tone)),
-    )]));
+    let inputs = Inputs::new(inputs.into_iter().map(|a| (a.kind(), a)).collect());
     let mut run = stage
         .start(inputs, &settings, RunContext::new(Arc::default()))
         .unwrap();
@@ -168,9 +165,21 @@ pub(crate) fn run_tone_stage(
     loop {
         match run.step().unwrap() {
             Step::Frame(f) => frames.push(f),
-            Step::Done(Artifact::Paths(p)) => return (frames, p),
-            Step::Done(a) => panic!("expected paths, got {}", a.kind().name()),
+            Step::Done(a) => return (frames, a),
         }
+    }
+}
+
+/// Run a stage that turns a tone map into paths, with `patch` over its defaults; returns the
+/// frames and the paths.
+pub(crate) fn run_tone_stage(
+    stage: &dyn Stage,
+    tone: ToneMap,
+    patch: Value,
+) -> (Vec<Frame>, Arc<Paths>) {
+    match run_stage(stage, vec![Artifact::Tone(Arc::new(tone))], patch) {
+        (frames, Artifact::Paths(p)) => (frames, p),
+        (_, a) => panic!("expected paths, got {}", a.kind().name()),
     }
 }
 

@@ -8,4 +8,5 @@ pub mod order;
 pub mod slow;
 pub mod spiral;
 pub mod tone;
+pub mod voronoi;
 pub mod waves;
