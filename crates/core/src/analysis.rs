@@ -15,9 +15,10 @@
 //! so native and WebAssembly builds agree bit for bit.
 
 use serde::Serialize;
+use serde_json::{json, Value};
 
 use crate::math;
-use crate::types::Image;
+use crate::types::{Canvas, Fit, Image};
 
 /// Bins for the black and white points.
 const LEVEL_BINS: usize = 4096;
@@ -219,10 +220,125 @@ pub fn measure(image: &Image) -> ImageStats {
     }
 }
 
+/// A change that would suit the image, and why. The reasons are fixed sentences, written for a
+/// person and read by the assistant as well.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Suggestion {
+    pub kind: &'static str,
+    pub reason: &'static str,
+    /// Any of `style` (a style name), `settings` (`{stage: {key: value}}`, applied after the style)
+    /// and `page` (`{width_mm, height_mm}`); `None` for a note with nothing to apply.
+    pub patch: Option<Value>,
+}
+
+/// What [`measure`] found and what [`suggest`] makes of it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Analysis {
+    pub stats: ImageStats,
+    pub suggestions: Vec<Suggestion>,
+}
+
+const LINE_ART: &str = "This looks like line art. The Ink style keeps its shapes and line weights.";
+const NARROW: &str =
+    "The image uses a narrow range of tones. Auto levels stretch it over the full range.";
+const LIGHT_MARKS: &str =
+    "This looks like light marks on a dark ground. Inverting it gives the marks the ink.";
+const NOISY: &str =
+    "The image is noisy. A blur of one tone-map pixel keeps the noise from turning into specks.";
+const TURN: &str = "The image would draw larger with the page turned.";
+const COLOUR: &str = "This is a colour image. Each pen draws one colour, and splitting colours across pens is not built yet, so it is drawn in the first pen's tones.";
+
+/// How much larger the turned page must draw the image to be worth suggesting.
+const TURN_GAIN: f64 = 1.3;
+
+/// Suggestions for the session as it stands, in a fixed order, each left out when already in
+/// effect. `settings` is `{stage: {key: value}}`; a missing `tone` key counts as its default
+/// (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000). The cut-offs are hand-set
+/// starting values, not a fitted model.
+pub fn suggest(
+    stats: &ImageStats,
+    canvas: &Canvas,
+    style: &str,
+    settings: &Value,
+) -> Vec<Suggestion> {
+    let mut out = Vec::new();
+    // Nothing to say about no pixels; the zeroed statistics would trip the rules below.
+    if stats.width_px == 0 || stats.height_px == 0 {
+        return out;
+    }
+    let tone = |key: &str| settings.get("tone").and_then(|t| t.get(key));
+    let mut add = |kind, reason, patch| {
+        out.push(Suggestion {
+            kind,
+            reason,
+            patch,
+        })
+    };
+    if stats.two_level >= 0.85 && stats.mid <= 0.15 && style != "ink" {
+        add("line_art", LINE_ART, Some(json!({"style": "ink"})));
+    }
+    if stats.p_high - stats.p_low < 0.6
+        && tone("levels").and_then(Value::as_str).unwrap_or("manual") == "manual"
+    {
+        let patch = json!({"settings": {"tone": {"levels": "auto"}}});
+        add("levels", NARROW, Some(patch));
+    }
+    if stats.border < 0.3
+        && stats.mean < 0.5
+        && stats.two_level >= 0.85
+        && !tone("invert").and_then(Value::as_bool).unwrap_or(false)
+    {
+        let patch = json!({"settings": {"tone": {"invert": true}}});
+        add("invert", LIGHT_MARKS, Some(patch));
+    }
+    let [_, _, dw, dh] = canvas.drawing_rect();
+    if stats.noise > 0.03 && tone("blur_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0 {
+        let resolution = tone("resolution").and_then(Value::as_f64).unwrap_or(1000.0);
+        let blur = (dw.max(dh) / resolution.max(1.0) * 10.0).ceil() / 10.0;
+        let patch = json!({"settings": {"tone": {"blur_mm": blur}}});
+        add("noise", NOISY, Some(patch));
+    }
+    let [w, h] = [stats.width_px, stats.height_px].map(f64::from);
+    // The turned page's drawing area is (H - 2m) x (W - 2m).
+    let fit_scale = |aw: f64, ah: f64| (aw / w).min(ah / h);
+    if canvas.fit == Fit::Fit
+        && (w > h) != (dw > dh)
+        && fit_scale(dh, dw) >= TURN_GAIN * fit_scale(dw, dh)
+    {
+        let patch = json!({"page": {"width_mm": canvas.height_mm, "height_mm": canvas.width_mm}});
+        add("orientation", TURN, Some(patch));
+    }
+    if stats.colourfulness > 40.0 {
+        add("colour", COLOUR, None);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::get_style;
     use crate::synthetic::{color_bars, flat, flat_noise, ramp, strokes};
+
+    fn page() -> Canvas {
+        Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap()
+    }
+
+    fn defaults(style: &str) -> Value {
+        get_style(style).unwrap().defaults()
+    }
+
+    fn run(image: &Image, style: &str, settings: &Value) -> Vec<Suggestion> {
+        suggest(&measure(image), &page(), style, settings)
+    }
+
+    fn find<'a>(all: &'a [Suggestion], kind: &str) -> Option<&'a Suggestion> {
+        all.iter().find(|s| s.kind == kind)
+    }
+
+    fn patch(all: &[Suggestion], kind: &str) -> Option<Value> {
+        find(all, kind).and_then(|s| s.patch.clone())
+    }
 
     #[test]
     fn line_art_is_two_level() {
@@ -297,5 +413,152 @@ mod tests {
         let (black, white) = levels(&lum, 0.5);
         assert!((black - 0.005).abs() <= 1.0 / 4096.0, "{black}");
         assert!((white - 0.995).abs() <= 1.0 / 4096.0, "{white}");
+    }
+
+    #[test]
+    fn line_art_suggests_ink() {
+        let image = strokes(256, 256, 0.0, 1.0);
+        let all = run(&image, "grid", &defaults("grid"));
+        assert_eq!(patch(&all, "line_art"), Some(json!({"style": "ink"})));
+        assert!(find(&run(&image, "ink", &defaults("ink")), "line_art").is_none());
+    }
+
+    #[test]
+    fn a_narrow_range_suggests_auto_levels() {
+        let image = ramp(256, 64, 0.4, 0.6);
+        let mut settings = defaults("grid");
+        assert_eq!(
+            patch(&run(&image, "grid", &settings), "levels"),
+            Some(json!({"settings": {"tone": {"levels": "auto"}}}))
+        );
+        settings["tone"]["levels"] = json!("auto");
+        assert!(find(&run(&image, "grid", &settings), "levels").is_none());
+    }
+
+    #[test]
+    fn light_marks_suggest_invert() {
+        let image = strokes(256, 256, 1.0, 0.0);
+        let mut settings = defaults("grid");
+        assert_eq!(
+            patch(&run(&image, "grid", &settings), "invert"),
+            Some(json!({"settings": {"tone": {"invert": true}}}))
+        );
+        settings["tone"]["invert"] = json!(true);
+        assert!(find(&run(&image, "grid", &settings), "invert").is_none());
+        // A dark photograph is not two-level.
+        let dark = run(&ramp(256, 64, 0.0, 0.4), "grid", &defaults("grid"));
+        assert!(find(&dark, "invert").is_none());
+    }
+
+    #[test]
+    fn noise_suggests_one_tone_pixel_of_blur() {
+        let image = flat_noise(256, 256, 0.5, 0.1, 7);
+        let mut settings = defaults("grid");
+        assert_eq!(settings["tone"]["resolution"], json!(1000));
+        assert_eq!(
+            patch(&run(&image, "grid", &settings), "noise"),
+            Some(json!({"settings": {"tone": {"blur_mm": 0.3}}}))
+        );
+        settings["tone"]["blur_mm"] = json!(0.5);
+        assert!(find(&run(&image, "grid", &settings), "noise").is_none());
+    }
+
+    #[test]
+    fn a_landscape_image_suggests_turning_the_page() {
+        let settings = defaults("grid");
+        let wide = run(&ramp(400, 200, 0.0, 1.0), "grid", &settings);
+        assert_eq!(
+            patch(&wide, "orientation"),
+            Some(json!({"page": {"width_mm": 297.0, "height_mm": 210.0}}))
+        );
+        let tall = run(&ramp(200, 400, 0.0, 1.0), "grid", &settings);
+        assert!(find(&tall, "orientation").is_none());
+        let mut fill = page();
+        fill.fit = Fit::Fill;
+        let stats = measure(&ramp(400, 200, 0.0, 1.0));
+        assert!(find(&suggest(&stats, &fill, "grid", &settings), "orientation").is_none());
+    }
+
+    #[test]
+    fn colour_is_a_note() {
+        let all = run(&color_bars(256, 64), "grid", &defaults("grid"));
+        let colour = find(&all, "colour").expect("colour bars are colourful");
+        assert_eq!(colour.patch, None);
+    }
+
+    #[test]
+    fn rules_run_in_order() {
+        let all = run(
+            &flat_noise(256, 256, 0.5, 0.1, 7),
+            "grid",
+            &defaults("grid"),
+        );
+        let kinds: Vec<_> = all.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, ["levels", "noise"]);
+    }
+
+    #[test]
+    fn empty_images_suggest_nothing() {
+        for (w, h) in [(0, 0), (0, 5), (5, 0)] {
+            assert!(run(&flat(w, h, 0.5), "grid", &defaults("grid")).is_empty());
+        }
+    }
+
+    #[test]
+    fn reasons_are_the_fixed_sentences() {
+        let settings = defaults("grid");
+        let cases = [
+            (
+                strokes(256, 256, 0.0, 1.0),
+                "line_art",
+                "This looks like line art. The Ink style keeps its shapes and line weights.",
+            ),
+            (
+                ramp(256, 64, 0.4, 0.6),
+                "levels",
+                "The image uses a narrow range of tones. Auto levels stretch it over the full range.",
+            ),
+            (
+                strokes(256, 256, 1.0, 0.0),
+                "invert",
+                "This looks like light marks on a dark ground. Inverting it gives the marks the ink.",
+            ),
+            (
+                flat_noise(256, 256, 0.5, 0.1, 7),
+                "noise",
+                "The image is noisy. A blur of one tone-map pixel keeps the noise from turning into specks.",
+            ),
+            (
+                ramp(400, 200, 0.0, 1.0),
+                "orientation",
+                "The image would draw larger with the page turned.",
+            ),
+            (
+                color_bars(256, 64),
+                "colour",
+                "This is a colour image. Each pen draws one colour, and splitting colours across pens is not built yet, so it is drawn in the first pen's tones.",
+            ),
+        ];
+        for (image, kind, reason) in cases {
+            let all = run(&image, "grid", &settings);
+            let found = find(&all, kind).unwrap_or_else(|| panic!("no {kind} suggestion"));
+            assert_eq!(found.reason, reason);
+        }
+    }
+
+    #[test]
+    fn serialises_as_the_spec_shows() {
+        let all = run(&strokes(256, 256, 0.0, 1.0), "grid", &defaults("grid"));
+        assert_eq!(
+            serde_json::to_value(find(&all, "line_art").unwrap()).unwrap(),
+            json!({
+                "kind": "line_art",
+                "reason": "This looks like line art. The Ink style keeps its shapes and line weights.",
+                "patch": {"style": "ink"}
+            })
+        );
+        let note = run(&color_bars(256, 64), "grid", &defaults("grid"));
+        let note = serde_json::to_value(find(&note, "colour").unwrap()).unwrap();
+        assert_eq!(note["patch"], Value::Null);
     }
 }
