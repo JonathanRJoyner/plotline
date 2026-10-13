@@ -25,7 +25,7 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
     <label>{label}<span><input type="number" min="0" step="any" value={canvas[key]} onChange={(e) => set({ [key]: e.currentTarget.valueAsNumber })} /> mm</span></label>
   );
   return (
-    <fieldset>
+    <fieldset data-tour="page">
       <legend>Page</legend>
       <div class="grid">
         <label>
@@ -69,7 +69,7 @@ type PensProps = {
 export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, onToggle }: PensProps): JSX.Element {
   const set = (i: number, patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   return (
-    <fieldset>
+    <fieldset data-tour="pens">
       <legend>Pens</legend>
       {pens.map((p, i) => (
         <div class="pen">
@@ -155,7 +155,7 @@ type PresetsProps = { warnings: string[]; error?: string; onSave: () => void; on
 
 export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps): JSX.Element {
   return (
-    <fieldset>
+    <fieldset data-tour="presets">
       <legend>Presets</legend>
       <button type="button" onClick={onSave}><Save /> Save preset</button>
       <label class="button">
@@ -183,7 +183,7 @@ type ExportProps = {
 // One G-code file per layer of the drawing, once a machine is set.
 export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: ExportProps): JSX.Element {
   return (
-    <fieldset>
+    <fieldset data-tour="export">
       <legend>Export</legend>
       <button type="button" disabled={!drawing} onClick={() => onExport("svg")}><Download /> SVG</button>
       <button type="button" disabled={!drawing} onClick={() => onExport("json")}><Download /> JSON</button>
