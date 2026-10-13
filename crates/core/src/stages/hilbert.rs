@@ -1,13 +1,13 @@
 //! The Hilbert curve stage: a space-filling curve that folds tighter where the image is darker.
 //!
 //! This is an adaptive Hilbert curve after L. Velho and J. de M. Gomes, "Digital halftoning with
-//! space filling curves", *Proc. SIGGRAPH*, 1991, pp. 81-90. Their patent, US5602943, is listed as
-//! expired on Google Patents. The curve is drawn over the smallest square of side `cell_mm * 2^k`
-//! that covers the tone map, anchored at its top-left corner. A cell splits into four, in Hilbert
-//! order and orientation, while it is wider than `max_cell_mm`, or while it is wider than both
-//! `cell_mm` and `cell_mm / max(ink, 1/64)`, where `ink` is the mean over the cell. The line joins
-//! the centres of the leaf cells in curve order. A curve through cells of side `s` lays down about
-//! `s` of line per `s^2` of area, so the line density follows the ink.
+//! space filling curves", *Proc. SIGGRAPH*, 1991, pp. 81-90. Their patent is listed as expired in
+//! the patent record (US5602943). The curve is drawn over the smallest square of side
+//! `cell_mm * 2^k` that covers the tone map, anchored at its top-left corner. A cell splits into
+//! four, in Hilbert order and orientation, while it is wider than `max_cell_mm`, or while it is
+//! wider than both `cell_mm` and `cell_mm / max(ink, 1/64)`, where `ink` is the mean over the cell.
+//! The line joins the centres of the leaf cells in curve order. A curve through cells of side `s`
+//! lays down about `s` of line per `s^2` of area, so the line density follows the ink.
 //!
 //! The recursion is the classic vector form, in which a cell is an origin and two side vectors and
 //! its four children are the origin and the vectors halved, transposed or reflected: H. Sagan,
