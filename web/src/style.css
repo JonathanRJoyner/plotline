@@ -12,6 +12,7 @@
   --accent: light-dark(#4f46e5, #8b8ff9);
   --on-accent: light-dark(#ffffff, #0d0f13);
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --edge: color-mix(in srgb, var(--text) 30%, transparent); /* round a colour swatch, whatever its colour */
   --ok: light-dark(#15803d, #4ade80);
   --danger: light-dark(#b42318, #f97066);
   --backdrop: light-dark(#e4e6eb, #08090c); /* behind the paper in the preview */
@@ -209,17 +210,17 @@ summary:hover { color: var(--text); }
 .grid label > span { display: flex; align-items: center; gap: 4px; color: var(--text); }
 .grid select, .grid input[type="number"] { width: 100%; max-width: none; min-width: 0; margin-left: 0; }
 
-/* Each pen is one compact row. */
-.pen { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 0; }
-.pen input[type="color"] { width: 30px; flex: none; margin-left: 0; }
-.pen input[type="text"] { flex: 1 1 5em; min-width: 0; }
-.pen input[type="number"] { width: 4.6em; }
-.pen button.icon { width: 28px; height: 28px; }
+.muted { color: var(--muted); }
+.swatch { width: 14px; height: 14px; flex: none; border: 1px solid var(--edge); border-radius: 4px; }
+.name { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Each pen is one compact row: swatch, name, width and its preview toggle. */
+.pen { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-variant-numeric: tabular-nums; }
 
 progress { width: 7em; height: 6px; }
 
-/* The settings dialog: the sections on the left, the open one's fields on the right. */
-dialog.settings {
+/* The dialogs: sections or pens on the left, the open one's fields on the right. */
+dialog {
   width: min(720px, 100vw - 32px);
   max-height: 70vh;
   padding: 0;
@@ -229,20 +230,41 @@ dialog.settings {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
-dialog.settings[open] { display: flex; flex-direction: column; }
-dialog.settings::backdrop { background: rgb(0 0 0 / 0.4); }
-dialog.settings header { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--border); }
-dialog.settings h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
-dialog.settings h2 svg { width: 18px; height: 18px; color: var(--accent); }
-dialog.settings .body { display: grid; grid-template-columns: 140px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; }
-dialog.settings nav { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-right: 1px solid var(--border); }
-dialog.settings nav button { justify-content: flex-start; background: none; border-color: transparent; }
-dialog.settings nav button[aria-current] { color: var(--accent); background: var(--accent-soft); }
-dialog.settings .fields { overflow-y: auto; padding: 8px 16px 16px; }
-dialog.settings h3 { margin: 16px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+dialog[open] { display: flex; flex-direction: column; }
+dialog::backdrop { background: rgb(0 0 0 / 0.4); }
+dialog header { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--border); }
+dialog h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; }
+dialog h2 svg { width: 18px; height: 18px; color: var(--accent); }
+dialog .body { display: grid; grid-template-columns: 140px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; }
+dialog nav { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-right: 1px solid var(--border); }
+dialog nav button { justify-content: flex-start; background: none; border-color: transparent; }
+dialog nav button[aria-current] { color: var(--accent); background: var(--accent-soft); }
+dialog .fields { overflow-y: auto; padding: 8px 16px 16px; }
+dialog h3 { margin: 16px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+dialog.wide { width: min(860px, 100vw - 32px); max-height: 80vh; }
+dialog.wide .body { grid-template-columns: 220px minmax(0, 1fr); }
+dialog nav .help { margin: 8px 4px 0; }
+ol.pens { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+ol.pens button { width: 100%; gap: 8px; font-variant-numeric: tabular-nums; }
+dialog .actions { display: flex; gap: 4px; margin-top: 8px; }
+/* The ink swatches, then the picker for any other colour. */
+.inks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.inks > span { margin-right: auto; }
+.inks input[type="color"] { margin-left: 4px; }
+button.ink { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--edge); }
+button.ink:hover:not(:disabled) { filter: brightness(1.1); }
+button.ink[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The bank: a kind filter and a search, then each model with its sizes as buttons. */
+.filter { display: flex; gap: 6px; margin-bottom: 8px; }
+.filter input { flex: 1; min-width: 0; }
+.model { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid var(--border); }
+.sizes { display: flex; flex-wrap: wrap; gap: 4px; }
+.sizes button { height: 26px; padding: 0 8px; font-variant-numeric: tabular-nums; }
+.sizes button .muted { font-size: 11px; font-weight: 400; }
+.sizes button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 @media (max-width: 600px) {
-  dialog.settings .body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  dialog.settings nav { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); }
+  dialog .body, dialog.wide .body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  dialog nav { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); }
 }
 
 dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }

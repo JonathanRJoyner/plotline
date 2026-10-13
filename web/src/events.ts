@@ -1,4 +1,6 @@
 export type Pen = { name: string; width_mm: number; color: string };
+/** A pen from the bank, with the kind and model it is grouped by. */
+export type BankPen = Pen & { kind: string; model: string };
 /** A common ink colour, offered when a pen's colour is picked. */
 export type Ink = { name: string; color: string };
 export type Canvas = { width_mm: number; height_mm: number; margin_mm: number; fit: "fit" | "fill" };
