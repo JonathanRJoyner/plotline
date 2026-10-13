@@ -46,6 +46,18 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "optimize",
         "at its defaults the style draws one stroke on the noise image, so there is nothing to reorder; a higher stop gives many strokes and then it reorders them",
     ),
+    (
+        "hilbert",
+        "hilbert",
+        "max_cell_mm",
+        "on the noise image every large cell averages mid-grey, so the ink rule folds to the smallest cell before the largest fold is reached; over white it acts, as a white A4 page shows",
+    ),
+    (
+        "hilbert",
+        "order",
+        "min_length_mm",
+        "every path of the curve on the noise image is over 9 mm long; on a black A4 page the 0.6 mm fragments at the map's edge are dropped, 216 paths becoming 75",
+    ),
 ];
 
 /// A legal value of `prop` other than `default`: the other boolean, the number halfway to the

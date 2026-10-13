@@ -11,6 +11,7 @@ use crate::stages::edges::{CellsRenderer, DelaunayRenderer, MstRenderer};
 use crate::stages::flow::FlowStage;
 use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
+use crate::stages::hilbert::HilbertStage;
 use crate::stages::ink::InkStage;
 use crate::stages::order::OrderStage;
 use crate::stages::poisson::PoissonPlacer;
@@ -244,6 +245,16 @@ pub fn flow_style() -> Style {
     )
 }
 
+/// One space-filling line that folds tighter where it is darker: tone, hilbert, order.
+pub fn hilbert_style() -> Style {
+    tone_style(
+        "hilbert",
+        "Hilbert curve",
+        "One space-filling line that folds tighter where it is darker.",
+        Arc::new(HilbertStage),
+    )
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -276,6 +287,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(circles_style()),
         Arc::new(contours_style()),
         Arc::new(flow_style()),
+        Arc::new(hilbert_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -309,7 +321,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
-                "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow"
+                "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
+                "hilbert"
             ]
         );
         assert!(get_style("_slow").is_some());

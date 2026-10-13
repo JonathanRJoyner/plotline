@@ -8,6 +8,7 @@ pub mod flow;
 pub mod graph;
 pub mod grid;
 pub mod hatch;
+pub mod hilbert;
 pub mod ink;
 pub mod lines;
 pub mod order;
