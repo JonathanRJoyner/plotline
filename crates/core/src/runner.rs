@@ -16,9 +16,11 @@ use serde_json::{json, Value};
 
 use crate::cache::StageCache;
 use crate::settings::merge;
-use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
+use crate::stage::{
+    Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
+};
 use crate::style::{Source, Style};
-use crate::types::{Canvas, Drawing, Layer, Paths};
+use crate::types::{Canvas, Drawing, Layer, Paths, Pen, ToneMap};
 
 /// `v` as JSON with object keys sorted and no whitespace, so equal values give equal text.
 pub fn canonical_json(v: &Value) -> String {
@@ -48,6 +50,22 @@ pub fn root_key(kind: Kind, artifact: &Artifact) -> String {
         ),
     };
     blake3::hash(&bytes).to_hex().to_string()
+}
+
+/// The BLAKE3 hex digest of a tone map's content, laid out as [`root_key`] lays out the image: the
+/// width and height as little-endian `u32`, the pixel size and the origin's x and y as
+/// little-endian `f64`, then each ink value as little-endian `f32`.
+pub fn tone_key(t: &ToneMap) -> String {
+    let mut b = Vec::with_capacity(32 + t.ink.len() * 4);
+    b.extend(t.width.to_le_bytes());
+    b.extend(t.height.to_le_bytes());
+    b.extend(
+        [t.mm_per_px, t.origin_mm[0], t.origin_mm[1]]
+            .iter()
+            .flat_map(|x| x.to_le_bytes()),
+    );
+    b.extend(t.ink.iter().flat_map(|x| x.to_le_bytes()));
+    blake3::hash(&b).to_hex().to_string()
 }
 
 /// The BLAKE3 hex digest of the canonical JSON
@@ -105,12 +123,22 @@ pub struct Run {
     cancel: Arc<AtomicBool>,
     /// The slot's generation this run was started for.
     generation: u64,
-    /// The output and key of each finished stage, in style order.
+    /// The output and key of each finished stage, in style order, up to and including the split.
     done: Vec<(Artifact, String)>,
+    /// One lane per pen once the split has run; empty before that and in a style with no split.
+    lanes: Vec<LaneState>,
     /// The stage in progress and its key.
     active: Option<(Box<dyn StageRun>, String)>,
     state: RunState,
     error: Option<String>,
+}
+
+/// One pen's lane once the split has run: its map and pen list with their keys, and the output and
+/// key of each finished stage after the split.
+struct LaneState {
+    tone: (Artifact, String),
+    pens: (Artifact, String),
+    done: Vec<(Artifact, String)>,
 }
 
 impl Run {
@@ -144,6 +172,7 @@ impl Run {
             cancel,
             generation,
             done: Vec::new(),
+            lanes: Vec::new(),
             active: None,
             state: RunState::Idle,
             error: None,
@@ -165,45 +194,62 @@ impl Run {
                 self.write(RunState::Cancelled, None, None);
                 return None;
             }
-            let index = self.done.len();
-            let Some(stage) = self.style.stages.get(index).cloned() else {
+            let Some((index, lane)) = self.next_stage() else {
                 match self.drawing() {
                     Ok(drawing) => self.write(RunState::Done, None, Some(drawing)),
                     Err(e) => self.write(RunState::Error, Some(e), None),
                 }
                 return None;
             };
+            let stage = self.style.stages[index].clone();
+            let pen = lane.map_or(0, |l| l.index);
             if self.active.is_none() {
                 let defaults = stage.defaults();
                 let settings = match self.settings.get(stage.name()) {
                     Some(s) => merge(&defaults, s),
                     None => defaults,
                 };
+                // The first stage after the split, whose output in a lane is the lane's own.
+                let first = self.style.split().map_or(usize::MAX, |s| s + 1);
                 let mut inputs = HashMap::new();
                 let mut keys = BTreeMap::new();
                 for &(kind, source) in self.style.sources(index) {
-                    let (artifact, key) = match source {
-                        Source::Root(k) => &self.roots[&k],
-                        Source::Stage(i) => &self.done[i],
-                        Source::Lane(_) => panic!("lanes are not run yet"),
+                    let (artifact, key) = match (source, lane) {
+                        (Source::Root(k), _) => &self.roots[&k],
+                        (Source::Stage(j), Some(l)) if j >= first => {
+                            &self.lanes[l.index].done[j - first]
+                        }
+                        (Source::Stage(j), _) => &self.done[j],
+                        (Source::Lane(Kind::Tone), Some(l)) => &self.lanes[l.index].tone,
+                        (Source::Lane(Kind::Pens), Some(l)) => &self.lanes[l.index].pens,
+                        (Source::Lane(k), _) => unreachable!("no lane source for {}", k.name()),
                     };
                     inputs.insert(kind, artifact.clone());
                     keys.insert(kind.name(), key.as_str());
                 }
+                // A stage may read its lane, so the lane is part of its key.
+                let tag = lane.map(|l| format!("{}/{}", l.index, l.count));
+                if let Some(tag) = &tag {
+                    keys.insert("lane", tag);
+                }
                 let key = stage_key(&*stage, &settings, &keys);
                 let cached = self.cache.lock().unwrap().get(&key);
                 if let Some(artifact) = cached {
-                    self.done.push((artifact, key));
+                    if let Err(e) = self.land(index, lane, artifact, key) {
+                        self.fail(e);
+                        return None;
+                    }
                     return Some(Frame {
                         stage: stage.name().to_string(),
                         progress: 1.0,
                         label: "cached".to_string(),
                         points: None,
                         paths: None,
-                        pen: 0,
+                        pen,
                     });
                 }
-                let ctx = RunContext::new(self.cancel.clone());
+                let ctx =
+                    RunContext::new(self.cancel.clone()).in_lane(lane.unwrap_or(Lane::SINGLE));
                 match stage.start(Inputs::new(inputs), &settings, ctx) {
                     Ok(run) => self.active = Some((run, key)),
                     Err(e) => {
@@ -216,12 +262,16 @@ impl Run {
             match run.step() {
                 Ok(Step::Frame(mut frame)) => {
                     frame.stage = stage.name().to_string();
+                    frame.pen = pen;
                     return Some(frame);
                 }
                 Ok(Step::Done(artifact)) => {
                     let (_, key) = self.active.take().expect("a stage is active");
                     self.cache.lock().unwrap().put(&key, artifact.clone());
-                    self.done.push((artifact, key));
+                    if let Err(e) = self.land(index, lane, artifact, key) {
+                        self.fail(e);
+                        return None;
+                    }
                 }
                 Err(e) => {
                     self.fail(e);
@@ -252,8 +302,71 @@ impl Run {
         self.error.clone()
     }
 
-    /// The drawing the finished stages make: the last stage's layers, or its paths on one layer
-    /// of the first pen, with the tone map of the last stage that provides one.
+    /// The next stage to run and its lane, or `None` once every stage has run. Up to and
+    /// including the split, stages run once with no lane; after it, every remaining stage of lane
+    /// 0, then of lane 1, and so on.
+    fn next_stage(&self) -> Option<(usize, Option<Lane>)> {
+        let count = self.style.stages.len();
+        match self.style.split() {
+            Some(split) if self.done.len() > split => {
+                let per_lane = count - split - 1;
+                let index = self.lanes.iter().position(|l| l.done.len() < per_lane)?;
+                let lane = Lane {
+                    index,
+                    count: self.lanes.len(),
+                };
+                Some((split + 1 + self.lanes[index].done.len(), Some(lane)))
+            }
+            _ => (self.done.len() < count).then_some((self.done.len(), None)),
+        }
+    }
+
+    /// File stage `index`'s output and key, in `lane` if it has one. The split's output opens one
+    /// lane per tone map, each with the pen of the same index; it fails with no maps or more maps
+    /// than pens.
+    fn land(
+        &mut self,
+        index: usize,
+        lane: Option<Lane>,
+        artifact: Artifact,
+        key: String,
+    ) -> Result<(), StageError> {
+        if let Some(l) = lane {
+            self.lanes[l.index].done.push((artifact, key));
+            return Ok(());
+        }
+        if self.style.split() == Some(index) {
+            let Artifact::Tones(maps) = &artifact else {
+                panic!("the split stage gave {}, not tones", artifact.kind().name());
+            };
+            let (Artifact::Pens(pens), _) = &self.roots[&Kind::Pens] else {
+                unreachable!("roots are filed by kind");
+            };
+            let (n, m) = (maps.len(), pens.len());
+            if n == 0 || n > m {
+                let name = self.style.stages[index].name();
+                let s = if m == 1 { "" } else { "s" };
+                let message = format!("stage {name:?} gave {n} tone maps for {m} pen{s}");
+                return Err(StageError::Failed(message));
+            }
+            let open = |(map, pen): (&Arc<ToneMap>, &Pen)| {
+                let pens = Artifact::Pens(Arc::new(vec![pen.clone()]));
+                let pens_key = root_key(Kind::Pens, &pens);
+                LaneState {
+                    tone: (Artifact::Tone(map.clone()), tone_key(map)),
+                    pens: (pens, pens_key),
+                    done: Vec::new(),
+                }
+            };
+            self.lanes = maps.iter().zip(pens.iter()).map(open).collect();
+        }
+        self.done.push((artifact, key));
+        Ok(())
+    }
+
+    /// The drawing the finished stages make, with the tone map of the last stage before any split
+    /// that provides one. With lanes, layer `i` is pen `i` with lane `i`'s last paths, empty or
+    /// not. Without, it is the last stage's layers, or its paths on one layer of the first pen.
     fn drawing(&self) -> Result<Drawing, String> {
         let (Artifact::Canvas(canvas), _) = &self.roots[&Kind::Canvas] else {
             unreachable!("roots are filed by kind");
@@ -261,19 +374,28 @@ impl Run {
         let (Artifact::Pens(pens), _) = &self.roots[&Kind::Pens] else {
             unreachable!("roots are filed by kind");
         };
-        let layers = match &self.done.last().expect("a style has stages").0 {
-            Artifact::Layers(layers) => layers.to_vec(),
-            Artifact::Paths(paths) => {
-                let pen = pens.first().ok_or("a run needs at least one pen")?;
-                vec![Layer {
-                    pen: pen.clone(),
-                    paths: Paths::clone(paths),
-                }]
-            }
+        let layer = |artifact: &Artifact, pen: &Pen| match artifact {
+            Artifact::Paths(paths) => Layer {
+                pen: pen.clone(),
+                paths: Paths::clone(paths),
+            },
             other => panic!(
                 "the last stage gave {}, not paths or layers",
                 other.kind().name()
             ),
+        };
+        let layers = if self.lanes.is_empty() {
+            match &self.done.last().expect("a style has stages").0 {
+                Artifact::Layers(layers) => layers.to_vec(),
+                last => vec![layer(
+                    last,
+                    pens.first().ok_or("a run needs at least one pen")?,
+                )],
+            }
+        } else {
+            (self.lanes.iter().zip(pens.iter()))
+                .map(|(lane, pen)| layer(&lane.done.last().expect("a lane runs a stage").0, pen))
+                .collect()
         };
         let tone = (self.style.stages.iter().zip(&self.done))
             .rev()
@@ -318,14 +440,346 @@ impl Run {
 mod tests {
     use super::*;
     use crate::cache::StageCache;
+    use crate::settings::{defaults_for, schema_for};
     use crate::stage::{Frame, Kind};
     use crate::style::Style;
-    use crate::test_util::{drain, paths, points, roots, tone, Spy};
+    use crate::test_util::{
+        black, drain, paths, points, roots, roots_with, tone, tone_map, tones, Spy, SpySettings,
+    };
     use crate::types::Pen;
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
+
+    /// A lane stage named "e" that reports one frame labelled "echo", then gives one path: its
+    /// map's first ink and its pen's width, then its lane's index and count.
+    struct Echo;
+
+    impl Stage for Echo {
+        fn name(&self) -> &'static str {
+            "e"
+        }
+        fn label(&self) -> &'static str {
+            "Echo"
+        }
+        fn version(&self) -> u32 {
+            1
+        }
+        fn requires(&self) -> &'static [Kind] {
+            &[Kind::Tone, Kind::Pens]
+        }
+        fn provides(&self) -> Kind {
+            Kind::Paths
+        }
+        fn schema(&self) -> Value {
+            schema_for::<SpySettings>()
+        }
+        fn defaults(&self) -> Value {
+            defaults_for::<SpySettings>()
+        }
+        fn start(
+            &self,
+            inputs: Inputs,
+            _settings: &Value,
+            ctx: RunContext,
+        ) -> Result<Box<dyn StageRun>, StageError> {
+            let lane = ctx.lane();
+            let mut paths = Paths::new();
+            paths.push(&[
+                [inputs.tone().ink[0] as f64, inputs.pens()[0].width_mm],
+                [lane.index as f64, lane.count as f64],
+            ]);
+            Ok(Box::new(EchoRun {
+                paths,
+                framed: false,
+            }))
+        }
+    }
+
+    struct EchoRun {
+        paths: Paths,
+        /// Whether the frame has been reported.
+        framed: bool,
+    }
+
+    impl StageRun for EchoRun {
+        fn step(&mut self) -> Result<Step, StageError> {
+            if std::mem::replace(&mut self.framed, true) {
+                return Ok(Step::Done(Artifact::Paths(Arc::new(self.paths.clone()))));
+            }
+            Ok(Step::Frame(Frame {
+                stage: String::new(),
+                progress: 0.5,
+                label: "echo".to_string(),
+                points: None,
+                paths: None,
+                pen: 0,
+            }))
+        }
+    }
+
+    fn two_pens() -> Vec<Pen> {
+        vec![
+            Pen::new("A", 0.3, "#000000").unwrap(),
+            Pen::new("B", 0.5, "#ff0000").unwrap(),
+        ]
+    }
+
+    /// Drain a run of `style` with `settings` over [`roots_with`] `pens` on `cache`; return the
+    /// run, its frames and the drawing it left in a fresh slot, if any.
+    fn run_pens(
+        style: &Arc<Style>,
+        settings: &Value,
+        pens: Vec<Pen>,
+        cache: &Arc<Mutex<StageCache>>,
+    ) -> (Run, Vec<Frame>, Option<Arc<Drawing>>) {
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let mut run = Run::new(
+            style.clone(),
+            settings.clone(),
+            roots_with(pens),
+            cache.clone(),
+            shared.clone(),
+            Arc::default(),
+            0,
+        );
+        let frames = drain(&mut run);
+        let drawing = shared.lock().unwrap().drawing.clone();
+        (run, frames, drawing)
+    }
+
+    /// Each frame's stage, pen and label.
+    fn seen(frames: &[Frame]) -> Vec<(&str, usize, &str)> {
+        (frames.iter())
+            .map(|f| (f.stage.as_str(), f.pen, f.label.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn a_split_runs_the_rest_once_per_pen_and_makes_a_layer_each() {
+        let t = Arc::new(Spy::new("t", &[Kind::Image], Kind::Tone, tone()));
+        let s = Arc::new(Spy::new(
+            "s",
+            &[Kind::Tone, Kind::Pens],
+            Kind::Tones,
+            tones(&[0.25, 0.75]),
+        ));
+        let style =
+            Arc::new(Style::new("x", "X", "d", vec![t.clone(), s, Arc::new(Echo)]).unwrap());
+        let cache = Arc::new(Mutex::new(StageCache::new(1 << 20)));
+        let (run, frames, d) = run_pens(&style, &style.defaults(), two_pens(), &cache);
+        assert_eq!(run.state(), RunState::Done);
+        assert_eq!(
+            seen(&frames),
+            [
+                ("t", 0, "1/1"),
+                ("s", 0, "1/1"),
+                ("e", 0, "echo"),
+                ("e", 1, "echo")
+            ]
+        );
+        let d = d.unwrap();
+        let pens: Vec<_> = d.layers.iter().map(|l| l.pen.name.as_str()).collect();
+        assert_eq!(pens, ["A", "B"]);
+        assert_eq!(d.layers[0].paths.coords(), [[0.25, 0.3], [0.0, 2.0]]);
+        assert_eq!(d.layers[1].paths.coords(), [[0.75, 0.5], [1.0, 2.0]]);
+        // The tone map is t's, from before the split.
+        assert_eq!(d.tone.as_ref().unwrap().ink, [0.5]);
+        // Lanes with equal maps and equal pens are still keyed apart by their lane.
+        let same = Arc::new(Spy::new(
+            "s",
+            &[Kind::Tone],
+            Kind::Tones,
+            tones(&[0.5, 0.5]),
+        ));
+        let style = Arc::new(Style::new("x", "X", "d", vec![t, same, Arc::new(Echo)]).unwrap());
+        let a = two_pens()[0].clone();
+        let (_, frames, d) = run_pens(&style, &style.defaults(), vec![a.clone(), a], &cache);
+        assert_eq!(seen(&frames)[3], ("e", 1, "echo"));
+        assert_eq!(
+            d.unwrap().layers[1].paths.coords(),
+            [[0.5, 0.3], [1.0, 2.0]]
+        );
+    }
+
+    #[test]
+    fn lanes_are_cached_by_their_map_and_their_pen() {
+        let t = Arc::new(Spy::new("t", &[Kind::Image], Kind::Tone, tone()));
+        let s = Arc::new(Spy::new(
+            "s",
+            &[Kind::Tone, Kind::Pens],
+            Kind::Tones,
+            tones(&[0.25, 0.75]),
+        ));
+        let x = Arc::new(Spy::new("x", &[Kind::Tone], Kind::Paths, paths(0)));
+        let style =
+            Arc::new(Style::new("st", "S", "d", vec![t.clone(), s.clone(), x.clone()]).unwrap());
+        let cache = Arc::new(Mutex::new(StageCache::new(1 << 20)));
+        let mut settings = style.defaults();
+        let (_, _, d) = run_pens(&style, &settings, two_pens(), &cache);
+        assert_eq!(x.runs(), 2);
+        let sizes: Vec<_> = d.unwrap().layers.iter().map(|l| l.paths.len()).collect();
+        assert_eq!(sizes, [0, 0]);
+        // The same roots and settings again are all cached.
+        let (run, frames, _) = run_pens(&style, &settings, two_pens(), &cache);
+        assert_eq!(run.state(), RunState::Done);
+        assert_eq!(x.runs(), 2);
+        assert_eq!(
+            seen(&frames),
+            [
+                ("t", 0, "cached"),
+                ("s", 0, "cached"),
+                ("x", 0, "cached"),
+                ("x", 1, "cached")
+            ]
+        );
+        // The split reruns on new settings but gives the same maps, so no lane reruns.
+        settings["s"]["knob"] = json!(1);
+        run_pens(&style, &settings, two_pens(), &cache);
+        assert_eq!((s.runs(), x.runs()), (2, 2));
+        // A new colour for pen B reruns the split, which reads the pens, but x reads only its map.
+        let blue = vec![
+            two_pens()[0].clone(),
+            Pen::new("B", 0.5, "#0000ff").unwrap(),
+        ];
+        let (_, _, d) = run_pens(&style, &settings, blue.clone(), &cache);
+        assert_eq!((s.runs(), x.runs()), (3, 2));
+        assert_eq!(d.unwrap().layers[1].pen.color, "#0000ff");
+        // A lane stage that reads its pen reruns only in the lane whose pen changed.
+        let y = Arc::new(Spy::new(
+            "y",
+            &[Kind::Tone, Kind::Pens],
+            Kind::Paths,
+            paths(1),
+        ));
+        let style = Arc::new(Style::new("st", "S", "d", vec![t, s, y.clone()]).unwrap());
+        run_pens(&style, &settings, two_pens(), &cache);
+        assert_eq!(y.runs(), 2);
+        let (_, frames, d) = run_pens(&style, &settings, blue, &cache);
+        assert_eq!(y.runs(), 3);
+        assert_eq!(seen(&frames)[2..], [("y", 0, "cached"), ("y", 1, "1/1")]);
+        assert_eq!(d.unwrap().layers[1].paths.len(), 1);
+    }
+
+    #[test]
+    fn more_maps_than_pens_ends_the_run_in_error() {
+        let t = Arc::new(Spy::new("t", &[Kind::Image], Kind::Tone, tone()));
+        let x = Arc::new(Spy::new("x", &[Kind::Tone], Kind::Paths, paths(0)));
+        let cases: [(&[f32], &str); 2] = [
+            (&[0.1, 0.2], r#"stage "s" gave 2 tone maps for 1 pen"#),
+            (&[], r#"stage "s" gave 0 tone maps for 1 pen"#),
+        ];
+        for (inks, error) in cases {
+            let s = Arc::new(Spy::new("s", &[Kind::Tone], Kind::Tones, tones(inks)));
+            let style =
+                Arc::new(Style::new("st", "S", "d", vec![t.clone(), s, x.clone()]).unwrap());
+            let cache = Arc::new(Mutex::new(StageCache::new(1 << 20)));
+            // The second run takes the split from the cache and fails the same way.
+            for _ in 0..2 {
+                let (run, _, d) = run_pens(&style, &style.defaults(), vec![black()], &cache);
+                assert_eq!(run.state(), RunState::Error);
+                assert_eq!(run.error().as_deref(), Some(error));
+                assert!(d.is_none());
+            }
+        }
+        assert_eq!(x.runs(), 0);
+    }
+
+    #[test]
+    fn cancel_between_lanes_ends_cancelled_and_keeps_the_split() {
+        let t = Arc::new(Spy::new("t", &[Kind::Image], Kind::Tone, tone()));
+        let s = Arc::new(Spy::new(
+            "s",
+            &[Kind::Tone],
+            Kind::Tones,
+            tones(&[0.25, 0.75]),
+        ));
+        let x = Arc::new(Spy::new("x", &[Kind::Tone], Kind::Paths, paths(1)).with_frames(3));
+        let style = Arc::new(Style::new("st", "S", "d", vec![t, s, x.clone()]).unwrap());
+        let cache = Arc::new(Mutex::new(StageCache::new(1 << 20)));
+        // Run until `stop` holds for a frame, cancel there, and return the frames.
+        let cancel_at = |stop: &dyn Fn(&Frame) -> bool| {
+            let shared = Arc::new(Mutex::new(Shared::default()));
+            let mut run = Run::new(
+                style.clone(),
+                style.defaults(),
+                roots_with(two_pens()),
+                cache.clone(),
+                shared.clone(),
+                Arc::default(),
+                0,
+            );
+            let mut frames = Vec::new();
+            while let Some(f) = run.next_frame() {
+                if stop(&f) {
+                    run.cancel();
+                }
+                frames.push(f);
+            }
+            assert_eq!(run.state(), RunState::Cancelled);
+            let slot = shared.lock().unwrap();
+            assert_eq!(slot.state, RunState::Cancelled);
+            assert!(slot.drawing.is_none());
+            frames
+        };
+        let frames = cancel_at(&|f| f.label == "1/3");
+        assert_eq!(
+            seen(&frames),
+            [("t", 0, "1/1"), ("s", 0, "1/1"), ("x", 0, "1/3")]
+        );
+        assert_eq!(x.runs(), 1);
+        assert_eq!(cache.lock().unwrap().len(), 2); // t and s
+                                                    // A cancel in lane 1 keeps the split and lane 0.
+        let frames = cancel_at(&|f| f.pen == 1);
+        assert_eq!(
+            seen(&frames),
+            [
+                ("t", 0, "cached"),
+                ("s", 0, "cached"),
+                ("x", 0, "1/3"),
+                ("x", 0, "2/3"),
+                ("x", 0, "3/3"),
+                ("x", 1, "1/3")
+            ]
+        );
+        assert_eq!(x.runs(), 3);
+        assert_eq!(cache.lock().unwrap().len(), 3); // t, s and lane 0's x
+                                                    // A fresh run reruns only lane 1.
+        let (run, frames, d) = run_pens(&style, &style.defaults(), two_pens(), &cache);
+        assert_eq!(run.state(), RunState::Done);
+        assert_eq!(
+            seen(&frames),
+            [
+                ("t", 0, "cached"),
+                ("s", 0, "cached"),
+                ("x", 0, "cached"),
+                ("x", 1, "1/3"),
+                ("x", 1, "2/3"),
+                ("x", 1, "3/3")
+            ]
+        );
+        assert_eq!(x.runs(), 4);
+        assert_eq!(d.unwrap().layers.len(), 2);
+    }
+
+    #[test]
+    fn tone_key_follows_the_content() {
+        let ink = |x: u32, y: u32| (x + 2 * y) as f32 / 4.0;
+        let map = tone_map(2, 2, ink);
+        let key = tone_key(&map);
+        assert_eq!(key.len(), 64);
+        assert_eq!(key, tone_key(&tone_map(2, 2, ink)));
+        let changed = |change: &dyn Fn(&mut ToneMap)| {
+            let mut m = map.clone();
+            change(&mut m);
+            tone_key(&m)
+        };
+        assert_ne!(key, changed(&|m| m.ink[3] = 0.5));
+        assert_ne!(key, changed(&|m| m.mm_per_px = 3.0));
+        assert_ne!(key, changed(&|m| m.origin_mm[0] = 11.0));
+        assert_ne!(key, changed(&|m| m.origin_mm[1] = 11.0));
+    }
 
     #[test]
     fn runs_in_order_fills_stage_names_and_builds_the_drawing() {
