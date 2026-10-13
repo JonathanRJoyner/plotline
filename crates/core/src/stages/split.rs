@@ -9,8 +9,10 @@
 //! SIGGRAPH 2001).
 //!
 //! In `by_colour` mode each pen's map is its coverage of each pixel's colour. The image's red,
-//! green and blue are sampled on the tone map's grid, and each colour is rescaled so its ink
-//! `1 - Y` becomes the tone map's ink, which carries the Image settings over. The pens are
+//! green and blue are sampled on the tone map's grid. Each colour's channel inks are moved so their
+//! luma becomes the tone map's ink, which carries the Image settings over: they are shifted to the
+//! tone's ink and their spread about their luma is scaled down only as far as needed to stay in
+//! [0, 1], so a grey or white pixel becomes grey and the rule has no jump near white. The pens are
 //! transparent inks laid at independent positions, which holds for marks turned against each
 //! other as for rotated print screens (Amidror and Hersch, "Neugebauer and Demichel: dependence
 //! and independence in n-screen superpositions for colour printing", Color Research and
@@ -233,17 +235,28 @@ pub(crate) const SWEEPS: usize = 64;
 /// Colours per axis of the lookup table, at `j / (LEVELS - 1)`.
 pub(crate) const LEVELS: usize = 17;
 
-/// The colour `c` with its ink `u = 1 - Y(c)` scaled to the tone map's ink `t`: each channel's
-/// ink `1 - c_k` times `t / u`, capped at 1. A white pixel becomes the grey `1 - t`.
+/// The colour `c` moved to the tone map's ink `t`. With channel inks `ink_k = 1 - c_k` and their
+/// BT.601 luma `u`, each ink becomes `t + beta (ink_k - u)`, where `beta` is the largest value up
+/// to 1 that keeps every channel in [0, 1]. The luma of the result is `t`, the colour is unchanged
+/// when `t = u`, a grey or white pixel becomes the grey `1 - t`, and the rule is continuous.
 pub(crate) fn rescale(c: [f32; 3], t: f32) -> [f64; 3] {
-    let [r, g, b] = c;
-    // The same f32 expression as `Image::luminance`, so `t = 1 - Y` gives the colour back.
-    let u = 1.0 - (0.299 * r + 0.587 * g + 0.114 * b);
-    if u < 1e-6 {
-        return [1.0 - f64::from(t); 3];
+    let ink = c.map(|k| 1.0 - f64::from(k));
+    let u = 0.299 * ink[0] + 0.587 * ink[1] + 0.114 * ink[2];
+    let (hi, lo) = (
+        ink[0].max(ink[1]).max(ink[2]),
+        ink[0].min(ink[1]).min(ink[2]),
+    );
+    let t = f64::from(t);
+    let mut beta: f64 = 1.0;
+    // A bound whose denominator is not positive cannot be reached, so it is skipped.
+    if hi - u > 0.0 {
+        beta = beta.min((1.0 - t) / (hi - u));
     }
-    let (t, u) = (f64::from(t), f64::from(u));
-    c.map(|k| 1.0 - ((1.0 - f64::from(k)) * t / u).min(1.0))
+    if u - lo > 0.0 {
+        beta = beta.min(t / (u - lo));
+    }
+    // The clamp only guards against rounding.
+    ink.map(|k| 1.0 - (t + beta * (k - u)).clamp(0.0, 1.0))
 }
 
 /// How much of each channel a pen's colour absorbs: `1 - byte / 255`.
@@ -599,6 +612,43 @@ mod tests {
             let y: f32 = 0.299 * r + 0.587 * g + 0.114 * b;
             assert!(close(rescale(c, 1.0 - y), c.map(f64::from)), "{c:?}");
         }
+    }
+
+    #[test]
+    fn rescale_does_not_jump_near_white() {
+        let c = rescale([1.0, 1.0, 0.996], 1.0);
+        assert!(c.iter().all(|&v| v.abs() < 0.01), "{c:?}");
+    }
+
+    #[test]
+    fn rescale_gives_the_tone_s_luma_in_range() {
+        for c in [
+            [0.2, 0.5, 0.9],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.996],
+            [0.0, 0.3, 1.0],
+        ] {
+            for t in [0.0, 0.1, 0.35, 0.5, 0.8, 0.99, 1.0] {
+                let out = rescale(c, t);
+                let [r, g, b] = out.map(|v| 1.0 - v);
+                let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                assert!((luma - f64::from(t)).abs() < 1e-6, "{c:?} at {t}: {out:?}");
+                assert!(
+                    out.iter().all(|v| (0.0..=1.0).contains(v)),
+                    "{c:?} at {t}: {out:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lightening_keeps_the_hue() {
+        let [r, g, b] = rescale([1.0, 0.0, 0.0], 0.5);
+        assert!(
+            (r - 1.0).abs() < 1e-6 && (g - b).abs() < 1e-6,
+            "{:?}",
+            [r, g, b]
+        );
     }
 
     #[test]
