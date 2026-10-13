@@ -10,6 +10,24 @@ dependencies = [
   "numpy>=1.26",
   "click>=8.2",
 ]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Topic :: Artistic Software",
+  "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+
+[project.urls]
+Homepage = "https://jonathanrjoyner.github.io/plotline/"
+Source = "https://github.com/JonathanRJoyner/plotline"
+Issues = "https://github.com/JonathanRJoyner/plotline/issues"
 
 [project.scripts]
 plotline = "plotline.cli.main:main"

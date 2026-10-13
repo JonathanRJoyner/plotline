@@ -278,9 +278,9 @@ export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: Exp
       <legend>Export</legend>
       <button type="button" disabled={!drawing} onClick={() => onExport("svg")}><Download /> SVG</button>
       <button type="button" disabled={!drawing} onClick={() => onExport("json")}><Download /> JSON</button>
-      {machine && layers.map((p, i) => (
+      {machine ? layers.map((p, i) => (
         <div><button type="button" disabled={!drawing} onClick={() => onGcode(i)}><Download /> G-code: {p.name}</button></div>
-      ))}
+      )) : <p class="help">For G-code, set up a machine in Settings.</p>}
     </fieldset>
   );
 }

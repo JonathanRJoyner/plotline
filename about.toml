@@ -1,0 +1,17 @@
+# cargo-about writes the licences of the Rust crates compiled into the wheels and the WebAssembly
+# module, which CI ships beside the GUI bundle. The accepted list matches deny.toml.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "CC0-1.0",
+    "Unicode-3.0",
+]
+# Build scripts' and tests' dependencies are not in the shipped binaries.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# The workspace's own crates are plotline's, under its own licence.
+private = { ignore = true }
