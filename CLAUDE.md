@@ -9,3 +9,4 @@ Rules (the repo will become public, so treat every commit as public):
 - No third-party images in the repo. Test images are generated in code or made for this project.
 - No personal paths, credentials or private notes.
 - Keep algorithm code in the core. The CLI, GUI and MCP only call the session layer.
+- A user-visible GUI feature adds or updates its step in the tour (`STEPS` in `web/src/tour.tsx`).

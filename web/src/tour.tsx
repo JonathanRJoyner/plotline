@@ -1,0 +1,109 @@
+// The guided tour: a card that walks through the page one feature at a time, ringing the element
+// it talks about. A step names its element by the element's data-tour attribute; a step without
+// one, or whose element is not on screen, shows in the middle of the window. A new feature adds
+// its step to STEPS, and the test checks that every target is on an element.
+import { X } from "lucide-preact";
+import type { JSX } from "preact";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+
+export type Step = { target?: string; title: string; text: string };
+
+export const STEPS: Step[] = [
+  { title: "Welcome to plotline", text: "plotline turns an image into lines a pen plotter can draw. This tour shows where everything is. Tour in the toolbar opens it again." },
+  { target: "image", title: "Open an image", text: "Open a PNG, JPEG or WebP, or drop or paste one anywhere on the page. Sample image opens a still life to try things on." },
+  { target: "style", title: "Pick a style", text: "Each style turns the image's tone into a different kind of mark. The line under the menu says what the chosen one does." },
+  { target: "settings", title: "Shape the drawing", text: "The style's own settings come first. Path order and Image, with the levels, gamma and blur, are collapsed below. A change reruns only the stages after it." },
+  { target: "run", title: "Run it", text: "Run draws the image with these settings. Stop ends a run after its current step." },
+  { target: "status", title: "Follow the run", text: "Each stage shows its progress here. Under it are the path count, the pen-down and pen-up lengths and an estimate of the plot time." },
+  { target: "preview", title: "Look closely", text: "The preview draws every mark at the pen's real width and colour. Drag to pan and scroll to zoom. With the preview focused, the arrow keys pan, plus and minus zoom and 0 fits the page." },
+  { target: "view", title: "Check the drawing", text: "Source shows the image under the drawing. Travel shows the pen-up moves between paths. Fit shows the whole page again." },
+  { target: "page", title: "Set the page", text: "The paper size, orientation and margin. Fit keeps the whole image on the page; fill covers the drawing area and crops the rest." },
+  { target: "pens", title: "Choose pens", text: "Add a pen from the bank of common fineliners, or set a width yourself. The colour picker suggests common ink colours." },
+  { target: "export", title: "Export", text: "SVG writes the drawing in millimetres, one layer per pen, for your plotter's own software. JSON writes the paths for other programs." },
+  { target: "presets", title: "Keep a look", text: "A preset is a small file with the style, page, pens and settings, so you can come back to a look or share it. The page also remembers your last setup." },
+  { target: "machine", title: "Plot from G-code", text: "Settings holds a pen-fitted 3D printer: its drawable area, pen heights and feeds. Once one is set, Export writes a G-code file per pen." },
+  { target: "help", title: "Help on every setting", text: "Hover over a setting's name to read its help, or turn on Show help to see it under every control." },
+];
+
+type Rect = { left: number; top: number; right: number; bottom: number };
+
+// Where the card goes: below the target, above it, to its right or to its left, the first with
+// room for the card, kept inside the window; centred when there is no target or no room.
+export function place(r: Rect | null, w: number, h: number, width: number, height: number): { left: number; top: number } {
+  const gap = 12;
+  const x = (left: number) => Math.max(8, Math.min(left, width - w - 8));
+  const y = (top: number) => Math.max(8, Math.min(top, height - h - 8));
+  if (r) {
+    if (r.bottom + gap + h <= height) return { left: x(r.left), top: r.bottom + gap };
+    if (r.top - gap - h >= 0) return { left: x(r.left), top: r.top - gap - h };
+    if (r.right + gap + w <= width) return { left: r.right + gap, top: y(r.top) };
+    if (r.left - gap - w >= 0) return { left: r.left - gap - w, top: y(r.top) };
+  }
+  return { left: (width - w) / 2, top: (height - h) / 2 };
+}
+
+// Whether the tour has never opened in this browser; the first call marks it opened. Without
+// storage the tour waits for its button, rather than opening on every visit.
+const TOUR = "plotline.tour";
+export function firstVisit(): boolean {
+  try {
+    if (localStorage.getItem(TOUR)) return false;
+    localStorage.setItem(TOUR, "seen");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Not modal, so the page stays usable while the card points at it. Each change of `opens` starts
+// it from the first step.
+export function Tour({ opens }: { opens: number }): JSX.Element {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [open, setOpen] = useState(false);
+  const [i, setI] = useState(0);
+  const step = STEPS[i];
+  useEffect(() => {
+    if (opens > 0) {
+      setI(0);
+      setOpen(true);
+    }
+  }, [opens]);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const card = ref.current!;
+    const el = step.target ? document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`) : null;
+    el?.setAttribute("data-tour-active", "");
+    el?.scrollIntoView({ block: "nearest" });
+    const layout = () => {
+      const r = el?.getBoundingClientRect();
+      const { left, top } = place(r && r.width > 0 ? r : null, card.offsetWidth, card.offsetHeight, innerWidth, innerHeight);
+      card.style.left = `${left}px`;
+      card.style.top = `${top}px`;
+    };
+    layout();
+    card.querySelector<HTMLElement>(".primary")?.focus();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    addEventListener("resize", layout);
+    document.addEventListener("keydown", key);
+    return () => {
+      el?.removeAttribute("data-tour-active");
+      removeEventListener("resize", layout);
+      document.removeEventListener("keydown", key);
+    };
+  }, [open, i]);
+  const last = i === STEPS.length - 1;
+  return (
+    <dialog ref={ref} class="tour" open={open} aria-labelledby="tour-title">
+      <header>
+        <h2 id="tour-title">{step.title}</h2>
+        <button type="button" class="icon" title="Close the tour" aria-label="Close the tour" onClick={() => setOpen(false)}><X /></button>
+      </header>
+      <p>{step.text}</p>
+      <div class="actions">
+        <span class="count">{i + 1} of {STEPS.length}</span>
+        <button type="button" disabled={i === 0} onClick={() => setI((j) => Math.max(0, j - 1))}>Back</button>
+        <button type="button" class="primary" onClick={() => (last ? setOpen(false) : setI((j) => Math.min(STEPS.length - 1, j + 1)))}>{last ? "Done" : "Next"}</button>
+      </div>
+    </dialog>
+  );
+}
