@@ -64,8 +64,8 @@ pub(crate) fn trails(n: usize, edges: &[(usize, usize)]) -> Vec<Vec<usize>> {
     let mut degree: Vec<usize> = adj.iter().map(Vec::len).collect();
     let mut used = vec![false; edges.len()];
     let mut next = vec![0; n];
-    // Walks only ever start and end at odd vertices while any remain, so a vertex skipped as even
-    // never turns odd, and a skipped bare vertex never gets an edge back: both cursors only advance.
+    // While odd vertices remain, walks start and end at odd ones, so a vertex skipped as even never
+    // turns odd, and a vertex with no edges left never regains one: both cursors only advance.
     let (mut odd, mut any) = (0, 0);
     let mut out = Vec::new();
     loop {
