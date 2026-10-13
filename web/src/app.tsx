@@ -125,13 +125,7 @@ function Export({ status, machine, onExport, onGcode }: ExportProps) {
   return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onGcode={onGcode} />;
 }
 
-// The pens panel, told how many layers the last drawing has, so it can say which pens draw.
-function Pens({ status, ...props }: Omit<Parameters<typeof PensPanel>[0], "drawn"> & { status: StatusStore }) {
-  const { stats, layers } = useStatus(status);
-  return <PensPanel {...props} drawn={stats === null ? null : layers.length} />;
-}
-
-type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
+type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
   onSettings: () => void; onTour: () => void;
@@ -141,7 +135,8 @@ type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "ru
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
 function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, ...preview }: RunViewProps) {
   const { run, stats } = useStatus(status);
-  const [frame, setFrame] = useState<FrameEvent | null>(null);
+  // The latest frame with geometry from each pen, by pen index, for the preview.
+  const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
   const [result, setResult] = useState<ResultEvent | null>(null);
   const [progress, setProgress] = useState<Record<string, { label: string; progress: number }>>({});
   const [showSource, setShowSource] = useState(false);
@@ -152,19 +147,21 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
   const [stopFor, setStopFor] = useState(0);
   const stopping = run.state === "running" && stopFor === run.id;
   // A mark under a device pixel wide draws as a faint grey or not at all, which reads as a blank page.
-  const thin = stats !== null && preview.firstPen.width_mm * view.scale * (window.devicePixelRatio || 1) < 1;
+  const thin = stats !== null && preview.pens[0].width_mm * view.scale * (window.devicePixelRatio || 1) < 1;
   const latest = useRef(0);
   useEffect(() => {
     engine.onEvent = (e) => {
       if (e.type === "run") {
         latest.current = e.id;
-        setFrame(null); // the preview keeps the previous result until this run's first frame
+        setFrames([]); // the preview keeps the previous result until this run's first frame with geometry
         setProgress({});
         return;
       }
       if (e.id < latest.current) return;
       if (e.type === "frame") {
-        setFrame(e);
+        // A new array each time: the preview redraws on its identity. A frame without geometry,
+        // such as the tone's, leaves the held ones.
+        if (e.points || e.coords) setFrames((fs) => { const next = [...fs]; next[e.pen] = e; return next; });
         setProgress((p) => ({ ...p, [e.stage]: { label: e.label, progress: e.progress } }));
       } else if (e.type === "result") {
         setResult(e);
@@ -220,7 +217,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
       {error && <p class="error">{error}</p>}
       <div class="preview" data-tour="preview">
         <Preview
-          {...preview} frame={frame} result={result} running={run.state === "running"} showSource={showSource}
+          {...preview} frames={frames} result={result} running={run.state === "running"} showSource={showSource}
           showTravel={showTravel} view={view} onView={setView} fits={fits}
         />
         {thin && <p class="hint">The pen is under a pixel wide at this zoom, so its marks barely show: zoom in to see them.</p>}
@@ -403,7 +400,7 @@ export function App() {
       <main>
         <RunView
           engine={engine} status={status} stages={stages} canvas={state.canvas} hidden={hidden}
-          firstPen={state.pens[0]} hasImage={state.image} onOpen={openImage}
+          pens={state.pens} hasImage={state.image} onOpen={openImage}
           error={errors[""] || (errors.image && `Could not open the image (${errors.image}).${state.image ? " The previous image is still open." : ""}`)}
           onSample={() => call("sample", [], "image")} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
           onSettings={() => {
@@ -416,8 +413,8 @@ export function App() {
       <aside>
         {state.suggestions.length > 0 && <SuggestionsPanel suggestions={state.suggestions} error={errors.suggestions} onApply={(patch) => call("apply", [patch], "suggestions")} />}
         <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
-        <Pens
-          status={status} pens={state.pens} hidden={hidden} error={errors.pens}
+        <PensPanel
+          pens={state.pens} hidden={hidden} error={errors.pens} mode={settings.split?.mode as string | undefined}
           onEdit={() => {
             setErrors((es) => ({ ...es, pens: "" })); // as for the settings dialog
             setPensOpens((n) => n + 1);
@@ -427,7 +424,9 @@ export function App() {
             if (!next.delete(i)) next.add(i);
             return next;
           })}
-        />
+        >
+          <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
+        </PensPanel>
         <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
         <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
       </aside>

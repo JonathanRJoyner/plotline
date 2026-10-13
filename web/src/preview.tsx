@@ -6,13 +6,14 @@ import { fitView, zoomAt, type View } from "./view";
 
 type Props = {
   canvas: Canvas;
-  frame: FrameEvent | null;
+  // The latest frame with geometry from each pen of the run, by pen index; empty before the first.
+  frames: (FrameEvent | undefined)[];
   result: ResultEvent | null;
   running: boolean;
   showSource: boolean;
   showTravel: boolean;
   hidden: Set<number>;
-  firstPen: Pen;
+  pens: Pen[];
   hasImage: boolean;
   // The view lives with the toolbar, which shows its zoom; `fits` counts the toolbar's Fit clicks.
   view: View;
@@ -32,13 +33,15 @@ function trace(p: Path2D, c: Float64Array, a: number, b: number) {
   for (let v = a + 1; v < b; v++) p.lineTo(c[2 * v], c[2 * v + 1]);
 }
 
-// Draws everything in page millimetres, so a line width is a length on the paper.
+// Draws everything in page millimetres, so a line width is a length on the paper. While running,
+// each pen's latest frame stands in for the result and is drawn in that pen, so a finished pen's
+// lines stay while the next pen's frames arrive.
 function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h: number, dpr: number, bitmap: ImageBitmap | null) {
-  const { result, firstPen } = s;
-  // While running, the latest frame stands in for the result and is drawn with the first pen;
-  // until the first frame arrives the previous result stays, on the page it was made for.
-  const f = s.running ? s.frame : null;
-  const page = !f && result ? result.canvas : s.canvas;
+  const { result, pens } = s;
+  // Until the first frame with geometry arrives the previous result stays, on the page it was made for.
+  const live = s.running ? s.frames : [];
+  const held = live.some(Boolean);
+  const page = !held && result ? result.canvas : s.canvas;
   const cv = ctx.canvas;
   if (cv.width !== Math.round(w * dpr)) cv.width = Math.round(w * dpr);
   if (cv.height !== Math.round(h * dpr)) cv.height = Math.round(h * dpr);
@@ -83,14 +86,23 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     ctx.globalAlpha = 1;
   }
 
-  const layers: Layer[] = f
-    ? f.coords && f.offsets ? [{ pen: firstPen, coords: f.coords, offsets: f.offsets }] : []
+  // A frame of a pen the list no longer has is drawn with the first pen.
+  const penOf = (i: number) => pens[i] ?? pens[0];
+  const layers: Layer[] = held
+    ? live.flatMap((f, i) => (f?.coords && f.offsets && !s.hidden.has(i) ? [{ pen: penOf(i), coords: f.coords, offsets: f.offsets }] : []))
     : (result?.layers ?? []).filter((_, i) => !s.hidden.has(i));
-  const pts = f?.points;
-  if (pts) strokeChunks(firstPen, pts.length / 2, (p, i) => trace(p, pts, i, i + 1));
+  // Multiply, so pens that overlap darken like layered transparent inks on the plot; one pen on
+  // white looks the same. The rest of the page draws normally.
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  live.forEach((f, i) => {
+    const pts = f?.points;
+    if (pts && !s.hidden.has(i)) strokeChunks(penOf(i), pts.length / 2, (p, k) => trace(p, pts, k, k + 1));
+  });
   for (const l of layers) strokeChunks(l.pen, pathCount(l.offsets), (p, i) => trace(p, l.coords, l.offsets[i], l.offsets[i + 1]));
+  ctx.restore();
 
-  if (s.showTravel && !f) {
+  if (s.showTravel && !held) {
     const travel = { name: "travel", color: "red", width_mm: 1 / view.scale };
     let p = new Path2D();
     let moves = 0;
@@ -174,7 +186,7 @@ export function Preview(props: Props): JSX.Element {
       paint(ctx, props, view, size.w, size.h, window.devicePixelRatio || 1, bitmap);
     });
     return () => cancelAnimationFrame(id);
-  }, [props.canvas, props.frame, props.result, props.running, props.showSource, props.showTravel, props.hidden, props.firstPen, props.hasImage, view, size, bitmap]);
+  }, [props.canvas, props.frames, props.result, props.running, props.showSource, props.showTravel, props.hidden, props.pens, props.hasImage, view, size, bitmap]);
 
   // Zooms by `k`, keeping the page point under (px, py) in place.
   const zoom = (k: number, px: number, py: number) => setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));

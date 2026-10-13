@@ -4,6 +4,7 @@ import init, { Session, syntheticGradient } from "../pkg/plotline_wasm.js";
 import { macrotask } from "./driver";
 import type { Ink, Machine, Pen } from "./events";
 import { Protocol, type Reply, type State } from "./protocol";
+import { controlsFor } from "./schema";
 
 beforeAll(async () => { await init({ module_or_path: readFileSync(new URL("../pkg/plotline_wasm_bg.wasm", import.meta.url)) }); });
 
@@ -92,8 +93,12 @@ test("describe and listStyles", () => {
   const styles = ok("listStyles").value as Array<{ name: string }>;
   expect(styles.some((s) => s.name === "grid")).toBe(true);
   expect(styles.some((s) => s.name.startsWith("_"))).toBe(false);
-  const schema = ok("describe", "grid").value as { stages: unknown[] };
-  expect(schema.stages).toHaveLength(4);
+  const schema = ok("describe", "grid").value as { stages: Array<{ name: string; schema: Record<string, unknown> }> };
+  expect(schema.stages).toHaveLength(5);
+  // The Pens panel shows the split stage's one setting as a select named Pen use.
+  const [mode] = controlsFor(schema.stages.find((s) => s.name === "split")!.schema);
+  expect(mode).toMatchObject({ kind: "select", label: "Pen use", default: "one_pen" });
+  expect(mode.kind === "select" && mode.options.map((o) => o.label)).toEqual(["one pen", "light to dark", "by colour"]);
 });
 
 test("svg and json after a run", async () => {

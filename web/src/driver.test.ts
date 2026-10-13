@@ -15,7 +15,7 @@ function session(): Session {
   return s;
 }
 
-const stages = ["tone", "points", "render", "order"];
+const stages = ["tone", "split", "points", "render", "order"];
 
 test("grid runs to a result", async () => {
   const s = session();
@@ -26,6 +26,8 @@ test("grid runs to a result", async () => {
   for (const stage of stages) {
     expect(events.some((e) => e.type === "frame" && e.stage === stage && e.progress === 1)).toBe(true);
   }
+  // One pen, so every frame belongs to pen 0.
+  expect(events.filter((e) => e.type === "frame").every((e) => e.pen === 0)).toBe(true);
   const results = events.filter((e) => e.type === "result");
   expect(results).toHaveLength(1);
   const result = results[0];

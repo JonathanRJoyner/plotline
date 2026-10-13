@@ -32,7 +32,8 @@ def slow(s, **values):
 def test_defaults():
     s = Session()
     assert s.canvas == Canvas(210, 297, 10) and s.pens == (Pen("Black 0.3", 0.3, "#000000"),)
-    assert s.style.name == "grid" and set(s.settings) == {"tone", "points", "render", "order"}
+    assert s.style.name == "grid"
+    assert set(s.settings) == {"tone", "split", "points", "render", "order"}
     assert s.state == RunState.idle and s.result is None and s.image is None
 
 
@@ -261,7 +262,7 @@ def test_run_blocking_delivers_every_frame_while_running():
     seen = []
     s._deliver = lambda frame: seen.append((frame.stage, s.state))
     s.run_blocking()
-    assert {stage for stage, _ in seen} == {"tone", "points", "render", "order"}
+    assert {stage for stage, _ in seen} == {"tone", "split", "points", "render", "order"}
     assert {state for _, state in seen} == {RunState.running}
 
 
@@ -272,3 +273,21 @@ def test_run_blocking_uses_a_snapshot_of_the_settings():
     s._deliver = lambda frame: s.update("order", min_length_mm=10)
     r = s.run_blocking()
     assert s.settings["order"]["min_length_mm"] == 10 and len(r.layers[0].paths) > 0
+
+
+def test_two_pens_by_colour_draw_one_layer_each():
+    img = np.ones((48, 64, 3))
+    img[:, :32] = [1.0, 0.0, 0.0]
+    img[:, 32:] = [0.0, 0.0, 1.0]
+    s = Session(max_fps=1e9)
+    s.set_image(img)
+    s.set_pens([Pen("Red", 0.3, "#ff0000"), Pen("Blue", 0.3, "#0000ff")])
+    s.set_style("hatch")
+    s.update("tone", resolution=64)
+    s.update("split", mode="by_colour")
+    frames = []
+    s.subscribe(frames.append)
+    r = s.run_blocking()
+    assert [layer.pen.name for layer in r.layers] == ["Red", "Blue"]
+    assert all(len(layer.paths) > 0 for layer in r.layers)
+    assert {f.pen for f in frames if f.stage == "hatch"} == {0, 1}

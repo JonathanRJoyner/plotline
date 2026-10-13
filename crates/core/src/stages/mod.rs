@@ -16,6 +16,7 @@ pub mod poisson;
 pub mod sketch;
 pub mod slow;
 pub mod spiral;
+pub mod split;
 pub mod stipple;
 pub mod tone;
 pub mod tsp;

@@ -92,3 +92,5 @@ warn_return_any = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
+# A test still running after two minutes dumps every thread's stack, so a hang names itself.
+faulthandler_timeout = 120

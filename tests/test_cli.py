@@ -105,6 +105,16 @@ def test_preset_is_applied_and_style_kept(tmp_path, image):
     assert same
 
 
+def test_two_pens_in_one_pen_mode_get_a_note(tmp_path, image):
+    note = "Pen use is set to one pen, so only the first pen draws."
+    args = ["run", "grid", image, "--out", str(tmp_path / "o.svg"), "--quiet"]
+    args += ["--set", "tone.resolution=64", "--pen", "A:0.3:black", "--pen", "B:0.3:red"]
+    r = run(*args)
+    assert r.exit_code == 0 and note in r.stderr, r.output
+    r = run(*args, "--set", "split.mode=light_to_dark")
+    assert r.exit_code == 0 and note not in r.stderr, r.output
+
+
 def test_run_rejects_bad_inputs(tmp_path, image):
     out = str(tmp_path / "o.svg")
     r = run("run", "grid", image, "--out", out, "--set", "order.min_length_mm=abc")

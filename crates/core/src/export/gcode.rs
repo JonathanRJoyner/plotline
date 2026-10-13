@@ -246,6 +246,19 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_layer_gives_a_file_with_no_pen_down() {
+        let mut d = drawing_100(vec![vec![[10.0, 20.0]]], 0.3, "#000000");
+        d.layers.extend(drawing_100(vec![], 0.5, "#ff0000").layers);
+        let g = to_gcode(&d, 1, &machine()).unwrap();
+        assert!(
+            g.starts_with("; plotline: Pen, 0 paths, pen 2 of 2\n"),
+            "{g}"
+        );
+        assert!(!g.lines().any(|l| l == "G1 Z4 F1200"), "{g}");
+        check(&g, &machine());
+    }
+
+    #[test]
     fn a_page_larger_than_the_area_is_refused() {
         let err = to_gcode(&drawing_with(vec![vec![[1.0, 1.0]]]), 0, &machine()).unwrap_err();
         assert!(err.to_string().contains("larger"), "{err}");

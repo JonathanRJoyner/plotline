@@ -254,6 +254,11 @@ impl FrameHandle {
         self.frame.label.clone()
     }
 
+    /// The index of the pen whose lane gave the frame; 0 outside lanes.
+    pub fn pen(&self) -> u32 {
+        self.frame.pen as u32
+    }
+
     /// Points placed so far as `x0, y0, x1, y1, ...` in mm.
     pub fn points(&self) -> Option<Float64Array> {
         let points = self.frame.points.as_ref()?;

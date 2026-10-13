@@ -11,6 +11,9 @@ type Props = {
   values: State["settings"];
   errors: Record<string, string>;
   help: boolean;
+  // "pens" shows only the pen use stage's controls, without a section of their own, for the Pens
+  // panel; the default shows all the other stages.
+  part?: "style" | "pens";
   onChange: (stage: string, key: string, value: unknown) => void;
 };
 
@@ -51,23 +54,25 @@ function Field({ c, value, help, set }: { c: Control; value: unknown; help: bool
   return <div class="control">{input}{help && c.help && <p class="help">{c.help}</p>}</div>;
 }
 
-export function Settings({ stages, values, errors, help, onChange }: Props): JSX.Element {
-  const { own, shared } = splitStages(stages);
+export function Settings({ stages, values, errors, help, part = "style", onChange }: Props): JSX.Element {
+  const { own, shared, pens } = splitStages(stages);
   const stage = (s: Stage, open: boolean) => {
     const controls = controlsFor(s.schema);
     // A stage with no settings, such as the dot renderer, would open on nothing.
     if (controls.length === 0 && !errors[s.name]) return null;
     const field = (c: Control) => <Field c={c} value={values[s.name]?.[c.key] ?? c.default} help={help} set={(v) => onChange(s.name, c.key, v)} />;
     const advanced = controls.filter((c) => c.advanced);
-    // Keyed by name, so a changed style does not hand one stage's open or closed state to another.
-    return (
-      <details class="stage" key={s.name} open={open}>
-        <summary>{s.label}</summary>
+    const body = (
+      <>
         {errors[s.name] && <p class="error">{errors[s.name]}</p>}
         {controls.filter((c) => !c.advanced).map(field)}
         {advanced.length > 0 && <details><summary>Advanced</summary>{advanced.map(field)}</details>}
-      </details>
+      </>
     );
+    if (part === "pens") return <div key={s.name}>{body}</div>;
+    // Keyed by name, so a changed style does not hand one stage's open or closed state to another.
+    return <details class="stage" key={s.name} open={open}><summary>{s.label}</summary>{body}</details>;
   };
+  if (part === "pens") return <>{pens.map((s) => stage(s, true))}</>;
   return <>{own.map((s) => stage(s, true))}{shared.map((s) => stage(s, false))}</>;
 }

@@ -183,6 +183,7 @@ impl StageRun for OrderRun {
             label: format!("{count}/{n} paths"),
             points: None,
             paths: Some(ordered.clone()),
+            pen: 0,
         }))
     }
 }

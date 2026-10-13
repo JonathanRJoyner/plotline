@@ -26,14 +26,16 @@ function referenced(prop: Json, root: Json): Json | null {
   return (table?.[m[2]] as Json | undefined) ?? null;
 }
 
-// Options from an `enum`, or from a `oneOf` of `const` entries; null when neither.
+// Options from an `enum`, or from a `oneOf` of `const` entries; null when neither. A value shows
+// with its underscores as spaces.
 function optionsOf(schema: Json): Option[] | null {
+  const label = (v: unknown) => String(v).replaceAll("_", " ");
   if (Array.isArray(schema.enum)) {
-    return schema.enum.map((v) => ({ value: String(v), label: String(v), title: null }));
+    return schema.enum.map((v) => ({ value: String(v), label: label(v), title: null }));
   }
   const entries = schema.oneOf;
   if (Array.isArray(entries) && entries.every((e: Json) => "const" in e)) {
-    return entries.map((e: Json) => ({ value: String(e.const), label: String(e.const), title: str(e.description) }));
+    return entries.map((e: Json) => ({ value: String(e.const), label: label(e.const), title: str(e.description) }));
   }
   return null;
 }
@@ -77,10 +79,13 @@ export function controlsFor(schema: Record<string, unknown>): Control[] {
 // with the label it is shown under: tone is where the image is prepared.
 const SHARED: [string, string | null][] = [["order", null], ["tone", "Image"]];
 
+// The stage that shares the drawing between the pens; the app shows it in the Pens panel.
+const PENS = "split";
+
 // A style's own stages in run order, then the shared ones, so the settings that make the style
-// what it is come first.
-export function splitStages<S extends { name: string; label: string }>(stages: S[]): { own: S[]; shared: S[] } {
-  const own = stages.filter((s) => !SHARED.some(([name]) => name === s.name));
+// what it is come first. The pen use stage is set apart for the Pens panel.
+export function splitStages<S extends { name: string; label: string }>(stages: S[]): { own: S[]; shared: S[]; pens: S[] } {
+  const own = stages.filter((s) => s.name !== PENS && !SHARED.some(([name]) => name === s.name));
   const shared = SHARED.flatMap(([name, label]) => stages.filter((s) => s.name === name).map((s) => ({ ...s, label: label ?? s.label })));
-  return { own, shared };
+  return { own, shared, pens: stages.filter((s) => s.name === PENS) };
 }

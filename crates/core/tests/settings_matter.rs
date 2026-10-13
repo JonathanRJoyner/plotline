@@ -5,7 +5,7 @@
 
 use plotline_core::registry::list_styles;
 use plotline_core::synthetic::noise;
-use plotline_core::{Canvas, Fit, Session};
+use plotline_core::{Canvas, Fit, Pen, Session};
 use serde_json::{json, Value};
 
 /// Settings that leave the drawing alone on purpose: style, stage, key and why.
@@ -230,6 +230,12 @@ fn every_setting_changes_the_drawing() {
     let mut s = Session::new(512 << 20);
     s.set_image(noise(64, 48, 1));
     s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+    // Two pens, so that the split's light to dark mode has a second layer to add.
+    s.set_pens(vec![
+        Pen::new("Black", 0.3, "#000000").unwrap(),
+        Pen::new("Red", 0.3, "#ff0000").unwrap(),
+    ])
+    .unwrap();
     let mut failures = Vec::new();
     for style in list_styles() {
         let schema = style.schema();

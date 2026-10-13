@@ -12,7 +12,9 @@ use crate::cache::StageCache;
 use crate::machine::{Area, Machine};
 use crate::runner::{Run, Shared};
 use crate::settings::{defaults_for, schema_for, validate};
-use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
+use crate::stage::{
+    Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
+};
 use crate::style::Style;
 use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap};
 
@@ -41,19 +43,38 @@ pub(crate) fn tone() -> Artifact {
     }))
 }
 
+/// One tone map per value of `inks`, each of one pixel with that ink, 1 mm per pixel, its corner
+/// at the origin.
+pub(crate) fn tones(inks: &[f32]) -> Artifact {
+    let map = |&ink| {
+        Arc::new(ToneMap {
+            width: 1,
+            height: 1,
+            ink: vec![ink],
+            mm_per_px: 1.0,
+            origin_mm: [0.0, 0.0],
+        })
+    };
+    Artifact::Tones(Arc::new(inks.iter().map(map).collect()))
+}
+
 /// Run roots: a 4 by 4 flat grey image, a 100 mm square page with no margin, and one black pen.
 pub(crate) fn roots() -> [Artifact; 3] {
+    roots_with(vec![black()])
+}
+
+/// [`roots`] with `pens` in place of the one black pen.
+pub(crate) fn roots_with(pens: Vec<Pen>) -> [Artifact; 3] {
     let image = Image {
         width: 4,
         height: 4,
         rgb: vec![0.5; 4 * 4 * 3],
     };
     let canvas = Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap();
-    let pen = Pen::new("Black 0.3", 0.3, "#000000").unwrap();
     [
         Artifact::Image(Arc::new(image)),
         Artifact::Canvas(Arc::new(canvas)),
-        Artifact::Pens(Arc::new(vec![pen])),
+        Artifact::Pens(Arc::new(pens)),
     ]
 }
 
@@ -156,11 +177,20 @@ pub(crate) fn run_stage(
     inputs: Vec<Artifact>,
     patch: Value,
 ) -> (Vec<Frame>, Artifact) {
+    run_stage_in_lane(stage, inputs, patch, Lane::SINGLE)
+}
+
+/// [`run_stage`] for the stage's run in `lane` of a split.
+pub(crate) fn run_stage_in_lane(
+    stage: &dyn Stage,
+    inputs: Vec<Artifact>,
+    patch: Value,
+    lane: Lane,
+) -> (Vec<Frame>, Artifact) {
     let settings = crate::settings::merge(&stage.defaults(), &patch);
     let inputs = Inputs::new(inputs.into_iter().map(|a| (a.kind(), a)).collect());
-    let mut run = stage
-        .start(inputs, &settings, RunContext::new(Arc::default()))
-        .unwrap();
+    let ctx = RunContext::new(Arc::default()).in_lane(lane);
+    let mut run = stage.start(inputs, &settings, ctx).unwrap();
     let mut frames = Vec::new();
     loop {
         match run.step().unwrap() {
@@ -177,7 +207,17 @@ pub(crate) fn run_tone_stage(
     tone: ToneMap,
     patch: Value,
 ) -> (Vec<Frame>, Arc<Paths>) {
-    match run_stage(stage, vec![Artifact::Tone(Arc::new(tone))], patch) {
+    run_tone_stage_in_lane(stage, tone, patch, Lane::SINGLE)
+}
+
+/// [`run_tone_stage`] for the stage's run in `lane` of a split.
+pub(crate) fn run_tone_stage_in_lane(
+    stage: &dyn Stage,
+    tone: ToneMap,
+    patch: Value,
+    lane: Lane,
+) -> (Vec<Frame>, Arc<Paths>) {
+    match run_stage_in_lane(stage, vec![Artifact::Tone(Arc::new(tone))], patch, lane) {
         (frames, Artifact::Paths(p)) => (frames, p),
         (_, a) => panic!("expected paths, got {}", a.kind().name()),
     }
@@ -373,6 +413,7 @@ impl StageRun for SpyRun {
             label: format!("{}/{}", self.step, self.frames),
             points: None,
             paths: None,
+            pen: 0,
         }))
     }
 }

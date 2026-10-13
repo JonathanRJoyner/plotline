@@ -80,13 +80,15 @@ export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions:
 
 type PensProps = {
   pens: Pen[]; hidden: Set<number>; error?: string;
-  // How many pens the last drawing has layers for, or null before the first drawing.
-  drawn: number | null;
+  // The Pen use setting as the page shows it; unset means one pen.
+  mode?: string;
   onEdit: () => void; onToggle: (index: number) => void;
+  // Shown right after the pen list: the Pen use setting.
+  children?: ComponentChildren;
 };
 
 // The pens as a short list with their preview toggles; they are edited in the pens dialog.
-export function PensPanel({ pens, hidden, error, drawn, onEdit, onToggle }: PensProps): JSX.Element {
+export function PensPanel({ pens, hidden, error, mode, onEdit, onToggle, children }: PensProps): JSX.Element {
   return (
     <fieldset data-tour="pens">
       <legend>Pens</legend>
@@ -99,11 +101,8 @@ export function PensPanel({ pens, hidden, error, drawn, onEdit, onToggle }: Pens
         </div>
       ))}
       {error && <p class="error">{error}</p>}
-      {drawn !== null && drawn < pens.length && (
-        <p class="help">
-          {drawn === 1 ? "This style draws with the first pen only" : `This drawing uses the first ${drawn} pens`}; the others stay empty.
-        </p>
-      )}
+      {children}
+      {(mode ?? "one_pen") === "one_pen" && pens.length > 1 && <p class="help">Pen use is set to one pen, so only the first pen draws.</p>}
       {hidden.size > 0 && <p class="help">A hidden pen is only hidden in the preview: it still exports.</p>}
       <button type="button" onClick={onEdit}><PenLine /> Edit pens</button>
     </fieldset>
@@ -173,7 +172,7 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
           {/* The session refuses an empty pen list. */}
           <button type="button" class="icon" title="Remove pen" aria-label="Remove pen" disabled={pens.length === 1} onClick={() => put(pens.filter((_, j) => j !== i), Math.max(0, i - 1))}><X /></button>
         </div>
-        <p class="help">The first pen draws first; a one-pen style draws with it alone.</p>
+        <p class="help">Pens plot in this order, and with Pen use set to one pen the first draws alone. List light inks first.</p>
       </nav>
       <div class="fields">
         {error && <p class="error">{error}</p>}
