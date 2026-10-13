@@ -1,12 +1,12 @@
-//! Golden files: the grid style's output on small synthetic images, compared to files in
-//! `crates/core/golden`.
+//! Golden files: the grid and stipple styles' output on small synthetic images, compared to files
+//! in `crates/core/golden`.
 //!
 //! Only the coordinates are compared with a tolerance (1e-3 mm). Everything else must match
 //! exactly: every top-level key except `layers`, the number of layers, and the pen and the path
 //! count of each layer. A rounding difference that flips one grid cell therefore shows up as a
-//! count mismatch. If a platform ever does that, move `threshold` in `produce` farther from every
-//! sampled ink value instead of loosening the comparison. After a deliberate change to the
-//! geometry, rewrite the files with `PLOTLINE_UPDATE_GOLDEN=1 cargo test -p plotline-core --test
+//! count mismatch. If a platform ever does that, move the `threshold` in the grid cases' patch
+//! farther from every sampled ink value instead of loosening the comparison. After a deliberate
+//! change to the geometry, rewrite the files with `PLOTLINE_UPDATE_GOLDEN=1 cargo test -p plotline-core --test
 //! golden` and review the diff.
 
 use std::sync::{Arc, Mutex};
@@ -20,14 +20,16 @@ use plotline_core::synthetic::{checkerboard, gradient};
 use plotline_core::types::{Canvas, Fit, Image, Pen};
 use serde_json::{json, Value};
 
-/// The grid style's drawing of `image` as `plotline-paths` JSON.
-fn produce(image: Image) -> Value {
-    let style = get_style("grid").expect("the grid style is registered");
+/// The drawing of `image` in `style` as `plotline-paths` JSON. `patch` is `{stage: {key: value}}`,
+/// merged over the style's defaults.
+fn produce(style: &str, image: Image, patch: Value) -> Value {
+    let style = get_style(style).expect("the style is registered");
     let mut settings = style.defaults();
-    settings["tone"]["resolution"] = json!(64);
-    settings["points"]["threshold"] = json!(0.6);
-    // The spacing the files were checked against the Python engine at, before its default fell to 1.
-    settings["points"]["spacing_mm"] = json!(2.0);
+    for (stage, keys) in patch.as_object().unwrap() {
+        for (key, value) in keys.as_object().unwrap() {
+            settings[stage][key] = value.clone();
+        }
+    }
     let canvas = Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap();
     let pen = Pen::new("Black 0.3", 0.3, "#000000").unwrap();
     let shared = Arc::new(Mutex::new(Shared::default()));
@@ -60,13 +62,36 @@ fn header(v: &Value) -> Vec<(&String, &Value)> {
 }
 
 #[test]
-fn grid_matches_golden_files() {
+fn styles_match_golden_files() {
     let cases = [
-        ("grid_gradient", gradient(64, 48)),
-        ("grid_checkerboard", checkerboard(64, 48, 8)),
+        (
+            "grid_gradient",
+            "grid",
+            gradient(64, 48),
+            // The spacing the files were checked against the Python engine at, before its default
+            // fell to 1.
+            json!({"tone": {"resolution": 64}, "points": {"threshold": 0.6, "spacing_mm": 2.0}}),
+        ),
+        (
+            "grid_checkerboard",
+            "grid",
+            checkerboard(64, 48, 8),
+            json!({"tone": {"resolution": 64}, "points": {"threshold": 0.6, "spacing_mm": 2.0}}),
+        ),
+        (
+            "stipple_gradient",
+            "stipple",
+            gradient(64, 48),
+            // The dots are points, so the file pins the relaxation and stays small.
+            json!({
+                "tone": {"resolution": 64},
+                "voronoi": {"count": 300, "iterations": 10},
+                "stipple": {"shape": "point"}
+            }),
+        ),
     ];
-    for (name, image) in cases {
-        let actual = produce(image);
+    for (name, style, image, patch) in cases {
+        let actual = produce(style, image, patch);
         let path = format!("{}/golden/{name}.json", env!("CARGO_MANIFEST_DIR"));
         if std::env::var_os("PLOTLINE_UPDATE_GOLDEN").is_some() {
             let text = serde_json::to_string_pretty(&actual).unwrap() + "\n";

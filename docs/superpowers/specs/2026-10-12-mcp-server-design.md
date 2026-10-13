@@ -1,4 +1,4 @@
-# plotline spec 8: the MCP server
+# plotline spec 9: the MCP server
 
 Date: 2026-10-12. Status: approved in conversation; written for review.
 
