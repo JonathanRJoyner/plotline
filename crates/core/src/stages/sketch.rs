@@ -415,6 +415,19 @@ mod tests {
         Residual::new(Arc::new(tone_map(w, h, ink)))
     }
 
+    /// Panic unless every block's kept maximum is the maximum of its pixels, found afresh.
+    fn assert_peaks_current(r: &Residual) {
+        let (w, h) = (r.tone.width as usize, r.tone.height as usize);
+        let mut want = vec![f32::NEG_INFINITY; r.peak.len()];
+        for row in 0..h {
+            for col in 0..w {
+                let b = (row / BLOCK) * w.div_ceil(BLOCK) + col / BLOCK;
+                want[b] = want[b].max(r.ink[row * w + col]);
+            }
+        }
+        assert_eq!(r.peak, want);
+    }
+
     #[test]
     fn settings_schema() {
         let s = SketchStage.schema();
@@ -531,28 +544,53 @@ mod tests {
         let mut r = residual(40, 40, |x, y| if tie(x, y) { 0.9 } else { 0.1 });
         assert_eq!(r.darkest(), (20 * 40 + 2, 0.9));
         r.zero(20 * 40 + 2);
+        assert_peaks_current(&r);
         assert_eq!(r.darkest(), (21 * 40 + 1, 0.9));
         r.zero(21 * 40 + 1);
+        assert_peaks_current(&r);
         assert_eq!(r.darkest(), (17 * 40 + 20, 0.9));
         r.zero(17 * 40 + 20);
+        assert_peaks_current(&r);
         assert_eq!(r.darkest(), (0, 0.1));
     }
 
     #[test]
+    fn lightening_the_only_maximum_moves_the_darkest_pixel_to_another_block() {
+        // 40 by 20 pixels make 3 by 2 blocks. (3, 3), in block (0, 0), is the darkest pixel and
+        // (20, 4), in block (1, 0), the next.
+        let ink = |x: u32, y: u32| match (x, y) {
+            (3, 3) => 0.9,
+            (20, 4) => 0.6,
+            _ => 0.1,
+        };
+        let mut r = residual(40, 20, ink);
+        assert_eq!(r.darkest(), (3 * 40 + 3, 0.9));
+        // Both ends fall in pixel (3, 3), whose centre is at (17, 17) mm.
+        r.lighten([16.5, 17.0], [17.5, 17.0], 0.5, 1);
+        assert_peaks_current(&r);
+        assert_eq!(r.darkest(), (4 * 40 + 20, 0.6));
+    }
+
+    #[test]
     fn a_segment_lowers_each_pixel_once_however_often_it_samples_it() {
-        let mut r = residual(10, 10, |_, _| 1.0);
-        // Along row 2 from pixel 0 to pixel 4, sampled every half pixel: twice per pixel.
+        // Full ink on row 2 from pixel 0 to pixel 4 only, so lowering it lowers the block maximum.
+        let mut r = residual(10, 10, |x, y| if y == 2 && x < 5 { 1.0 } else { 0.5 });
+        // Along that row, sampled every half pixel: twice per pixel.
         let (a, b) = ([10.5, 15.0], [19.5, 15.0]);
         r.lighten(a, b, 0.3, 1);
+        assert_peaks_current(&r);
         for (i, &v) in r.ink.iter().enumerate() {
-            let want = if (20..25).contains(&i) { 0.7 } else { 1.0 };
+            let want = if (20..25).contains(&i) { 0.7 } else { 0.5 };
             assert!((v - want).abs() < 1e-6, "pixel {i}: {v}");
         }
         r.lighten(a, b, 0.3, 2);
+        assert_peaks_current(&r);
         assert!((r.ink[22] - 0.4).abs() < 1e-6);
         r.lighten(a, b, 0.3, 3);
         r.lighten(a, b, 0.3, 4);
+        assert_peaks_current(&r);
         assert_eq!(r.ink[22], 0.0);
+        assert_eq!(r.darkest(), (0, 0.5));
     }
 
     #[test]
