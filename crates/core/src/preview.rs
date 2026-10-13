@@ -2,7 +2,8 @@
 //!
 //! The page is white and the drawing rect is outlined in light grey, one pixel wide. Each layer is
 //! drawn in its pen's colour at the pen's true width, at least one pixel, with round caps and
-//! joins, and a path of one vertex is a dot as wide as the pen. Two overlays are optional:
+//! joins, and a path of one vertex is a dot as wide as the pen. Pens multiply where they overlap,
+//! as transparent inks do. Two overlays are optional:
 //! `source` lays the tone map under the paths at 30 percent opacity, as the grey the pen would
 //! ink, and `travel` adds the pen-up moves as thin light red lines. The picture shows the whole
 //! page, or a `region` of it as `[x, y, width, height]` in mm. One mm is `width_px / width`
@@ -142,7 +143,9 @@ fn render(d: &Drawing, width_px: u32, view: &View, travel: bool, source: bool) -
     }
 
     for layer in &d.layers {
-        let color = paint(rgb(&layer.pen.color));
+        let mut color = paint(rgb(&layer.pen.color));
+        // Inks are transparent, so where pens overlap their colours multiply, as in the GUI.
+        color.blend_mode = BlendMode::Multiply;
         let width = (layer.pen.width_mm * px_per_mm).max(1.0) as f32;
         let (mut lines, mut dots) = (PathBuilder::new(), PathBuilder::new());
         for path in layer.paths.iter() {
@@ -244,7 +247,7 @@ fn paint([r, g, b]: [u8; 3]) -> Paint<'static> {
 
 /// The bytes of a `#rrggbb` colour. Black when `color` is not written that way, which
 /// [`crate::types::Pen::new`] rejects but a pen built field by field can still hold.
-fn rgb(color: &str) -> [u8; 3] {
+pub(crate) fn rgb(color: &str) -> [u8; 3] {
     let hex = color
         .strip_prefix('#')
         .filter(|h| h.len() == 6)
@@ -285,6 +288,18 @@ mod tests {
         assert_eq!(at(50, 40), &[255, 255, 255]);
         assert_eq!(at(50, 20), &[255, 0, 0]);
         assert_eq!(at(50, 24), &[255, 255, 255]); // dot radius 2
+    }
+
+    #[test]
+    fn overlapping_pens_multiply() {
+        // A yellow and a magenta stroke 10 mm wide cross at (50, 50), where the inks make red.
+        let mut d = drawing_100(vec![vec![[20.0, 50.0], [80.0, 50.0]]], 10.0, "#ffff00");
+        let magenta = drawing_100(vec![vec![[50.0, 20.0], [50.0, 80.0]]], 10.0, "#ff00ff");
+        d.layers.extend(magenta.layers);
+        let (_, _, px) = render_rgba(&d, 100, false, false);
+        let at = 4 * (50 * 100 + 50);
+        let [r, g, b] = [px[at], px[at + 1], px[at + 2]];
+        assert!(r > 200 && g < 60 && b < 60, "{:?}", [r, g, b]);
     }
 
     #[test]

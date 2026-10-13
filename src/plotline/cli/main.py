@@ -142,8 +142,9 @@ def describe(style: str, as_json: bool) -> None:
     metavar="NAME:WIDTH_MM:COLOR",
     help=(
         "A pen, such as 'Red:0.5:#ff0000' or 'Fine:0.3:blue'. The colour is #rrggbb or one of "
-        f"the inks {', '.join(inks())}. The current style draws with the first pen. "
-        "Repeat the option to give more pens, which are kept for multi-pen styles to come."
+        f"the inks {', '.join(inks())}. "
+        "Repeat the option to give more pens. By default only the first pen draws; "
+        "set split.mode to share the drawing between them."
     ),
 )
 @click.option(
@@ -214,6 +215,12 @@ def run(
         f"paths: {stats.path_count}  pen down: {stats.pen_down_mm:.1f} mm  "
         f"pen up: {stats.pen_up_mm:.1f} mm  estimated: {stats.estimated_seconds:.1f} s"
     )
+    if len(pens) > 1 and session.settings["split"]["mode"] == "one_pen":
+        click.echo(
+            "Pen use is set to one pen, so only the first pen draws. Add "
+            "--set split.mode=light_to_dark or --set split.mode=by_colour to use the others.",
+            err=True,
+        )
 
 
 @main.command()
