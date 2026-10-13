@@ -220,7 +220,7 @@ fn resize(lum: &[f32], w: usize, h: usize, long_edge: usize) -> (Vec<f32>, usize
 mod tests {
     use super::*;
     use crate::settings::merge;
-    use crate::synthetic::{checkerboard, flat, gradient, noise};
+    use crate::synthetic::{checkerboard, flat, gradient, noise, still_life};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -431,6 +431,10 @@ mod tests {
         assert_eq!(c.rgb[8 * 3], 1.0);
         assert_eq!(noise(4, 4, 1).rgb, noise(4, 4, 1).rgb);
         assert_ne!(noise(4, 4, 1).rgb, noise(4, 4, 2).rgb);
+        let s = still_life(60, 88);
+        let lo = s.rgb.iter().copied().fold(1.0, f32::min);
+        let hi = s.rgb.iter().copied().fold(0.0, f32::max);
+        assert!(lo < 0.2 && hi > 0.95, "the still life spans {lo} to {hi}");
     }
     #[test]
     fn an_image_without_pixels_or_with_the_wrong_buffer_is_an_error() {
