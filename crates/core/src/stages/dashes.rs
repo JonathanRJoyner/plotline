@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::lines::clamp_to;
+use super::lines::{self, clamp_to};
 use crate::math;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
@@ -46,22 +46,24 @@ impl Default for DashSettings {
     }
 }
 
-/// The angle of the dash at `p`, in radians from the x axis: along the edge, which is
-/// perpendicular to the gradient found by central differences half a dash length either side,
-/// turned by `angle_deg`; or just `angle_deg` where the gradient is flat or edges are ignored.
-fn direction(tone: &ToneMap, s: &DashSettings, p: [f64; 2]) -> f64 {
-    let turn = s.angle_deg * PI / 180.0;
-    if !s.follow_edges {
-        return turn;
+/// The unit direction of the dash at `p`. Angles turn counter-clockwise as seen on the page, like
+/// every other angle in the project (see [`lines::direction`]). The dash lies along the edge, which
+/// is perpendicular to the gradient found by central differences half a dash length either side,
+/// turned by `angle_deg`; or at `angle_deg` from horizontal where the gradient is flat or edges are
+/// ignored.
+fn direction(tone: &ToneMap, s: &DashSettings, p: [f64; 2]) -> [f64; 2] {
+    let mut deg = s.angle_deg;
+    if s.follow_edges {
+        let h = s.length_mm / 2.0;
+        let ink = |dx: f64, dy: f64| f64::from(tone.sample([p[0] + dx, p[1] + dy]));
+        let gx = (ink(h, 0.0) - ink(-h, 0.0)) / s.length_mm;
+        // The page's y axis points down, so the gradient's angle counter-clockwise is of (gx, -gy).
+        let gy = (ink(0.0, -h) - ink(0.0, h)) / s.length_mm;
+        if math::hypot(gx, gy) >= FLAT {
+            deg += math::atan2(gy, gx) * 180.0 / PI + 90.0;
+        }
     }
-    let h = s.length_mm / 2.0;
-    let ink = |dx: f64, dy: f64| f64::from(tone.sample([p[0] + dx, p[1] + dy]));
-    let gx = (ink(h, 0.0) - ink(-h, 0.0)) / s.length_mm;
-    let gy = (ink(0.0, h) - ink(0.0, -h)) / s.length_mm;
-    if math::hypot(gx, gy) < FLAT {
-        return turn;
-    }
-    math::atan2(gy, gx) + PI / 2.0 + turn
+    lines::direction(deg).0
 }
 
 /// Turn each point into one dash of `length_mm` centred on it, both ends clamped to the tone map.
@@ -131,8 +133,8 @@ impl StageRun for DashRun {
             let reach = s.length_mm / 2.0;
             let mut paths = Paths::new();
             for &p in &points.0 {
-                let a = direction(&tone, &s, p);
-                let (dx, dy) = (reach * math::cos(a), reach * math::sin(a));
+                let [ux, uy] = direction(&tone, &s, p);
+                let (dx, dy) = (reach * ux, reach * uy);
                 paths.push(&[
                     clamp_to(rect, [p[0] - dx, p[1] - dy]),
                     clamp_to(rect, [p[0] + dx, p[1] + dy]),
@@ -243,6 +245,29 @@ mod tests {
         let [dx, dy] = span(&paths);
         assert!(dy.abs() < 1e-6, "{dy}");
         assert!((dx.abs() - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_fixed_angle_turns_counter_clockwise_on_the_page() {
+        // Like hatch: 45 degrees rises to the right, and the page's y axis points down.
+        let patch = json!({"follow_edges": false, "angle_deg": 45});
+        let [dx, dy] = span(&run(vec![[30.0, 30.0]], edge, patch));
+        let want = crate::stages::lines::direction(45.0).0;
+        assert!(dx > 0.0 && dy < 0.0, "{dx} {dy}");
+        assert!((dx - 1.5 * want[0]).abs() < 1e-9 && (dy - 1.5 * want[1]).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_turn_from_an_edge_is_counter_clockwise_on_the_page() {
+        // The vertical edge turned 45 degrees counter-clockwise leans like a backslash: its top
+        // end moves left, so dx and dy (y down) share a sign. A clockwise turn would give a slash.
+        let [dx, dy] = span(&run(vec![[30.0, 30.0]], edge, json!({"angle_deg": 45})));
+        assert!(dx * dy > 0.0, "{dx} {dy}");
+        assert!(
+            (dx.abs() - 1.5 * std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9,
+            "{dx}"
+        );
+        assert!((dx.abs() - dy.abs()).abs() < 1e-6, "{dx} {dy}");
     }
 
     #[test]
