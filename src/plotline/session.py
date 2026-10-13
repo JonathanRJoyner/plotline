@@ -196,6 +196,18 @@ class Session:
             rgb /= np.iinfo(pixels.dtype).max
         self._core.set_image(rgb)
 
+    def analysis(self) -> dict[str, Any]:
+        """What the image looks like and what would suit it, as ``{"stats", "suggestions"}``.
+        ``stats`` holds numbers measured when the image was set. Each suggestion is
+        ``{"kind", "reason", "patch"}``, where ``patch`` is ``None`` or any of ``style``,
+        ``settings`` (``{stage: {key: value}}``) and ``page`` (``{width_mm, height_mm}``), which
+        the caller applies; the list follows the current style, settings and page. Raises
+        ``RuntimeError`` when no image is loaded."""
+        analysis = self._core.analysis()
+        if analysis is None:
+            raise RuntimeError("no image is loaded")
+        return analysis
+
     def set_canvas(self, canvas: Canvas) -> None:
         """Use ``canvas`` as the page. Raises ``ValueError`` for a page or margin that leaves no
         drawing area."""

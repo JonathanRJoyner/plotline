@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::analysis::{self, Analysis, ImageStats};
 use crate::cache::{CacheStats, StageCache};
 use crate::export::gcode::{self, GcodeError};
 use crate::export::{json, svg};
@@ -87,6 +88,8 @@ pub enum SessionError {
 /// one started leaves the slot alone.
 pub struct Session {
     image: Option<Arc<Image>>,
+    /// The statistics of `image`, measured when it is set.
+    image_stats: Option<ImageStats>,
     canvas: Canvas,
     pens: Vec<Pen>,
     /// The machine the G-code export writes for, if one is set.
@@ -109,6 +112,7 @@ impl Session {
         let style = get_style("grid").expect("the grid style is built in");
         Session {
             image: None,
+            image_stats: None,
             canvas: Canvas::new(210.0, 297.0, 10.0, Fit::Fit).expect("A4 is a valid canvas"),
             pens: vec![Pen::new("Black 0.3", 0.3, "#000000").expect("the default pen is valid")],
             machine: None,
@@ -124,13 +128,23 @@ impl Session {
     /// Decode PNG, JPEG or WebP `bytes` with [`image::decode`] and use the picture as the source image.
     /// On error the image is unchanged.
     pub fn set_image_bytes(&mut self, bytes: &[u8]) -> Result<(), ImageError> {
-        self.image = Some(Arc::new(image::decode(bytes)?));
+        self.set_image(image::decode(bytes)?);
         Ok(())
     }
 
-    /// Use `image` as the source image.
+    /// Use `image` as the source image and measure it.
     pub fn set_image(&mut self, image: Image) {
+        self.image_stats = Some(analysis::measure(&image));
         self.image = Some(Arc::new(image));
+    }
+
+    /// What the source image looks like and what would suit it; see [`analysis::suggest`]. The
+    /// statistics were measured when the image was set; the suggestions are worked out now from
+    /// the current page, style and settings. `None` without an image.
+    pub fn analysis(&self) -> Option<Analysis> {
+        let stats = self.image_stats.clone()?;
+        let suggestions = analysis::suggest(&stats, &self.canvas, &self.style.name, &self.settings);
+        Some(Analysis { stats, suggestions })
     }
 
     /// The source image, if one is set.
@@ -376,8 +390,40 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::gradient;
+    use crate::analysis::measure;
+    use crate::synthetic::{gradient, ramp, still_life, strokes};
     use serde_json::json;
+
+    #[test]
+    fn analysis_follows_the_image() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.analysis().is_none());
+        s.set_image(strokes(256, 256, 0.0, 1.0));
+        let line_art = s.analysis().unwrap();
+        assert!(line_art.suggestions.iter().any(|g| g.kind == "line_art"));
+        // The suggestions are worked out on each call, so they follow the style.
+        s.set_style("ink").unwrap();
+        let ink = s.analysis().unwrap();
+        assert!(ink.suggestions.iter().all(|g| g.kind != "line_art"));
+        assert_eq!(ink.stats, line_art.stats);
+        s.set_image(ramp(256, 64, 0.0, 1.0));
+        assert_ne!(s.analysis().unwrap().stats, line_art.stats);
+    }
+    #[test]
+    fn a_refused_image_keeps_the_analysis() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(gradient(64, 48));
+        let before = s.analysis();
+        assert!(s.set_image_bytes(b"not an image").is_err());
+        assert_eq!(s.analysis(), before);
+    }
+    #[test]
+    fn still_life_analysis_is_pinned() {
+        // The same literals are in crates/wasm/tests/smoke.rs, so CI proves both targets agree.
+        let stats = measure(&still_life(600, 875));
+        assert_eq!(stats.two_level, 0.8165753611527483);
+        assert_eq!(stats.p_low, 0.1220703125);
+    }
 
     #[test]
     fn defaults_and_setters() {

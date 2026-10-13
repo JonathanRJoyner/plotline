@@ -109,6 +109,17 @@ def test_run_blocking_requires_an_image():
         Session().run_blocking()
 
 
+def test_analysis():
+    s = Session()
+    with pytest.raises(RuntimeError, match="no image is loaded"):
+        s.analysis()
+    s.set_image(_core.synthetic_gradient(64, 48))
+    a = s.analysis()
+    assert set(a) == {"stats", "suggestions"}
+    assert (a["stats"]["width_px"], a["stats"]["height_px"]) == (64, 48)
+    assert isinstance(a["suggestions"], list)
+
+
 def test_run_blocking_grid_and_exports(tmp_path):
     s = Session()
     s.set_image(_core.synthetic_gradient(64, 48))

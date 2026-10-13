@@ -98,3 +98,17 @@ fn machines_and_gcode() {
     s.set_machine("null").unwrap();
     assert!(s.machine().is_none());
 }
+#[wasm_bindgen_test]
+fn still_life_analysis_matches_native() {
+    // The same literals are pinned in crates/core/src/session.rs on the native target.
+    let still_life = plotline_core::synthetic::still_life(600, 875);
+    let stats = plotline_core::analysis::measure(&still_life);
+    assert_eq!(stats.two_level, 0.8165753611527483);
+    assert_eq!(stats.p_low, 0.1220703125);
+    let mut s = plotline_wasm::Session::new();
+    assert!(s.analysis().is_none());
+    s.set_image(600, 875, &still_life.rgb).unwrap();
+    let a: serde_json::Value = serde_json::from_str(&s.analysis().unwrap()).unwrap();
+    assert_eq!(a["stats"]["height_px"], 875);
+    assert!(a["suggestions"].is_array());
+}

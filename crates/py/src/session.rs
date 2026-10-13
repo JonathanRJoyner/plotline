@@ -167,6 +167,13 @@ impl Session {
         self.inner.stats().map(|s| serde_to_py(py, &s)).transpose()
     }
 
+    fn analysis<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.inner
+            .analysis()
+            .map(|a| serde_to_py(py, &a))
+            .transpose()
+    }
+
     #[pyo3(signature = (width_px, travel, source, region = None))]
     fn preview_png<'py>(
         &self,

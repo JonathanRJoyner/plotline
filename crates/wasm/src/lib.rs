@@ -159,6 +159,12 @@ impl Session {
         self.inner.stats().map(|s| json!(s).to_string())
     }
 
+    /// The image's statistics and the suggested changes as `{"stats", "suggestions"}` JSON, or
+    /// `undefined` without an image.
+    pub fn analysis(&self) -> Option<String> {
+        self.inner.analysis().map(|a| json!(a).to_string())
+    }
+
     /// The last finished drawing as PNG bytes `width` pixels wide, with the travel moves and the
     /// source image when asked.
     #[wasm_bindgen(js_name = previewPng)]
