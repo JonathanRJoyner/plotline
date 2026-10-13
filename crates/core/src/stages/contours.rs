@@ -15,7 +15,11 @@ use super::lines::{clamp_to, ChunkRun};
 use crate::math;
 use crate::raster;
 use crate::settings::{defaults_for, schema_for, validate};
-use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
+use crate::stage::{Artifact, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
+
+/// The most vertices one run may make, as for the stipple dots: about 320 MB of coordinates
+/// before the frames copy them.
+const VERTEX_BUDGET: usize = 20_000_000;
 
 // Each help text stays on one line: schemars keeps the line breaks of a doc comment.
 /// Settings for the contours stage.
@@ -86,7 +90,7 @@ impl Stage for ContourStage {
             padded[(y + 1) * pw + 1..(y + 1) * pw + 1 + w].copy_from_slice(row);
         }
         let step = 1.0 / (f64::from(s.levels) + 1.0);
-        Ok(Box::new(ChunkRun::new(
+        let run = ChunkRun::new(
             s.levels as usize,
             "levels",
             Box::new(move |i, paths, _| {
@@ -103,7 +107,39 @@ impl Stage for ContourStage {
                     }
                 }
             }),
-        )))
+        );
+        Ok(Box::new(Budgeted::new(run, VERTEX_BUDGET)))
+    }
+}
+
+/// A run that fails once its paths pass `limit` vertices. Contour lines cannot be counted before
+/// they are traced, so each frame's paths, which are all the paths so far, are counted instead.
+struct Budgeted {
+    run: ChunkRun,
+    limit: usize,
+}
+
+impl Budgeted {
+    fn new(run: ChunkRun, limit: usize) -> Budgeted {
+        Budgeted { run, limit }
+    }
+}
+
+impl StageRun for Budgeted {
+    fn step(&mut self) -> Result<Step, StageError> {
+        let step = self.run.step()?;
+        let made = match &step {
+            Step::Frame(f) => f.paths.as_ref().map_or(0, |p| p.coords().len()),
+            Step::Done(Artifact::Paths(p)) => p.coords().len(),
+            Step::Done(_) => 0,
+        };
+        if made > self.limit {
+            return Err(StageError::Failed(format!(
+                "these contours need over {} million vertices; raise smooth mm or use fewer levels",
+                self.limit / 1_000_000
+            )));
+        }
+        Ok(step)
     }
 }
 
@@ -241,6 +277,27 @@ mod tests {
         // One level is one item of work.
         assert_eq!(frames[0].label, "3/64 levels");
         assert_eq!(frames.last().unwrap().label, "64/64 levels");
+    }
+
+    #[test]
+    fn a_run_past_its_vertex_budget_fails() {
+        // Ten vertices an item against a limit of 25: the third item's step passes the limit.
+        let run = ChunkRun::new(
+            5,
+            "levels",
+            Box::new(|_, paths, _| paths.push(&[[0.0, 0.0]; 10])),
+        );
+        let mut run = Budgeted::new(run, 25);
+        let results: Vec<_> = std::iter::from_fn(|| match run.step() {
+            Ok(Step::Done(_)) => None,
+            other => Some(other),
+        })
+        .take(10)
+        .collect();
+        assert!(
+            matches!(results.last(), Some(Err(StageError::Failed(m))) if m.contains("million")),
+            "{results:?}"
+        );
     }
 
     #[test]
