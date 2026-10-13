@@ -28,6 +28,9 @@ use crate::types::{Paths, ToneMap};
 /// The side of a block of pixels whose darkest ink is kept, in pixels.
 const BLOCK: usize = 16;
 
+/// The most ink samples one step of the run reads, so a step stays short at the widest settings.
+const SAMPLE_BUDGET: usize = 2_000_000;
+
 // Each help text stays on one line: schemars keeps the line breaks of a doc comment.
 /// Settings for the sketch stage.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -215,7 +218,8 @@ impl Residual {
 ///
 /// A stroke that ends with one vertex is dropped, and the ink at its pixel is cleared so that the
 /// pixel is not the darkest again. The run reports a frame of the strokes so far after about a
-/// thirtieth of `max_lines` passes of the loop, then gives the paths.
+/// thirtieth of `max_lines` passes of the loop, or fewer when those passes would read more than
+/// [`SAMPLE_BUDGET`] ink samples, then gives the paths.
 pub struct SketchStage;
 
 impl Stage for SketchStage {
@@ -247,9 +251,13 @@ impl Stage for SketchStage {
         ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<SketchSettings>(self.name(), &self.schema(), settings)?;
+        let tone = inputs.tone().clone();
+        // A candidate reads a sample every half pixel along its length.
+        let per_pass = s.candidates as usize * (2.0 * s.length_mm / tone.mm_per_px).ceil() as usize;
+        let budgeted = u32::try_from(SAMPLE_BUDGET / per_pass).unwrap_or(u32::MAX);
         Ok(Box::new(SketchRun {
-            per_step: (s.max_lines / 30).max(1),
-            residual: Residual::new(inputs.tone().clone()),
+            per_step: (s.max_lines / 30).min(budgeted).max(1),
+            residual: Residual::new(tone),
             rng: ctx.rng(u64::from(s.seed)),
             s,
             paths: Paths::new(),
@@ -534,6 +542,26 @@ mod tests {
         let last = frames.last().unwrap();
         assert_eq!(last.progress, 1.0);
         assert_eq!(last.label, format!("{before}/1000 segments"));
+    }
+
+    #[test]
+    fn a_step_at_the_widest_settings_stays_within_the_sample_budget() {
+        // A segment of 50 mm samples 50 pixels of 2 mm, so 256 candidates take 12,800 samples a
+        // pass and the budget allows 156 passes a step, far fewer than a thirtieth of 50,000. On
+        // full ink with a light touch every pass draws a segment, so the label counts the passes.
+        let tone = Artifact::Tone(Arc::new(tone_map(100, 100, |_, _| 1.0)));
+        let inputs = Inputs::new([(Kind::Tone, tone)].into_iter().collect());
+        let patch =
+            json!({"candidates": 256, "length_mm": 50.0, "max_lines": 50000, "lighten": 0.05});
+        let settings = crate::settings::merge(&SketchStage.defaults(), &patch);
+        let mut run = SketchStage
+            .start(inputs, &settings, RunContext::new(Arc::default()))
+            .unwrap();
+        let Ok(Step::Frame(frame)) = run.step() else {
+            panic!("expected a frame");
+        };
+        assert_eq!(SAMPLE_BUDGET / (256 * 50), 156);
+        assert_eq!(frame.label, "156/50000 segments");
     }
 
     #[test]
