@@ -168,7 +168,10 @@ impl Session {
         travel: bool,
         source: bool,
     ) -> Result<Option<Vec<u8>>, JsError> {
-        Ok(self.inner.preview_png(width, travel, source).transpose()?)
+        Ok(self
+            .inner
+            .preview_png(width, travel, source, None)
+            .transpose()?)
     }
 
     /// The style, canvas, pens and settings as a JSON preset.

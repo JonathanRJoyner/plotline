@@ -2,7 +2,7 @@
 
 use numpy::ndarray::{ArrayView2, ArrayView3};
 use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
-use plotline_core::{Frame, Image, Paths, SessionError};
+use plotline_core::{Frame, Image, Paths, PreviewError, SessionError};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
@@ -38,6 +38,16 @@ pub fn session_error(e: SessionError) -> PyErr {
         SessionError::NoImage | SessionError::NoMachine | SessionError::NoDrawing => {
             runtime_error(e)
         }
+    }
+}
+
+/// The Python exception for a preview error: `ValueError` for a refused region, `RuntimeError` for
+/// a picture that could not be made. The match is exhaustive so that a new variant has to be
+/// placed here.
+pub fn preview_error(e: PreviewError) -> PyErr {
+    match e {
+        PreviewError::Region(_) => value_error(e),
+        PreviewError::Encode(_) | PreviewError::Empty => runtime_error(e),
     }
 }
 

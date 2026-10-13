@@ -1,9 +1,10 @@
 """Fail when a runtime dependency of plotline lacks a permissive licence.
 
 Standard library only. The script walks the installed ``Requires-Dist`` graph from the project,
-skips optional extras, and judges each distribution by the licence text in its metadata: the
-``License-Expression`` field (PEP 639), the ``License`` field and the ``License ::``
-classifiers of the core metadata specification.
+follows the project's shipped extras (the ``mcp`` one) and any extra a requirement asks for, as in
+``pyjwt[crypto]``, skips every other optional extra, and judges each distribution by the licence
+text in its metadata: the ``License-Expression`` field (PEP 639), the ``License`` field and the
+``License ::`` classifiers of the core metadata specification.
 
 Matching is deliberately crude: a licence passes when its text contains an ALLOWED token as a
 whole word and no DENIED token at the start of a word, case-sensitive. Anything unclear fails. A
@@ -56,31 +57,42 @@ def is_allowed(text: str) -> bool:
     return allowed and not any(re.search(r"\b" + re.escape(t), text) for t in DENIED)
 
 
-def runtime_closure(root: str = "plotline") -> list[str]:
-    """Names of the installed distributions that ``root`` needs at runtime, breadth first."""
+def runtime_closure(root: str = "plotline", extras: tuple[str, ...] = ()) -> list[str]:
+    """Names of the installed distributions that ``root`` needs at runtime, breadth first.
+
+    A requirement behind ``extra == "<x>"`` is followed only when ``<x>`` was requested for the
+    distribution that lists it: through ``extras`` for ``root``, through a bracket such as
+    ``pyjwt[crypto]`` for the others.
+    """
     root_name = _normalise(root)
-    names: set[str] = set()
-    queue = deque([distribution(root)])  # a missing root fails loudly instead of passing
+    followed: dict[str, set[str]] = {}  # name -> the extras already followed for it
+    queue = deque([(distribution(root), {_normalise(e) for e in extras})])  # a missing root fails
     while queue:
-        for req in queue.popleft().requires or []:
+        current, requested = queue.popleft()
+        for req in current.requires or []:
             spec, _, marker = req.partition(";")
-            if "extra ==" in marker:
+            named = {_normalise(e) for e in re.findall(r"extra\s*==\s*[\"']([^\"']+)[\"']", marker)}
+            if named and requested.isdisjoint(named):
                 continue
             name = _normalise(re.split(r"[^A-Za-z0-9._-]", spec.strip(), maxsplit=1)[0])
-            if name == root_name or name in names:
+            bracket = re.search(r"\[([^\]]*)\]", spec)
+            asked = (
+                {_normalise(e) for e in bracket[1].split(",") if e.strip()} if bracket else set()
+            )
+            if name == root_name or (name in followed and asked <= followed[name]):
                 continue
             try:
                 dist = distribution(name)
             except PackageNotFoundError:
                 continue  # a dependency for another platform, not installed here
-            names.add(name)
-            queue.append(dist)
-    return sorted(names)
+            followed.setdefault(name, set()).update(asked)
+            queue.append((dist, set(followed[name])))
+    return sorted(followed)
 
 
 def main() -> int:
     offenders: list[str] = []
-    for name in runtime_closure():
+    for name in runtime_closure(extras=("mcp",)):
         text = license_text(distribution(name))
         override = OVERRIDES.get(name)
         ok = override is not None or is_allowed(text)

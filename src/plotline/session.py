@@ -368,12 +368,19 @@ class Session:
         return Stats(**_have(self._core.stats()))
 
     def preview_png(
-        self, width_px: int = 1000, travel: bool = False, source: bool = False
+        self,
+        width_px: int = 1000,
+        travel: bool = False,
+        source: bool = False,
+        region: tuple[float, float, float, float] | None = None,
     ) -> bytes:
         """The result drawn at true pen width as PNG bytes that are ``width_px`` wide, with the
         pen-up moves when ``travel`` is set and the tone map under the paths when ``source`` is.
-        Raises ``RuntimeError`` when there is no result."""
-        return _have(self._core.preview_png(width_px, travel, source))
+        ``region`` is ``(x, y, width, height)`` in page mm, origin top-left; the picture then shows
+        only that part, which may reach past the page, and is as high as the region's shape needs.
+        Raises ``ValueError`` for a region with a value that is not finite or a width or height
+        that is not positive, and ``RuntimeError`` when there is no result."""
+        return _have(self._core.preview_png(width_px, travel, source, region))
 
     def cache_stats(self) -> dict[str, int]:
         """What the stage cache holds and how often it was asked: ``hits``, ``misses``,

@@ -10,7 +10,7 @@ use pyo3::types::{PyBytes, PyDict};
 use serde::de::DeserializeOwned;
 
 use crate::convert::{
-    drawing_to_py, frame_to_py, image_array, py_to_value, runtime_error, serde_to_py,
+    drawing_to_py, frame_to_py, image_array, preview_error, py_to_value, serde_to_py,
     session_error, value_error, value_to_py,
 };
 
@@ -167,15 +167,17 @@ impl Session {
         self.inner.stats().map(|s| serde_to_py(py, &s)).transpose()
     }
 
+    #[pyo3(signature = (width_px, travel, source, region = None))]
     fn preview_png<'py>(
         &self,
         py: Python<'py>,
         width_px: u32,
         travel: bool,
         source: bool,
+        region: Option<[f64; 4]>,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-        let png = self.inner.preview_png(width_px, travel, source);
-        let png = png.transpose().map_err(runtime_error)?;
+        let png = self.inner.preview_png(width_px, travel, source, region);
+        let png = png.transpose().map_err(preview_error)?;
         Ok(png.map(|bytes| PyBytes::new(py, &bytes)))
     }
 

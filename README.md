@@ -114,9 +114,13 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 
 `plotline gui` serves the browser GUI from your machine. Building it needs Node, wasm-pack and the `wasm32-unknown-unknown` Rust target: run `npm run wasm`, `npm ci` and `npm run build` in `web/`.
 
+## With an AI assistant
+
+`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, run styles, look at previews, also zoomed in on a part of the page, and export the result.
+
 ## Roadmap
 
-plotline is early software. The MCP server is planned but not built yet, and `plotline mcp` prints a message saying so. The goals, architecture, decisions and everything still planned are in the [design brief](docs/BRIEF.md).
+plotline is early software. The goals, architecture, decisions and everything still planned are in the [design brief](docs/BRIEF.md).
 
 ## License
 

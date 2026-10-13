@@ -1,8 +1,9 @@
 """Tests for the command line interface: listing, a full run with every output, presets, bad input,
-the GUI server and the MCP stub."""
+the GUI server and the MCP command without its extra."""
 
 import http.server
 import json
+import sys
 import webbrowser
 import xml.etree.ElementTree as ET
 from importlib import resources
@@ -125,12 +126,20 @@ def test_run_rejects_bad_inputs(tmp_path, image):
         assert r.exit_code == 1 and word in r.stderr, r.output
 
 
-def test_gui_without_a_bundle_and_the_mcp_stub(monkeypatch, tmp_path):
+def test_gui_without_a_bundle_and_mcp_without_its_extra(monkeypatch, tmp_path):
     monkeypatch.setattr(resources, "files", lambda package: tmp_path)
     r = run("gui")
     assert r.exit_code == 1 and "This build has no GUI bundle" in r.stderr
+    # A None entry makes "import mcp..." raise ModuleNotFoundError, as when the extra is absent,
+    # but only for modules not imported yet. Other tests have loaded the SDK and anyio, which only
+    # the extra brings, so clear their caches.
+    for name in [n for n in sys.modules if n.startswith(("mcp.", "anyio."))]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "mcp", None)
+    monkeypatch.setitem(sys.modules, "anyio", None)
+    monkeypatch.delitem(sys.modules, "plotline.mcp_server", raising=False)
     r = run("mcp")
-    assert r.exit_code == 1 and "not available" in r.stderr
+    assert r.exit_code == 1 and 'pip install "plotline[mcp]"' in r.stderr
 
 
 def test_gui_serves_the_bundle_on_localhost(monkeypatch, tmp_path):

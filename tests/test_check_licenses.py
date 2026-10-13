@@ -28,6 +28,9 @@ def test_closure_is_runtime_only():
     assert "numpy" in names and "click" in names
     assert "pydantic" not in names and "scipy" not in names  # dev group only
     assert "pytest" not in names and "numba" not in names and "plotline" not in names
+    with_mcp = cl.runtime_closure(extras=("mcp",))
+    assert "mcp" in with_mcp and "pydantic" in with_mcp
+    assert "cryptography" in with_mcp  # reached through the requested pyjwt[crypto] extra
 
 
 def test_environment_passes():
@@ -52,7 +55,7 @@ def test_glued_copyleft_spellings_are_denied():
 
 
 def test_main_fails_on_a_denied_licence(monkeypatch, capsys):
-    monkeypatch.setattr(cl, "runtime_closure", lambda: ["demo"])
+    monkeypatch.setattr(cl, "runtime_closure", lambda **kw: ["demo"])
     monkeypatch.setattr(cl, "distribution", lambda name: None)
     monkeypatch.setattr(cl, "license_text", lambda dist: "GPL-3.0-only")
     assert cl.main() == 1
@@ -63,6 +66,56 @@ def test_closure_reaches_transitive_dependencies(monkeypatch):
     graph = {"plotline": ["a>=1"], "a": ["b; python_version >= '3'"], "b": []}
     monkeypatch.setattr(cl, "distribution", lambda name: SimpleNamespace(requires=graph[name]))
     assert cl.runtime_closure() == ["a", "b"]
+
+
+def _fake_graph(monkeypatch, graph):
+    monkeypatch.setattr(cl, "distribution", lambda name: SimpleNamespace(requires=graph[name]))
+
+
+def test_closure_follows_only_the_roots_chosen_extras(monkeypatch):
+    # "x" and "y" are absent from the graph: following them would raise KeyError.
+    _fake_graph(
+        monkeypatch,
+        {
+            "plotline": ["a>=1", 'm>=2; extra == "mcp"'],
+            "a": ['x; extra == "cli"', 'y; extra == "mcp"'],
+            "m": [],
+        },
+    )
+    assert cl.runtime_closure() == ["a"]
+    assert cl.runtime_closure(extras=("mcp",)) == ["a", "m"]
+
+
+def test_closure_follows_extras_a_requirement_asks_for(monkeypatch):
+    _fake_graph(
+        monkeypatch,
+        {"plotline": ["a[c]>=1"], "a": ['z; extra == "c"', 'w; extra == "d"'], "z": []},
+    )
+    assert cl.runtime_closure() == ["a", "z"]
+
+
+def test_closure_follows_extras_asked_for_on_a_later_visit(monkeypatch):
+    _fake_graph(
+        monkeypatch,
+        {"plotline": ["a", "b"], "b": ["a[c]"], "a": ['z; extra == "c"'], "z": []},
+    )
+    assert cl.runtime_closure() == ["a", "b", "z"]
+
+
+def test_closure_reads_every_extra_a_marker_names(monkeypatch):
+    _fake_graph(
+        monkeypatch,
+        {
+            "plotline": [
+                'm; extra == "x" or extra == "mcp"',
+                'n; extra=="mcp"',
+                'o; python_version >= "3" and extra == "x"',
+            ],
+            "m": [],
+            "n": [],
+        },
+    )
+    assert cl.runtime_closure(extras=("mcp",)) == ["m", "n"]
 
 
 def test_matching_is_case_sensitive_and_bounded_on_both_sides():

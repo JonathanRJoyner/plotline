@@ -29,11 +29,14 @@ Homepage = "https://jonathanrjoyner.github.io/plotline/"
 Source = "https://github.com/JonathanRJoyner/plotline"
 Issues = "https://github.com/JonathanRJoyner/plotline/issues"
 
+[project.optional-dependencies]
+mcp = ["mcp>=2.3,<3"]
+
 [project.scripts]
 plotline = "plotline.cli.main:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "mcp>=2.3,<3"]
 
 [build-system]
 requires = ["maturin>=1.7,<2"]
@@ -89,3 +92,5 @@ warn_return_any = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
+# A test still running after two minutes dumps every thread's stack, so a hang names itself.
+faulthandler_timeout = 120

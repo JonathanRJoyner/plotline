@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(format!("{}: {error}", style.name).into());
         }
         let png = session
-            .preview_png(WIDTH_PX, false, false)
+            .preview_png(WIDTH_PX, false, false, None)
             .ok_or("the run left no drawing")??;
         // The pen is black on white paper, so grey loses nothing and the file is far smaller.
         image::load_from_memory(&png)?
