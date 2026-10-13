@@ -460,6 +460,25 @@ mod tests {
         assert_eq!(s.cache_stats().hits, 4);
     }
     #[test]
+    fn switching_voronoi_style_at_the_defaults_reuses_the_points() {
+        let mut s = Session::new(256 << 20);
+        s.set_image(gradient(64, 48));
+        s.set_style("stipple").unwrap();
+        let mut r = s.start().unwrap();
+        while r.next_frame().is_some() {}
+        assert_eq!(s.state(), RunState::Done);
+        s.set_style("line").unwrap();
+        let mut r = s.start().unwrap();
+        let mut voronoi = vec![];
+        while let Some(f) = r.next_frame() {
+            if f.stage == "voronoi" {
+                voronoi.push(f.label);
+            }
+        }
+        assert_eq!(s.state(), RunState::Done);
+        assert_eq!(voronoi, ["cached"]);
+    }
+    #[test]
     fn preset_round_trip_and_warnings() {
         let mut s = Session::new(1 << 20);
         s.update("points", &json!({"spacing_mm": 3.0})).unwrap();

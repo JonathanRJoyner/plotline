@@ -369,6 +369,17 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn the_voronoi_styles_share_tone_and_point_defaults() {
+        // Equal settings give equal cache keys, so switching between these styles at their
+        // defaults reuses the points.
+        let first = get_style("stipple").unwrap().defaults();
+        for name in ["line", "dashes", "tree", "mesh", "cells"] {
+            let d = get_style(name).unwrap().defaults();
+            assert_eq!(d["tone"], first["tone"], "{name}");
+            assert_eq!(d["voronoi"], first["voronoi"], "{name}");
+        }
+    }
     /// Prints the time of `stipple` and `line` at their defaults on a 1000 by 750 radial image.
     /// Run with `cargo test --release -p plotline-core --lib default_timings -- --ignored
     /// --nocapture`.
