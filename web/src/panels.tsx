@@ -66,12 +66,16 @@ export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions:
     <fieldset>
       <legend>Suggestions</legend>
       <ul class="suggestions">
-        {suggestions.map((s) => (
-          <li>
-            <p>{s.reason}</p>
-            {s.patch && <button type="button" onClick={() => onApply(s.patch!)}><Check /> Apply</button>}
-          </li>
-        ))}
+        {suggestions.map((s) => {
+          const p = s.patch;
+          // The key keeps each button with its suggestion when an Apply removes the one above it.
+          return (
+            <li key={s.kind}>
+              <p>{s.reason}</p>
+              {p && <button type="button" aria-label={`Apply: ${s.reason}`} onClick={() => onApply(p)}><Check /> Apply</button>}
+            </li>
+          );
+        })}
       </ul>
       {error && <p class="error">{error}</p>}
     </fieldset>

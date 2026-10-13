@@ -246,15 +246,15 @@ const LIGHT_MARKS: &str =
 const NOISY: &str =
     "The image is noisy. A blur of one tone-map pixel keeps the noise from turning into specks.";
 const TURN: &str = "The image would draw larger with the page turned.";
-const COLOUR: &str = "This is a colour image. Each pen draws one colour, and splitting colours across pens is not built yet, so it is drawn in the first pen's tones.";
+const COLOUR: &str = "This is a colour image. To draw its colours, add pens in those colours and set Pen use to by colour.";
 
 /// How much larger the turned page must draw the image to be worth suggesting.
 const TURN_GAIN: f64 = 1.3;
 
 /// Suggestions for the session as it stands, in a fixed order, each left out when already in
-/// effect. `settings` is `{stage: {key: value}}`; a missing `tone` key counts as its default
-/// (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000). The cut-offs are hand-set
-/// starting values, not a fitted model.
+/// effect. `settings` is `{stage: {key: value}}`; a missing `tone` or `split` key counts as its
+/// default (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000, `mode` one pen). The
+/// cut-offs are hand-set starting values, not a fitted model.
 pub fn suggest(
     stats: &ImageStats,
     canvas: &Canvas,
@@ -311,7 +311,12 @@ pub fn suggest(
         let patch = json!({"page": {"width_mm": canvas.height_mm, "height_mm": canvas.width_mm}});
         add("orientation", TURN, Some(patch));
     }
-    if stats.colourfulness > 40.0 {
+    let by_colour = settings
+        .get("split")
+        .and_then(|s| s.get("mode"))
+        .and_then(Value::as_str)
+        == Some("by_colour");
+    if stats.colourfulness > 40.0 && !by_colour {
         add("colour", COLOUR, None);
     }
     out
@@ -522,6 +527,18 @@ mod tests {
     }
 
     #[test]
+    fn colour_is_skipped_when_splitting_by_colour() {
+        let image = color_bars(256, 64);
+        let mut settings = defaults("grid");
+        settings["split"]["mode"] = json!("by_colour");
+        assert!(find(&run(&image, "grid", &settings), "colour").is_none());
+        // Splitting by tone still draws the colours in grey, and a missing stage is not by colour.
+        settings["split"]["mode"] = json!("light_to_dark");
+        assert!(find(&run(&image, "grid", &settings), "colour").is_some());
+        assert!(find(&run(&image, "grid", &json!({})), "colour").is_some());
+    }
+
+    #[test]
     fn rules_run_in_order() {
         let all = run(
             &flat_noise(256, 256, 0.5, 0.1, 7),
@@ -571,7 +588,7 @@ mod tests {
             (
                 color_bars(256, 64),
                 "colour",
-                "This is a colour image. Each pen draws one colour, and splitting colours across pens is not built yet, so it is drawn in the first pen's tones.",
+                "This is a colour image. To draw its colours, add pens in those colours and set Pen use to by colour.",
             ),
         ];
         for (image, kind, reason) in cases {

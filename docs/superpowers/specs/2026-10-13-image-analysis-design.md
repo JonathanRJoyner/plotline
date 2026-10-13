@@ -53,7 +53,7 @@ Every value is a deterministic function of the pixels: integer histograms with f
 | `invert` | `border` < 0.3, `mean` < 0.5 and `two_level` ≥ 0.85 (light marks on a dark ground, not a dark photograph), and `tone.invert` is false | `{"settings": {"tone": {"invert": true}}}` |
 | `noise` | `noise` > 0.03, and `tone.blur_mm` is 0 | `{"settings": {"tone": {"blur_mm": b}}}`, `b` = one tone-map pixel, the drawing area's longer side over `tone.resolution`, in mm rounded up to 0.1 mm |
 | `orientation` | `canvas.fit` is `fit`, the image and the drawing area are on opposite sides of square, and swapping the page would draw the image at least 1.3 times larger | `{"page": {"width_mm": h, "height_mm": w}}` |
-| `colour` | `colourfulness` > 40 | none: the reason says each pen draws one colour and colour separation is not built yet |
+| `colour` | `colourfulness` > 40, and `split.mode` is not `by_colour` (a missing `split` stage or key counts as not) | none: the reason says to add pens in the image's colours and set Pen use to by colour |
 
 The reasons are fixed English sentences in the module, one per kind, written for a person and read by the assistant as well. The cut-offs are hand-set starting values, checked on the generated test images of §8 and recorded in the brief; they are a rule, not a fitted model.
 
@@ -97,7 +97,7 @@ All on images generated in code (`synthetic.rs` gains helpers as needed):
   - light strokes on black: an `invert` suggestion;
   - a 256 × 256 flat image plus seeded noise of σ 0.1: `noise` within 20 % of 0.1 and a `noise` suggestion; the flat image alone: `noise` 0 and `two_level` 0;
   - a 400 × 200 image on the default A4 portrait page: an `orientation` suggestion whose patch swaps 210 and 297;
-  - the colour bars: a `colour` suggestion with no patch;
+  - the colour bars: a `colour` suggestion with no patch, none while `split.mode` is `by_colour`;
   - each suggestion carries its exact reason sentence.
 - `tone.rs`: auto levels map a 0.3 to 0.7 gradient onto the full 0 to 1 range within one histogram bin; a flat image stays flat; `manual` output is byte-identical to before.
 - `session.rs`: `analysis()` is `None` without an image, and its statistics change when a new image is set.
