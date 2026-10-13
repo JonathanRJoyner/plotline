@@ -310,7 +310,7 @@ pub fn get_style(name: &str) -> Option<Arc<Style>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::synthetic::{flat, gradient, radial};
+    use crate::synthetic::{flat, gradient, radial, scene};
     use crate::test_util::{assert_inside, run_to_drawing};
     use std::collections::BTreeMap;
 
@@ -336,13 +336,22 @@ mod tests {
             .into_iter()
             .chain([get_style("_slow").unwrap()])
         {
-            let d1 = run_to_drawing(&style, gradient(64, 48));
-            let d2 = run_to_drawing(&style, gradient(64, 48));
-            assert_eq!(d1.layers[0].paths.coords(), d2.layers[0].paths.coords());
-            assert_eq!(
-                d1.tone.as_ref().map(|t| t.ink.clone()),
-                d2.tone.as_ref().map(|t| t.ink.clone())
-            );
+            for image in [gradient(64, 48), scene(64, 48)] {
+                let d1 = run_to_drawing(&style, image.clone());
+                let d2 = run_to_drawing(&style, image);
+                assert_eq!(d1.layers[0].paths.coords(), d2.layers[0].paths.coords());
+                assert_eq!(
+                    d1.tone.as_ref().map(|t| t.ink.clone()),
+                    d2.tone.as_ref().map(|t| t.ink.clone())
+                );
+            }
+        }
+    }
+    #[test]
+    fn every_style_draws_the_colour_scene() {
+        for style in list_styles() {
+            let d = run_to_drawing(&style, scene(64, 48));
+            assert!(!d.layers[0].paths.is_empty(), "{} drew nothing", style.name);
         }
     }
     #[test]

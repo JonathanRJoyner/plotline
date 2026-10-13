@@ -93,6 +93,17 @@ fn the_pen_bank_is_listed() {
     assert!(pens.as_array().unwrap().len() >= 30);
     assert_eq!(pens[1]["name"], "Sakura Pigma Micron 005");
     assert_eq!(pens[1]["width_mm"], 0.2);
+    assert_eq!(pens[1]["kind"], "fineliner");
+    assert_eq!(pens[1]["model"], "Sakura Pigma Micron");
+}
+#[wasm_bindgen_test]
+fn the_inks_are_listed() {
+    let inks: serde_json::Value = serde_json::from_str(&plotline_wasm::list_inks()).unwrap();
+    assert_eq!(
+        inks[0],
+        serde_json::json!({"name": "black", "color": "#000000"})
+    );
+    assert_eq!(inks.as_array().unwrap().len(), 10);
 }
 #[wasm_bindgen_test]
 fn machines_and_gcode() {

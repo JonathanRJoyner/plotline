@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
 import init, { Session, syntheticGradient } from "../pkg/plotline_wasm.js";
 import { macrotask } from "./driver";
-import type { Machine, Pen } from "./events";
+import type { Ink, Machine, Pen } from "./events";
 import { Protocol, type Reply, type State } from "./protocol";
 
 beforeAll(async () => { await init({ module_or_path: readFileSync(new URL("../pkg/plotline_wasm_bg.wasm", import.meta.url)) }); });
@@ -125,6 +125,13 @@ test("listPens gives the bank", () => {
   const pens = ok("listPens").value as Pen[];
   expect(pens.length).toBeGreaterThan(30);
   expect(pens.find((p) => p.name === "Sakura Pigma Micron 005")?.width_mm).toBe(0.2);
+});
+
+test("listInks gives the ink colours", () => {
+  const { ok } = setup();
+  const inks = ok("listInks").value as Ink[];
+  expect(inks[0]).toEqual({ name: "black", color: "#000000" });
+  expect(inks.find((i) => i.name === "blue")?.color).toMatch(/^#[0-9a-f]{6}$/);
 });
 
 const MACHINE: Machine = {

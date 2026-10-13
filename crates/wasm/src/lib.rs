@@ -361,6 +361,13 @@ pub fn synthetic_gradient(w: u32, h: u32) -> Vec<f32> {
     synthetic::gradient(w, h).rgb
 }
 
+/// The `w` by `h` still life the GUI offers as its sample, as RGB floats; see
+/// [`synthetic::still_life`].
+#[wasm_bindgen(js_name = syntheticStillLife)]
+pub fn synthetic_still_life(w: u32, h: u32) -> Vec<f32> {
+    synthetic::still_life(w, h).rgb
+}
+
 /// A `w` by `h` checkerboard `cells` wide as RGB floats; see [`synthetic::checkerboard`].
 #[wasm_bindgen(js_name = syntheticCheckerboard)]
 pub fn synthetic_checkerboard(w: u32, h: u32, cells: u32) -> Result<Vec<f32>, JsError> {
@@ -373,8 +380,16 @@ pub fn synthetic_checkerboard(w: u32, h: u32, cells: u32) -> Result<Vec<f32>, Js
     Ok(synthetic::checkerboard(w, h, cells).rgb)
 }
 
-/// The pen bank as a JSON list of `{"name", "width_mm", "color"}`, in catalogue order.
+/// The pen bank as a JSON list of `{"name", "width_mm", "color", "kind", "model"}`, in catalogue
+/// order, grouped by kind.
 #[wasm_bindgen(js_name = listPens)]
 pub fn list_pens() -> String {
     json!(pens::bank()).to_string()
+}
+
+/// The ink colours as a JSON list of `{"name", "color"}`, in display order; see [`pens::INKS`].
+#[wasm_bindgen(js_name = listInks)]
+pub fn list_inks() -> String {
+    let inks = pens::INKS.iter();
+    Value::from_iter(inks.map(|(name, color)| json!({"name": name, "color": color}))).to_string()
 }

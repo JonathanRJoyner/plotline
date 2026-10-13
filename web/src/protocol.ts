@@ -1,7 +1,7 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
-import { describe, listPens, listStyles, syntheticGradient, type Run, type Session } from "../pkg/plotline_wasm.js";
+import { describe, listInks, listPens, listStyles, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
 import { drive } from "./driver";
 import type { Canvas, Event, Machine, Pen, Stats } from "./events";
 
@@ -33,12 +33,14 @@ export class Protocol {
     this.methods = {
       listStyles: () => JSON.parse(listStyles()),
       listPens: () => JSON.parse(listPens()),
+      listInks: () => JSON.parse(listInks()),
       setMachine: (machine: Machine | null) => s.setMachine(JSON.stringify(machine)),
       gcode: (layer: number) => s.gcode(layer),
       describe: (name: string) => JSON.parse(describe(name)),
       setImageBytes: (bytes: Uint8Array) => { s.setImageBytes(bytes); this.image = true; },
       setImage: (width: number, height: number, rgb: Float32Array) => { s.setImage(width, height, rgb); this.image = true; },
-      sample: () => this.methods.setImage(400, 300, syntheticGradient(400, 300)),
+      // The default A4 drawing area's shape, 190 x 277 mm, so the sample fills it.
+      sample: () => this.methods.setImage(600, 875, syntheticStillLife(600, 875)),
       setCanvas: (canvas: Canvas) => s.setCanvas(JSON.stringify(canvas)),
       setPens: (pens: Pen[]) => s.setPens(JSON.stringify(pens)),
       setStyle: (name: string) => s.setStyle(name),

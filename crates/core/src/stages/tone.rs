@@ -220,7 +220,7 @@ fn resize(lum: &[f32], w: usize, h: usize, long_edge: usize) -> (Vec<f32>, usize
 mod tests {
     use super::*;
     use crate::settings::merge;
-    use crate::synthetic::{checkerboard, flat, gradient, noise};
+    use crate::synthetic::{checkerboard, color_bars, flat, gradient, noise, still_life};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -267,6 +267,17 @@ mod tests {
         let (_, t) = run_tone(gradient(64, 48), SQUARE, json!({}));
         let row = &t.ink[12 * 64..13 * 64];
         assert!(row[0] > 0.9 && row[63] < 0.1 && row.windows(2).all(|w| w[1] <= w[0] + 1e-6));
+    }
+    #[test]
+    fn colour_bars_take_ink_by_luminance() {
+        // White, yellow, cyan, green, magenta, red, blue and black: each bar's ink is 1 - Y.
+        let (_, t) = run_tone(color_bars(64, 48), SQUARE, json!({}));
+        let want = [0.0, 0.114, 0.299, 0.413, 0.587, 0.701, 0.886, 1.0];
+        let row = &t.ink[24 * 64..25 * 64];
+        for (i, w) in want.iter().enumerate() {
+            let v = row[8 * i + 4];
+            assert!((v - w).abs() < 1e-5, "bar {i}: ink {v}, want {w}");
+        }
     }
     #[test]
     fn invert_levels_gamma_contrast() {
@@ -431,6 +442,10 @@ mod tests {
         assert_eq!(c.rgb[8 * 3], 1.0);
         assert_eq!(noise(4, 4, 1).rgb, noise(4, 4, 1).rgb);
         assert_ne!(noise(4, 4, 1).rgb, noise(4, 4, 2).rgb);
+        let s = still_life(60, 88);
+        let lo = s.rgb.iter().copied().fold(1.0, f32::min);
+        let hi = s.rgb.iter().copied().fold(0.0, f32::max);
+        assert!(lo < 0.2 && hi > 0.95, "the still life spans {lo} to {hi}");
     }
     #[test]
     fn an_image_without_pixels_or_with_the_wrong_buffer_is_an_error() {
