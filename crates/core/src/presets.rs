@@ -445,6 +445,15 @@ mod tests {
     }
 
     #[test]
+    fn a_version_2_area_missing_a_bound_is_refused() {
+        let mut v = to_value("grid", &a4(), &[black()], Some(&machine()), &json!({}));
+        v["version"] = json!(2);
+        v["machine"]["area"] = json!({"x_min": 28, "x_max": 228, "y_min": 42});
+        let err = parse(&v).unwrap_err().to_string();
+        assert!(err.starts_with("machine: unknown field"), "{err}");
+    }
+
+    #[test]
     fn a_bad_machine_names_the_field() {
         let mut m = machine();
         m.z_up_mm = 1.0;
