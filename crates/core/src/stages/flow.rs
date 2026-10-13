@@ -15,7 +15,8 @@
 //! `min(d(q), d(p))` away, so seeds spread towards lighter tone as well as darker. The first seed
 //! is the rect's centre; when the seeds run out, a coarse grid at `max_spacing` is scanned for
 //! points with every sample at least `d(q)` away. A line shorter than `2 * min_spacing` is
-//! dropped, and its samples are taken back out of the bucket grid, so it blocks nothing.
+//! dropped, and its samples are taken back out of the bucket grid, so it blocks nothing. When the
+//! drawing is split between pens, a kept line breaks where its lane has almost no ink.
 
 use std::sync::Arc;
 
@@ -23,7 +24,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::lines::{self, inside};
+use super::lines::{self, inside, LANE_MIN_INK};
 use crate::math;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
@@ -104,10 +105,11 @@ impl Stage for FlowStage {
         &self,
         inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<FlowSettings>(self.name(), &self.schema(), settings)?;
-        Ok(Box::new(FlowRun::new(inputs.tone().clone(), &s)))
+        let lift = ctx.lane().count > 1;
+        Ok(Box::new(FlowRun::new(inputs.tone().clone(), &s, lift)))
     }
 }
 
@@ -152,10 +154,12 @@ struct FlowRun {
     paths: Paths,
     /// About how long the lines will be in all, for progress.
     expected: f64,
+    /// Whether the pen lifts over no ink, as it does when the drawing is split between pens.
+    lift: bool,
 }
 
 impl FlowRun {
-    fn new(tone: Arc<ToneMap>, s: &FlowSettings) -> FlowRun {
+    fn new(tone: Arc<ToneMap>, s: &FlowSettings, lift: bool) -> FlowRun {
         let (w, h) = (tone.width as usize, tone.height as usize);
         let b = math::blur(&tone.ink, w, h, s.smooth_mm / tone.mm_per_px);
         let at = |x: usize, y: usize| f64::from(b[y * w + x]);
@@ -202,6 +206,7 @@ impl FlowRun {
             scan: 0,
             paths: Paths::new(),
             expected: 0.0,
+            lift,
             tone,
         };
         let px_area = run.tone.mm_per_px * run.tone.mm_per_px;
@@ -364,7 +369,14 @@ impl FlowRun {
         path.reverse();
         path.extend(ahead);
         if Paths::path_length(&path) >= 2.0 * self.min {
-            self.paths.push(&path);
+            // Split between pens, a lane lifts the pen over no ink; alone, each line is drawn whole.
+            let lift = self.lift;
+            let tone = &self.tone;
+            for run in path.split(|&p| lift && tone.sample(p) < LANE_MIN_INK) {
+                if run.len() >= 2 {
+                    self.paths.push(run);
+                }
+            }
             return;
         }
         // Newest first, so each sample is the head of its bucket when it goes.

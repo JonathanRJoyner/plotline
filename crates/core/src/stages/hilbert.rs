@@ -16,13 +16,14 @@
 //! summed-area table in `f64` over the pixels whose centres lie in the cell, each counted whole;
 //! a cell with none, or entirely off the map, has ink 0. A leaf whose centre lies outside the map
 //! ends the current path, and a cell entirely outside the map ends it without being split, since
-//! all its leaves would.
+//! all its leaves would. When the drawing is split between pens, a leaf over almost no ink in its
+//! lane ends the path too.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::lines::{inside, ChunkRun};
+use super::lines::{inside, ChunkRun, LANE_MIN_INK};
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
 use crate::types::{Paths, ToneMap};
@@ -87,10 +88,11 @@ impl Stage for HilbertStage {
         &self,
         inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<HilbertSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
+        let lift = ctx.lane().count > 1;
         let rect = tone.rect_mm();
         let sums = Sums::new(&tone);
         let (cell, max) = (s.cell_mm, s.max_cell_mm.max(s.cell_mm));
@@ -137,7 +139,8 @@ impl Stage for HilbertStage {
                         stack.extend(c.children().into_iter().rev());
                     } else {
                         let centre = c.centre();
-                        if inside(rect, centre) {
+                        // Split between pens, a lane lifts the pen over no ink as it does off the map.
+                        if inside(rect, centre) && !(lift && tone.sample(centre) < LANE_MIN_INK) {
                             open.push(centre);
                         } else {
                             end(paths, open);
