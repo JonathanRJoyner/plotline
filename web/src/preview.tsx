@@ -91,11 +91,16 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   const layers: Layer[] = held
     ? live.flatMap((f, i) => (f?.coords && f.offsets && !s.hidden.has(i) ? [{ pen: penOf(i), coords: f.coords, offsets: f.offsets }] : []))
     : (result?.layers ?? []).filter((_, i) => !s.hidden.has(i));
+  // Multiply, so pens that overlap darken like layered transparent inks on the plot; one pen on
+  // white looks the same. The rest of the page draws normally.
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
   live.forEach((f, i) => {
     const pts = f?.points;
     if (pts && !s.hidden.has(i)) strokeChunks(penOf(i), pts.length / 2, (p, k) => trace(p, pts, k, k + 1));
   });
   for (const l of layers) strokeChunks(l.pen, pathCount(l.offsets), (p, i) => trace(p, l.coords, l.offsets[i], l.offsets[i + 1]));
+  ctx.restore();
 
   if (s.showTravel && !held) {
     const p = new Path2D();
