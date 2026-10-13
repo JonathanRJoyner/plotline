@@ -8,7 +8,8 @@
 //! algorithm, so there is nothing to cite.
 //!
 //! When the drawing is split between pens, each pen's lines turn by its share of the half turn, so
-//! that the pens do not draw over each other.
+//! that the pens do not draw over each other, and the pen lifts where its lane has almost no ink,
+//! breaking a line into runs.
 
 use std::f64::consts::PI;
 
@@ -16,7 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::lines::{clamp_to, direction, sample_line, scanlines, ChunkRun};
+use super::lines::{clamp_to, direction, sample_line, scanlines, ChunkRun, LANE_MIN_INK};
 use crate::math;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
@@ -92,21 +93,34 @@ impl Stage for WaveStage {
         let (dir, normal) = direction(angle);
         let swing = s.amplitude * s.spacing_mm / 2.0;
         let step = s.wavelength_mm / 12.0;
+        // Split between pens, a lane lifts the pen over no ink; alone, each line is drawn whole.
+        let lift = lane.count > 1;
         Ok(Box::new(ChunkRun::new(
             lines.len(),
             "lines",
             Box::new(move |i, paths, _| {
                 let (a, b) = lines[i];
-                let wave: Vec<[f64; 2]> = sample_line(a, b, step)
-                    .map(|p| {
-                        let t = p[0] * dir[0] + p[1] * dir[1];
-                        let ink = f64::from(tone.sample(p));
-                        let off = swing * ink * math::sin(2.0 * PI * t / s.wavelength_mm);
-                        // A ripple near the map's edge would leave it, and the page with it.
-                        clamp_to(rect, [p[0] + off * normal[0], p[1] + off * normal[1]])
-                    })
-                    .collect();
-                paths.push(&wave);
+                let mut wave: Vec<[f64; 2]> = Vec::new();
+                for p in sample_line(a, b, step) {
+                    let ink = tone.sample(p);
+                    if lift && ink < LANE_MIN_INK {
+                        if wave.len() >= 2 {
+                            paths.push(&wave);
+                        }
+                        wave.clear();
+                        continue;
+                    }
+                    let t = p[0] * dir[0] + p[1] * dir[1];
+                    let off = swing * f64::from(ink) * math::sin(2.0 * PI * t / s.wavelength_mm);
+                    // A ripple near the map's edge would leave it, and the page with it.
+                    wave.push(clamp_to(
+                        rect,
+                        [p[0] + off * normal[0], p[1] + off * normal[1]],
+                    ));
+                }
+                if wave.len() >= 2 {
+                    paths.push(&wave);
+                }
             }),
         )))
     }
@@ -158,15 +172,32 @@ mod tests {
 
     #[test]
     fn a_second_pen_turns_the_waves() {
-        // With no ink the lines are straight. Pen 0 would draw them level; pen 1 turns them to
+        // With no swing the lines are straight. Pen 0 would draw them level; pen 1 turns them to
         // 90 degrees, so each keeps one x.
-        let tone = tone_map(10, 5, |_, _| 0.0);
+        let tone = tone_map(10, 5, |_, _| 1.0);
         let lane = Lane { index: 1, count: 2 };
-        let (_, paths) = run_tone_stage_in_lane(&WaveStage, tone, json!({}), lane);
+        let (_, paths) = run_tone_stage_in_lane(&WaveStage, tone, json!({"amplitude": 0.0}), lane);
         assert!(!paths.is_empty());
         for p in paths.iter() {
             assert!(p.len() > 2 && p.iter().all(|v| (v[0] - p[0][0]).abs() < 1e-9));
         }
+        assert_inside(&paths, RECT);
+    }
+
+    #[test]
+    fn a_shared_lane_lifts_the_pen_over_no_ink() {
+        // Ink only in the left half: alone, each line crosses the map; in a lane it stops there.
+        let half = |x: u32, _| if x < 5 { 1.0 } else { 0.0 };
+        let (_, alone) = run_tone_stage(&WaveStage, tone_map(10, 5, half), json!({}));
+        assert!(alone.iter().all(|p| p[p.len() - 1][0] > 29.0));
+        let lane = Lane { index: 0, count: 2 };
+        let (_, shared) =
+            run_tone_stage_in_lane(&WaveStage, tone_map(10, 5, half), json!({}), lane);
+        assert_eq!(shared.len(), alone.len());
+        assert!(
+            shared.iter().all(|p| p[p.len() - 1][0] < 21.0),
+            "{shared:?}"
+        );
     }
 
     #[test]
