@@ -48,6 +48,7 @@ def test_styles_and_schema():
         "dither",
         "circles",
         "contours",
+        "flow",
     ]
     assert (
         _core.describe("grid")["stages"][0]["schema"]["properties"]["resolution"]["default"] == 1000
