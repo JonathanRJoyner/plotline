@@ -17,12 +17,12 @@ import { zoomPercent, type View } from "./view";
 type Style = { name: string; label: string; description: string };
 type Stage = { name: string; label: string; schema: Record<string, unknown> };
 
-/** The logo's mark, as docs/images/logo-light.svg draws it: a curve from a small dot to a large one. */
+/** The logo's mark, as docs/images/logo-light.svg draws it: a curve between two ring handles. */
 const Mark = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-    <path d="M3 18C3 9 11 9 12 12s9 3 9-6" />
-    <circle cx="3" cy="18" r="1" fill="currentColor" />
-    <circle cx="21" cy="6" r="2.5" fill="currentColor" stroke="none" />
+    <path d="M5 17C5 10 10 5 17 5" />
+    <circle cx="5" cy="19" r="2" />
+    <circle cx="19" cy="5" r="2" />
   </svg>
 );
 

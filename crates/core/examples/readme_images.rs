@@ -11,7 +11,7 @@ use std::path::Path;
 use plotline_core::registry::list_styles;
 use plotline_core::synthetic::still_life;
 use plotline_core::{Image, Pen, Session, DEFAULT_CACHE_BYTES};
-use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 /// The preview width in pixels: twice the width of a README column, so the pictures stay sharp on
 /// a dense screen.
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// The logo's mark in black on white, as `docs/images/logo-light.svg` draws it on its 24-unit
-/// grid: a curve from a small dot to a large one.
+/// grid: a curve between two ring handles.
 fn logo() -> Result<Image, Box<dyn std::error::Error>> {
     let mut pixmap = Pixmap::new(W, H).ok_or("no pixmap")?;
     pixmap.fill(tiny_skia::Color::WHITE);
@@ -74,24 +74,16 @@ fn logo() -> Result<Image, Box<dyn std::error::Error>> {
     black.set_color_rgba8(0, 0, 0, 255);
 
     let mut curve = PathBuilder::new();
-    curve.move_to(3.0, 18.0);
-    curve.cubic_to(3.0, 9.0, 11.0, 9.0, 12.0, 12.0);
-    curve.cubic_to(13.0, 15.0, 21.0, 15.0, 21.0, 6.0);
+    curve.move_to(5.0, 17.0);
+    curve.cubic_to(5.0, 10.0, 10.0, 5.0, 17.0, 5.0);
     let stroke = Stroke {
         width: 2.0,
         line_cap: tiny_skia::LineCap::Round,
         ..Stroke::default()
     };
-    pixmap.stroke_path(
-        &curve.finish().ok_or("no curve")?,
-        &black,
-        &stroke,
-        at,
-        None,
-    );
-    for (x, y, r) in [(3.0, 18.0, 2.0), (21.0, 6.0, 2.5)] {
-        let dot = PathBuilder::from_circle(x, y, r).ok_or("no dot")?;
-        pixmap.fill_path(&dot, &black, FillRule::Winding, at, None);
+    let rings = [(5.0, 19.0), (19.0, 5.0)].map(|(x, y)| PathBuilder::from_circle(x, y, 2.0));
+    for path in [curve.finish()].into_iter().chain(rings) {
+        pixmap.stroke_path(&path.ok_or("no path")?, &black, &stroke, at, None);
     }
 
     let rgb = pixmap
