@@ -2,15 +2,16 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
-import { Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Spline, Square, Sun } from "lucide-preact";
+import { CircleHelp, Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Spline, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
-import type { FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
+import type { BankPen, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
-import { ExportPanel, PagePanel, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar } from "./panels";
+import { ExportPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
+import { firstVisit, Tour } from "./tour";
 import { zoomPercent, type View } from "./view";
 
 type Style = { name: string; label: string; description: string };
@@ -124,12 +125,12 @@ function Pens({ status, ...props }: Omit<Parameters<typeof PensPanel>[0], "drawn
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frame" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
-  onSettings: () => void;
+  onSettings: () => void; onTour: () => void;
 };
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, onSettings, ...preview }: RunViewProps) {
+function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, ...preview }: RunViewProps) {
   const { run, stats } = useStatus(status);
   const [frame, setFrame] = useState<FrameEvent | null>(null);
   const [result, setResult] = useState<ResultEvent | null>(null);
@@ -168,7 +169,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
     <>
       {/* Grouped, so a narrow window wraps whole groups. */}
       <div class="toolbar" id="toolbar" tabIndex={-1}>
-        <span class="group">
+        <span class="group" data-tour="image">
           <label class="button">
             <ImageUp /> Open image
             <input
@@ -182,11 +183,11 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
           </label>
           <button type="button" onClick={onSample}><Sparkles /> Sample image</button>
         </span>
-        <span class="group">
+        <span class="group" data-tour="run">
           <button type="button" class="primary" disabled={!preview.hasImage} onClick={onRun}><Play /> Run</button>
           <button type="button" disabled={run.state !== "running" || stopping} onClick={() => { setStopFor(run.id); onStop(); }}><Square /> Stop</button>
         </span>
-        <span class="group">
+        <span class="group" data-tour="view">
           <label class="chip">
             <input class="visually-hidden" type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} />
             <ImageIcon /> Source
@@ -202,19 +203,20 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
         </span>
         <span class="group end">
           <button type="button" disabled={stats === null} onClick={onSvg}><Download /> Export SVG</button>
-          <button type="button" onClick={onSettings}><Gear /> Settings</button>
+          <button type="button" data-tour="machine" onClick={onSettings}><Gear /> Settings</button>
+          <button type="button" onClick={onTour}><CircleHelp /> Tour</button>
           <ThemeButton />
         </span>
       </div>
       {error && <p class="error">{error}</p>}
-      <div class="preview">
+      <div class="preview" data-tour="preview">
         <Preview
           {...preview} frame={frame} result={result} running={run.state === "running"} showSource={showSource}
           showTravel={showTravel} view={view} onView={setView} fits={fits}
         />
         {thin && <p class="hint">The pen is under a pixel wide at this zoom, so its marks barely show: zoom in to see them.</p>}
       </div>
-      <footer>
+      <footer data-tour="status">
         <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
         <StatsPanel stats={stats} />
       </footer>
@@ -230,7 +232,7 @@ export function App() {
     return new Engine(worker);
   });
   const [styles, setStyles] = useState<Style[] | null>(null);
-  const [bank, setBank] = useState<Pen[]>([]);
+  const [bank, setBank] = useState<BankPen[]>([]);
   const [inks, setInks] = useState<Ink[]>([]);
   const [state, setState] = useState<State | null>(null);
   const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [] }));
@@ -241,6 +243,8 @@ export function App() {
   const [hidden, setHidden] = useState(new Set<number>());
   const [help, setHelp] = useState(helpShown);
   const [settingsOpens, setSettingsOpens] = useState(0);
+  const [pensOpens, setPensOpens] = useState(0);
+  const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -267,7 +271,7 @@ export function App() {
   }
 
   useEffect(() => {
-    engine.call<Pen[]>("listPens").then((r) => setBank(r.value), () => {});
+    engine.call<BankPen[]>("listPens").then((r) => setBank(r.value), () => {});
     engine.call<Ink[]>("listInks").then((r) => setInks(r.value), () => {});
     engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
       setStyles(value);
@@ -370,10 +374,10 @@ export function App() {
       <a class="skip" href="#toolbar">Skip to the toolbar</a>
       <aside>
         <h1 class="brand"><Spline /> plotline</h1>
-        <label>
+        <label data-tour="help">
           <input type="checkbox" checked={help} onChange={(e) => { setHelp(e.currentTarget.checked); keepHelp(e.currentTarget.checked); }} /> Show help
         </label>
-        <fieldset>
+        <fieldset data-tour="style">
           <legend>Style</legend>
           <label>
             Style{" "}
@@ -383,7 +387,9 @@ export function App() {
           </label>
           <p class="help">{styles.find((s) => s.name === state.style)?.description}</p>
         </fieldset>
-        <Settings stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
+        <div class="stages" data-tour="settings">
+          <Settings stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
+        </div>
       </aside>
       <main>
         <RunView
@@ -395,12 +401,17 @@ export function App() {
             setErrors((es) => ({ ...es, machine: "" })); // an old refusal would show over a good machine
             setSettingsOpens((n) => n + 1);
           }}
+          onTour={() => setTourOpens((n) => n + 1)}
         />
       </main>
       <aside>
         <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
         <Pens
-          status={status} pens={state.pens} bank={bank} inks={inks} hidden={hidden} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
+          status={status} pens={state.pens} hidden={hidden} error={errors.pens}
+          onEdit={() => {
+            setErrors((es) => ({ ...es, pens: "" })); // as for the settings dialog
+            setPensOpens((n) => n + 1);
+          }}
           onToggle={(i) => setHidden((h) => {
             const next = new Set(h); // a new set each time: the preview redraws on its identity
             if (!next.delete(i)) next.add(i);
@@ -414,6 +425,10 @@ export function App() {
         opens={settingsOpens} machine={state.machine} error={errors.machine} speeds={state.speeds} onPick={pickMachine}
         onEdit={(m) => call("setMachine", [m], "machine")} onSpeeds={(s) => call("setSpeeds", [s])}
       />
+      <PensDialog
+        opens={pensOpens} pens={state.pens} bank={bank} inks={inks} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
+      />
+      <Tour opens={tourOpens} />
     </div>
   );
 }

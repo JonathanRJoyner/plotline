@@ -383,7 +383,8 @@ pub fn synthetic_checkerboard(w: u32, h: u32, cells: u32) -> Result<Vec<f32>, Js
     Ok(synthetic::checkerboard(w, h, cells).rgb)
 }
 
-/// The pen bank as a JSON list of `{"name", "width_mm", "color"}`, in catalogue order.
+/// The pen bank as a JSON list of `{"name", "width_mm", "color", "kind", "model"}`, in catalogue
+/// order, grouped by kind.
 #[wasm_bindgen(js_name = listPens)]
 pub fn list_pens() -> String {
     json!(pens::bank()).to_string()

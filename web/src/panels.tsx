@@ -1,10 +1,11 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { Download, FolderOpen, Plus, Save, Settings as Gear, X } from "lucide-preact";
-import type { JSX } from "preact";
+import { ArrowDown, ArrowUp, Copy, Download, FolderOpen, PenLine, Plus, Save, Settings as Gear, X } from "lucide-preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { Area, Canvas, Ink, Machine, Pen, Stats } from "./events";
+import { filterBank } from "./bank";
+import type { Area, BankPen, Canvas, Ink, Machine, Pen, Stats } from "./events";
 import type { Speeds, State } from "./protocol";
 
 const SIZES: [string, number, number][] = [
@@ -25,7 +26,7 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
     <label>{label}<span><input type="number" min="0" step="any" value={canvas[key]} onChange={(e) => set({ [key]: e.currentTarget.valueAsNumber })} /> mm</span></label>
   );
   return (
-    <fieldset>
+    <fieldset data-tour="page">
       <legend>Page</legend>
       <div class="grid">
         <label>
@@ -60,25 +61,23 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
 }
 
 type PensProps = {
-  pens: Pen[]; bank: Pen[]; inks: Ink[]; hidden: Set<number>; error?: string;
+  pens: Pen[]; hidden: Set<number>; error?: string;
   // How many pens the last drawing has layers for, or null before the first drawing.
   drawn: number | null;
-  onChange: (pens: Pen[]) => void; onToggle: (index: number) => void;
+  onEdit: () => void; onToggle: (index: number) => void;
 };
 
-export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, onToggle }: PensProps): JSX.Element {
-  const set = (i: number, patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+// The pens as a short list with their preview toggles; they are edited in the pens dialog.
+export function PensPanel({ pens, hidden, error, drawn, onEdit, onToggle }: PensProps): JSX.Element {
   return (
-    <fieldset>
+    <fieldset data-tour="pens">
       <legend>Pens</legend>
       {pens.map((p, i) => (
         <div class="pen">
-          <input type="color" list="inks" aria-label="Colour" value={p.color} onChange={(e) => set(i, { color: e.currentTarget.value })} />
-          <input type="text" aria-label="Name" value={p.name} onChange={(e) => set(i, { name: e.currentTarget.value })} />
-          <input type="number" aria-label="Width in mm" min="0" step="0.05" value={p.width_mm} onChange={(e) => set(i, { width_mm: e.currentTarget.valueAsNumber })} /> mm
-          <input type="checkbox" aria-label="Show in the preview" title="Show in the preview" checked={!hidden.has(i)} onChange={() => onToggle(i)} />
-          {/* The session refuses an empty pen list. */}
-          <button type="button" class="icon" aria-label="Remove pen" title="Remove pen" disabled={pens.length === 1} onClick={() => onChange(pens.filter((_, j) => j !== i))}><X /></button>
+          <span class="swatch" style={{ background: p.color }} />
+          <span class="name" title={p.name}>{p.name}</span>
+          <span class="muted">{p.width_mm} mm</span>
+          <input type="checkbox" aria-label={`Show ${p.name} in the preview`} title="Show in the preview" checked={!hidden.has(i)} onChange={() => onToggle(i)} />
         </div>
       ))}
       {error && <p class="error">{error}</p>}
@@ -88,25 +87,118 @@ export function PensPanel({ pens, bank, inks, hidden, error, drawn, onChange, on
         </p>
       )}
       {hidden.size > 0 && <p class="help">A hidden pen is only hidden in the preview: it still exports.</p>}
-      <button type="button" onClick={() => onChange([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }])}><Plus /> Add pen</button>
-      <label>
-        Add from bank
-        <select
-          class="wide"
-          value=""
-          onChange={(e) => {
-            const pen = bank.find((p) => p.name === e.currentTarget.value);
-            if (pen) onChange([...pens, pen]);
-          }}
-        >
-          <option value="">choose a pen</option>
-          {bank.map((p) => <option value={p.name}>{p.name} ({p.width_mm} mm)</option>)}
-        </select>
-      </label>
-      {/* Suggested swatches in the colour picker; browsers without them open the plain picker. Kept
-          last, because the rule that clears the floated legend applies to the element after it. */}
-      <datalist id="inks">{inks.map((k) => <option value={k.color} label={k.name} />)}</datalist>
+      <button type="button" onClick={onEdit}><PenLine /> Edit pens</button>
     </fieldset>
+  );
+}
+
+// A modal on the native <dialog>, which brings focus trapping and Esc to close. Each change of
+// `opens` opens it; the dialog element alone knows whether it is open, so nothing waits on its
+// close event. The body holds a list of sections or items on the left and fields on the right.
+function Modal({ opens, title, icon, wide, children }: { opens: number; title: string; icon: JSX.Element; wide?: boolean; children: ComponentChildren }): JSX.Element {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (opens > 0 && !ref.current!.open) ref.current!.showModal();
+  }, [opens]);
+  const id = `${title.toLowerCase()}-title`;
+  return (
+    <dialog ref={ref} class={wide ? "modal wide" : "modal"} aria-labelledby={id}>
+      <header>
+        <h2 id={id}>{icon} {title}</h2>
+        <button type="button" class="icon" title="Close" aria-label="Close" onClick={() => ref.current!.close()}><X /></button>
+      </header>
+      <div class="body">{children}</div>
+    </dialog>
+  );
+}
+
+type PensDialogProps = { opens: number; pens: Pen[]; bank: BankPen[]; inks: Ink[]; error?: string; onChange: (pens: Pen[]) => void };
+
+// Your pens in drawing order on the left, the chosen one's name, width and colour on the right,
+// and the pen bank under them to give it a maker's pen. Changes apply as they are made.
+export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDialogProps): JSX.Element {
+  const [chosen, choose] = useState(0);
+  const [kind, setKind] = useState("");
+  const [query, setQuery] = useState("");
+  const i = Math.min(chosen, pens.length - 1); // the list can shrink under it, as on a refused change
+  const pen = pens[i];
+  const set = (patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  // Puts `list` in place and chooses the pen at `next`.
+  const put = (list: Pen[], next: number) => { onChange(list); choose(next); };
+  const move = (by: number) => {
+    const list = [...pens];
+    [list[i], list[i + by]] = [list[i + by], list[i]];
+    put(list, i + by);
+  };
+  const kinds = [...new Set(bank.map((p) => p.kind))];
+  const groups = filterBank(bank, kind, query);
+  const ink = inks.find((k) => k.color.toLowerCase() === pen.color.toLowerCase());
+  return (
+    <Modal opens={opens} title="Pens" icon={<PenLine />} wide>
+      <nav>
+        <ol class="pens">
+          {pens.map((p, j) => (
+            <li>
+              <button type="button" aria-current={j === i ? "true" : undefined} onClick={() => choose(j)}>
+                <span class="swatch" style={{ background: p.color }} />
+                <span class="name">{p.name}</span>
+                <span class="muted">{p.width_mm}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+        <div class="actions">
+          <button type="button" class="icon" title="Add pen" aria-label="Add pen" onClick={() => put([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }], pens.length)}><Plus /></button>
+          <button type="button" class="icon" title="Duplicate pen" aria-label="Duplicate pen" onClick={() => put([...pens.slice(0, i + 1), { ...pen }, ...pens.slice(i + 1)], i + 1)}><Copy /></button>
+          <button type="button" class="icon" title="Move up: draws earlier" aria-label="Move up" disabled={i === 0} onClick={() => move(-1)}><ArrowUp /></button>
+          <button type="button" class="icon" title="Move down: draws later" aria-label="Move down" disabled={i === pens.length - 1} onClick={() => move(1)}><ArrowDown /></button>
+          {/* The session refuses an empty pen list. */}
+          <button type="button" class="icon" title="Remove pen" aria-label="Remove pen" disabled={pens.length === 1} onClick={() => put(pens.filter((_, j) => j !== i), Math.max(0, i - 1))}><X /></button>
+        </div>
+        <p class="help">The first pen draws first; a one-pen style draws with it alone.</p>
+      </nav>
+      <div class="fields">
+        {error && <p class="error">{error}</p>}
+        <h3>Pen {i + 1}</h3>
+        <label>Name <input type="text" value={pen.name} onChange={(e) => set({ name: e.currentTarget.value })} /></label>
+        {num("Line width", "mm", pen.width_mm, (v) => set({ width_mm: v }))}
+        <div class="inks" role="group" aria-label="Ink colour">
+          <span>Colour</span>
+          {inks.map((k) => (
+            <button
+              type="button" class="ink" title={k.name} aria-label={k.name} aria-pressed={k === ink}
+              style={{ background: k.color }} onClick={() => set({ color: k.color })}
+            />
+          ))}
+          <input type="color" title="Any colour" aria-label="Any colour" value={pen.color} onChange={(e) => set({ color: e.currentTarget.value })} />
+        </div>
+        <h3>Pen bank</h3>
+        <p class="help">Choosing a size gives this pen its name and line width, as the maker publishes it. The colour stays.</p>
+        <div class="filter">
+          <select aria-label="Kind" value={kind} onChange={(e) => setKind(e.currentTarget.value)}>
+            <option value="">every kind</option>
+            {kinds.map((k) => <option value={k}>{k}</option>)}
+          </select>
+          <input type="search" placeholder="Search, such as micron 005" aria-label="Search the bank" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+        </div>
+        {groups.length === 0 && <p class="help">No pen in the bank matches.</p>}
+        {groups.map(([model, sizes]) => (
+          <div class="model">
+            <span>{model}<span class="muted"> · {sizes[0].kind}</span></span>
+            <div class="sizes">
+              {sizes.map((p) => {
+                const size = p.name.slice(model.length + 1);
+                return (
+                  <button type="button" aria-pressed={p.name === pen.name && p.width_mm === pen.width_mm} title={`${p.name}, ${p.width_mm} mm line`} onClick={() => set({ name: p.name, width_mm: p.width_mm })}>
+                    {size}{Number(size) !== p.width_mm && <span class="muted">{p.width_mm}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Modal>
   );
 }
 
@@ -155,7 +247,7 @@ type PresetsProps = { warnings: string[]; error?: string; onSave: () => void; on
 
 export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps): JSX.Element {
   return (
-    <fieldset>
+    <fieldset data-tour="presets">
       <legend>Presets</legend>
       <button type="button" onClick={onSave}><Save /> Save preset</button>
       <label class="button">
@@ -183,7 +275,7 @@ type ExportProps = {
 // One G-code file per layer of the drawing, once a machine is set.
 export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: ExportProps): JSX.Element {
   return (
-    <fieldset>
+    <fieldset data-tour="export">
       <legend>Export</legend>
       <button type="button" disabled={!drawing} onClick={() => onExport("svg")}><Download /> SVG</button>
       <button type="button" disabled={!drawing} onClick={() => onExport("json")}><Download /> JSON</button>
@@ -237,14 +329,9 @@ type SettingsProps = {
 // The setup that rarely changes, in a modal dialog: the machine, its pen lift and G-code, and the
 // speeds the time estimate uses (spec 2026-10-12-settings-dialog section 4). Changes apply as they
 // are made. Picking is told apart from editing because a pick also sets the page to the machine's
-// area. Each change of `opens` opens it; the dialog element alone knows whether it is open, so
-// nothing waits on its close event.
+// area.
 export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, onSpeeds }: SettingsProps): JSX.Element {
-  const ref = useRef<HTMLDialogElement>(null);
   const [section, setSection] = useState<(typeof SECTIONS)[number]>("Machine");
-  useEffect(() => {
-    if (opens > 0 && !ref.current!.open) ref.current!.showModal();
-  }, [opens]);
   const value = machine === null ? "none" : "current";
   const choose = <p>Choose a machine first</p>;
   const fields = {
@@ -313,20 +400,14 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
     ),
   }[section];
   return (
-    <dialog ref={ref} class="settings" aria-labelledby="settings-title">
-      <header>
-        <h2 id="settings-title"><Gear /> Settings</h2>
-        <button type="button" class="icon" title="Close" aria-label="Close" onClick={() => ref.current!.close()}><X /></button>
-      </header>
-      <div class="body">
-        <nav>
-          {SECTIONS.map((s) => <button type="button" aria-current={s === section ? "true" : undefined} onClick={() => setSection(s)}>{s}</button>)}
-        </nav>
-        <div class="fields">
-          {error && <p class="error">{error}</p>}
-          {fields}
-        </div>
+    <Modal opens={opens} title="Settings" icon={<Gear />}>
+      <nav>
+        {SECTIONS.map((s) => <button type="button" aria-current={s === section ? "true" : undefined} onClick={() => setSection(s)}>{s}</button>)}
+      </nav>
+      <div class="fields">
+        {error && <p class="error">{error}</p>}
+        {fields}
       </div>
-    </dialog>
+    </Modal>
   );
 }
