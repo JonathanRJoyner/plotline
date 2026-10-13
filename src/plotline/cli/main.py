@@ -1,10 +1,11 @@
-"""The command line interface: list the styles, describe one, run one on an image, and serve the
-web interface and the MCP server.
+"""The command line interface: list the styles, describe one, analyse an image, run a style on it,
+and serve the web interface and the MCP server.
 
-``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. ``styles``
-and ``describe`` read the style registry. ``gui`` serves the web bundle that a release wheel
-carries. ``mcp`` serves a session to an AI assistant on stdio. The work all happens in the session
-layer, so this module holds no algorithm code.
+``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. ``analyse``
+prints the session's analysis of an image. ``styles`` and ``describe`` read the style registry.
+``gui`` serves the web bundle that a release wheel carries. ``mcp`` serves a session to an AI
+assistant on stdio. The work all happens in the session layer, so this module holds no algorithm
+code.
 """
 
 import http.server
@@ -12,7 +13,7 @@ import importlib.util
 import json
 import sys
 import webbrowser
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from functools import partial
@@ -120,20 +121,62 @@ def describe(style: str, as_json: bool) -> None:
             click.echo("  " + "  ".join(fields))
 
 
+def page_options(command: Callable[..., Any]) -> Callable[..., Any]:
+    """Give ``command`` the options that set the page, which ``set_page`` then applies."""
+    for option in (
+        click.option(
+            "--fit",
+            type=click.Choice(["fit", "fill"]),
+            help="Keep the whole image on the page (fit) or fill the drawing area with it (fill).",
+        ),
+        click.option("--margin", type=float, metavar="MM", help="Margin around the drawing area."),
+        click.option("--height", type=float, metavar="MM", help="Page height."),
+        click.option("--width", type=float, metavar="MM", help="Page width."),
+    ):  # the last one applied is listed first
+        command = option(command)
+    return command
+
+
+def set_page(
+    session: Session,
+    width: float | None,
+    height: float | None,
+    margin: float | None,
+    fit: str | None,
+) -> None:
+    """Change the page of ``session`` by the options that were given; the rest stay as they are."""
+    page: dict[str, Any] = {
+        "width_mm": width,
+        "height_mm": height,
+        "margin_mm": margin,
+        "fit": fit,
+    }
+    changes = {key: value for key, value in page.items() if value is not None}
+    if changes:
+        session.set_canvas(replace(session.canvas, **changes))
+
+
+@main.command()
+@click.argument("image", type=click.Path())
+@page_options
+def analyse(
+    image: str, width: float | None, height: float | None, margin: float | None, fit: str | None
+) -> None:
+    """Print what IMAGE looks like and the changes that would suit it, as JSON."""
+    session = Session()
+    with _errors():
+        session.load_image(image)
+        set_page(session, width, height, margin, fit)
+        click.echo(json.dumps(session.analysis(), indent=2))
+
+
 @main.command()
 @click.argument("style")
 @click.argument("image", type=click.Path())
 @click.option("--out", required=True, type=click.Path(), help="Where to write the SVG.")
 @click.option("--json", "json_out", type=click.Path(), help="Also write the paths as JSON.")
 @click.option("--preview", type=click.Path(), help="Also write a PNG preview.")
-@click.option("--width", type=float, metavar="MM", help="Page width.")
-@click.option("--height", type=float, metavar="MM", help="Page height.")
-@click.option("--margin", type=float, metavar="MM", help="Margin around the drawing area.")
-@click.option(
-    "--fit",
-    type=click.Choice(["fit", "fill"]),
-    help="Keep the whole image on the page (fit) or fill the drawing area with it (fill).",
-)
+@page_options
 @click.option(
     "--pen",
     "pens",
@@ -188,15 +231,7 @@ def run(
         # A preset of the same style keeps its settings, which set_style would reset.
         if session.style.name != style:
             session.set_style(style)
-        page: dict[str, Any] = {
-            "width_mm": width,
-            "height_mm": height,
-            "margin_mm": margin,
-            "fit": fit,
-        }
-        changes = {key: value for key, value in page.items() if value is not None}
-        if changes:
-            session.set_canvas(replace(session.canvas, **changes))
+        set_page(session, width, height, margin, fit)
         if pens:
             session.set_pens(pens)
         for stage, key, value in sets:

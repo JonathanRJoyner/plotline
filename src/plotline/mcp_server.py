@@ -37,11 +37,13 @@ from plotline.types import Cancelled, Canvas, Frame, Pen, RunState
 INSTRUCTIONS = (
     "plotline turns an image into line art for a pen plotter. Work in this order: load_image, "
     "then set_page and set_pens if the defaults do not fit, then list_styles and describe_style "
-    "to choose a style and see its settings. run draws the image and returns its stats and a "
-    "preview at true pen width. Look at the preview, change settings with run(settings=...), and "
-    "repeat; only the stages after a changed setting run again. Use preview with region_mm to "
-    "inspect detail. export writes the result. All lengths are millimetres, the page origin is "
-    "its top-left corner and y grows down. Paths must be absolute."
+    "to choose a style and see its settings. Call analyse_image to see the image's statistics and "
+    "suggested changes; apply a suggestion with run(style=..., settings=...) or set_page. run "
+    "draws the image and returns its stats and a preview at true pen width. Look at the preview, "
+    "change settings with run(settings=...), and repeat; only the stages after a changed setting "
+    "run again. Use preview with region_mm to inspect detail. export writes the result. All "
+    "lengths are millimetres, the page origin is its top-left corner and y grows down. Paths must "
+    "be absolute."
 )
 
 
@@ -146,6 +148,16 @@ def build_server(session: Session | None = None) -> MCPServer:
             p = _absolute(path)
             session.load_image(p)
             return {"path": str(p), **(_image_size(session) or {})}
+
+    @server.tool()
+    async def analyse_image() -> dict[str, Any]:
+        """Measure the loaded image and suggest changes for it. stats are numbers about its tones,
+        noise and colour. Each suggestion has a kind, a reason and a patch, which holds any of
+        style, settings ({stage: {setting: value}}) and page ({width_mm, height_mm}), or none for a
+        note. Apply a patch with run(style=..., settings=...) or set_page. The suggestions follow
+        the current style, settings and page."""
+        with _errors():
+            return session.analysis()
 
     @server.tool()
     async def set_page(
