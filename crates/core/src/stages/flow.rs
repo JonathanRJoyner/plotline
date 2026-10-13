@@ -8,12 +8,13 @@
 //! flat. The separation at `p` is `d(p) = max_spacing - (max_spacing - min_spacing) * ink(p)`.
 //! Each line is traced both ways from its seed with second-order Runge-Kutta (midpoint) steps of
 //! `min_spacing / 2`. It stops at the rect's edge, after 20000 steps each way, where the field
-//! vanishes, or within `d / 2` of a sample of another line, or of its own line more than
-//! `2 * max_spacing` back along it. Seeds lie `d` to either side of each sample of the lines kept,
-//! taken first in first out, and a seed needs every sample at least `d` away. The first seed is
-//! the rect's centre; when the seeds run out, a coarse grid at `max_spacing` is scanned for free
-//! points. A line shorter than `2 * min_spacing` is dropped, and its samples are taken back out of
-//! the bucket grid, so it blocks nothing.
+//! vanishes, or within `d / 2` of a sample of another line, or of its own line more than `d`
+//! back along it. Seeds lie `d(p)` to either side of each sample `p` of the lines kept, taken first
+//! in first out, and such a seed `q` needs every sample at least `min(d(q), d(p))` away, so seeds
+//! spread towards lighter tone as well as darker. The first seed is the rect's centre; when the
+//! seeds run out, a coarse grid at `max_spacing` is scanned for points with every sample at least
+//! `d(q)` away. A line shorter than `2 * min_spacing` is dropped, and its samples are taken back
+//! out of the bucket grid, so it blocks nothing.
 
 use std::sync::Arc;
 
@@ -126,8 +127,6 @@ struct FlowRun {
     max: f64,
     /// The tracing step, `min / 2`.
     step: f64,
-    /// Samples of the same line this close in sequence never collide.
-    skip: i64,
     rect: [f64; 4],
     /// The bucket grid, with cells of `min`: per bucket the newest sample in it, per sample the
     /// next older one in its bucket.
@@ -187,7 +186,6 @@ impl FlowRun {
             min,
             max,
             step,
-            skip: (2.0 * max / step).ceil() as i64,
             rect,
             cols,
             rows,
@@ -250,7 +248,7 @@ impl FlowRun {
 
     /// Whether a stored sample lies within `r` of `q`, other than one of `line` within `skip` of
     /// `seq` in sequence.
-    fn crowded(&self, q: [f64; 2], r: f64, line: usize, seq: i64) -> bool {
+    fn crowded(&self, q: [f64; 2], r: f64, line: usize, seq: i64, skip: i64) -> bool {
         let (col, row) = self.cell(q);
         let reach = (r / self.min).ceil() as usize;
         for j in row.saturating_sub(reach)..=(row + reach).min(self.rows - 1) {
@@ -259,8 +257,7 @@ impl FlowRun {
                 while k != NONE {
                     let s = &self.samples[k];
                     let (dx, dy) = (s.p[0] - q[0], s.p[1] - q[1]);
-                    if dx * dx + dy * dy < r * r
-                        && !(s.line == line && (s.seq - seq).abs() <= self.skip)
+                    if dx * dx + dy * dy < r * r && !(s.line == line && (s.seq - seq).abs() <= skip)
                     {
                         return true;
                     }
@@ -280,11 +277,13 @@ impl FlowRun {
         self.samples.push(Sample { p, line, seq });
     }
 
-    /// Whether `q` may seed a line: inside the rect, with no sample within its separation.
-    fn free(&self, q: [f64; 2]) -> bool {
-        // A candidate lies one separation from the sample it came from; rounding must not put
-        // that sample within it.
-        inside(self.rect, q) && !self.crowded(q, self.spacing(q) - SLACK, NONE, 0)
+    /// Whether `q` may seed a line: inside the rect, with no sample within its separation or
+    /// within `r`, the separation at the sample it came from.
+    fn free(&self, q: [f64; 2], r: f64) -> bool {
+        // A candidate lies `r` from the sample it came from; rounding must not put that sample
+        // within it.
+        let reach = self.spacing(q).min(r) - SLACK;
+        inside(self.rect, q) && !self.crowded(q, reach, NONE, 0, 0)
     }
 
     /// The next free seed: the centre first, then the candidates beside the samples in order,
@@ -302,9 +301,10 @@ impl FlowRun {
             let Some(v) = self.direction(p) else {
                 continue;
             };
-            let d = if c.is_multiple_of(2) { 1.0 } else { -1.0 } * self.spacing(p);
+            let r = self.spacing(p);
+            let d = if c.is_multiple_of(2) { r } else { -r };
             let q = [p[0] - d * v[1], p[1] + d * v[0]];
-            if self.free(q) {
+            if self.free(q, r) {
                 return Some(q);
             }
         }
@@ -316,7 +316,7 @@ impl FlowRun {
                 x + (i as f64 + 0.5) * w / cols as f64,
                 y + (j as f64 + 0.5) * h / rows as f64,
             ];
-            if self.free(q) {
+            if self.free(q, f64::INFINITY) {
                 return Some(q);
             }
         }
@@ -329,8 +329,13 @@ impl FlowRun {
             let Some(q) = self.advance(p, sign) else {
                 return;
             };
-            let seq = sign * n;
-            if !inside(self.rect, q) || self.crowded(q, self.spacing(q) / 2.0, line, seq) {
+            if !inside(self.rect, q) {
+                return;
+            }
+            // Samples of this line within an arc of `d` behind `q` never block it.
+            let d = self.spacing(q);
+            let (seq, skip) = (sign * n, (d / self.step).ceil() as i64);
+            if self.crowded(q, d / 2.0, line, seq, skip) {
                 return;
             }
             self.store(q, line, seq);
@@ -502,6 +507,59 @@ mod tests {
             }
         }
         assert!(left > 2.0 * right, "left {left} right {right}");
+    }
+
+    #[test]
+    fn light_ward_spacing_follows_d() {
+        // Full ink at the top fading to white at the bottom, 200 mm tall, centred at y = 110: the
+        // lines run straight across, and each gap is the separation where it lies, on the dark side
+        // of the centre and on the light side.
+        let tone = tone_map(20, 100, |_, y| 1.0 - (y as f32 + 0.5) / 100.0);
+        let d = |y: f64| 6.0 - 5.2 * f64::from(tone.sample([30.0, y]));
+        let (_, paths) = run_tone_stage(&FlowStage, tone.clone(), json!({}));
+        let mut ys: Vec<f64> = paths.iter().map(|p| p[0][1]).collect();
+        ys.sort_by(f64::total_cmp);
+        for side in [|y: f64| y < 110.0, |y: f64| y > 110.0] {
+            let n = ys.iter().filter(|&&y| side(y)).count();
+            assert!(n > 5, "{ys:?}");
+        }
+        for w in ys.windows(2) {
+            let (gap, want) = (w[1] - w[0], d((w[0] + w[1]) / 2.0));
+            assert!(
+                (gap / want - 1.0).abs() < 0.05,
+                "gap {gap} below {} wants {want}: {ys:?}",
+                w[0]
+            );
+        }
+    }
+
+    #[test]
+    fn no_line_retraces_itself() {
+        // Half a step at the default spacing. The noise sits on a 4 mm lattice, which makes
+        // vortices with orbits of a few mm. An orbit shorter than `d` can still be retraced, and
+        // this map at these settings has none.
+        let near = 0.8 / 4.0;
+        let smooth = |x: u32, y: u32| {
+            let (fx, fy) = ((x as f32 + 0.5) / 2.0, (y as f32 + 0.5) / 2.0);
+            let (x0, y0) = (fx.floor() as u32, fy.floor() as u32);
+            let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+            let top = noise(x0, y0) * (1.0 - tx) + noise(x0 + 1, y0) * tx;
+            let bottom = noise(x0, y0 + 1) * (1.0 - tx) + noise(x0 + 1, y0 + 1) * tx;
+            top * (1.0 - ty) + bottom * ty
+        };
+        let (_, paths) = run_tone_stage(&FlowStage, tone_map(40, 30, smooth), json!({}));
+        assert!(paths.len() > 10, "{} lines", paths.len());
+        for (k, path) in paths.iter().enumerate() {
+            for i in 3..path.len() {
+                for j in 0..i - 2 {
+                    let (p, q) = (path[i], path[j]);
+                    assert!(
+                        math::hypot(p[0] - q[0], p[1] - q[1]) >= near,
+                        "line {k}: vertex {i} meets vertex {j}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
