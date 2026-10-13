@@ -14,14 +14,17 @@ somewhere the user did not mean.
 """
 
 import json
+import math
 import warnings
+from collections import deque
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from mcp.server.mcpserver import MCPServer
+import anyio
+from mcp.server.mcpserver import Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import TextContent
 from typing_extensions import TypedDict  # pydantic refuses typing.TypedDict before Python 3.12
@@ -29,7 +32,7 @@ from typing_extensions import TypedDict  # pydantic refuses typing.TypedDict bef
 import plotline
 from plotline import registry
 from plotline.session import Session
-from plotline.types import Cancelled, Pen
+from plotline.types import Cancelled, Canvas, Frame, Pen, RunState
 
 INSTRUCTIONS = (
     "plotline turns an image into line art for a pen plotter. Work in this order: load_image, "
@@ -40,6 +43,12 @@ INSTRUCTIONS = (
     "inspect detail. export writes the result. All lengths are millimetres, the page origin is "
     "its top-left corner and y grows down. Paths must be absolute."
 )
+
+
+PREVIEW_PX = 1000
+MIN_PX = 100
+MAX_PX = 4000
+MAX_PIXELS = 16_000_000  # bounds the memory one preview can ask for, since the input is untrusted
 
 
 class PenSpec(TypedDict):
@@ -76,6 +85,34 @@ def _image_size(session: Session) -> dict[str, int] | None:
     # slow on a huge image, with a size accessor in the engine.
     image = session.image
     return None if image is None else {"width_px": image.shape[1], "height_px": image.shape[0]}
+
+
+def _page(session: Session) -> Canvas:
+    # The result's page: the picture shows the result, and the page may have changed since the run.
+    return session.canvas if session.result is None else session.result.canvas
+
+
+def _pixels(width_px: int, width: float, height: float) -> float:
+    """The pixels of a picture ``width_px`` wide of an area ``width`` by ``height`` mm, or ``inf``
+    when its height in pixels is too large for a float."""
+    rows = height * (width_px / width)
+    return width_px * round(rows) if math.isfinite(rows) else math.inf
+
+
+def _widest(width: float, height: float) -> int:
+    """The largest ``width_px`` whose picture of an area ``width`` by ``height`` mm has at most
+    ``MAX_PIXELS``. Rounding the height can push the square-root bound a few pixels over."""
+    most = int(math.sqrt(MAX_PIXELS * (width / height)))
+    while _pixels(most, width, height) > MAX_PIXELS:
+        most -= 1
+    return most
+
+
+def _page_px(session: Session) -> int:
+    """The width of the previews that run returns and export writes: the largest up to
+    ``PREVIEW_PX`` whose picture of the whole page stays within ``MAX_PIXELS``."""
+    page = _page(session)
+    return min(PREVIEW_PX, _widest(page.width_mm, page.height_mm))
 
 
 def build_server(session: Session | None = None) -> MCPServer:
@@ -138,6 +175,75 @@ def build_server(session: Session | None = None) -> MCPServer:
             return _array([asdict(pen) for pen in session.pens])
 
     @server.tool()
+    async def run(
+        ctx: Context,
+        style: str | None = None,
+        settings: dict[str, dict[str, Any]] | None = None,
+    ) -> list[str | Image]:
+        """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
+        px wide. A style that is given replaces the current one and resets the settings to its
+        defaults. settings is {stage: {setting: value}} and changes only the values given; only
+        the stages after a changed setting run again. When a change is refused, nothing changes
+        and nothing runs."""
+        with _errors(), ExitStack() as stack:
+            old_style, old_settings = session.style.name, session.settings
+            try:
+                if style is not None and style != old_style:
+                    session.set_style(style)
+                for stage, values in (settings or {}).items():
+                    session.update(stage, **values)
+            except Exception:
+                session.set_style(old_style)
+                for stage, values in old_settings.items():
+                    session.update(stage, **values)
+                raise
+
+            latest: deque[Frame] = deque(maxlen=1)
+            stack.callback(session.subscribe(latest.append))
+            handle = session.run()
+            stack.callback(handle.cancel)  # a run that has ended stays as it ended
+            sent: Frame | None = None
+            count = 0
+            while handle.state is RunState.running:
+                await anyio.sleep(0.1)
+                if latest and latest[-1] is not sent:
+                    sent = latest[-1]
+                    count += 1
+                    await ctx.report_progress(count, None, f"{sent.stage}: {sent.label}")
+            if handle.state is not RunState.done:
+                raise handle.error or Cancelled("the run was cancelled")
+            png = session.preview_png(_page_px(session))
+            return [json.dumps(asdict(session.stats())), Image(data=png, format="png")]
+
+    @server.tool()
+    async def preview(
+        width_px: int = PREVIEW_PX,
+        travel: bool = False,
+        source: bool = False,
+        region_mm: list[float] | None = None,
+    ) -> Image:
+        """Draw the result at true pen width as a PNG width_px wide, from 100 to 4000. travel adds
+        the pen-up moves and source lays the tone map under the paths. region_mm is [x, y, width,
+        height] in mm to show only that part of the page, which may reach past it. A picture has
+        at most 16 million pixels."""
+        with _errors():
+            if not MIN_PX <= width_px <= MAX_PX:
+                raise ValueError(f"width_px must be from {MIN_PX} to {MAX_PX}, got {width_px}")
+            page = _page(session)
+            area = [page.width_mm, page.height_mm] if region_mm is None else region_mm[2:]
+            # Any other area is refused by the engine, which names the bad value.
+            if len(area) == 2 and all(math.isfinite(v) and v > 0 for v in area):
+                width, height = area
+                if (n := _pixels(width_px, width, height)) > MAX_PIXELS:
+                    raise ValueError(
+                        f"a picture {width_px} px wide would have {n} pixels, over the limit of "
+                        f"{MAX_PIXELS}; use width_px {_widest(width, height)} or less"
+                    )
+            # The engine refuses a region that is not four numbers.
+            region = cast(Any, None if region_mm is None else tuple(region_mm))
+            return Image(data=session.preview_png(width_px, travel, source, region), format="png")
+
+    @server.tool()
     async def get_session() -> dict[str, Any]:
         """Show the style, its settings, the page in mm, the pens, the image size, the state of the
         latest run and the stats of the result, where there is one."""
@@ -177,7 +283,7 @@ def build_server(session: Session | None = None) -> MCPServer:
             elif format == "json":
                 session.export_json(p)
             elif format == "png":
-                p.write_bytes(session.preview_png())
+                p.write_bytes(session.preview_png(_page_px(session)))
             else:
                 session.save_preset(p)
             return {"path": str(p), "format": format, "bytes": p.stat().st_size}

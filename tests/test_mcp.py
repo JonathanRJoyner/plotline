@@ -1,10 +1,13 @@
+import base64
 import json
+import struct
 
+import anyio
 import pytest
 from mcp import Client
 from pngs import write_png
 
-from plotline import Session, _core, inks
+from plotline import RunState, Session, _core, inks
 from plotline.mcp_server import build_server
 
 pytestmark = pytest.mark.anyio
@@ -116,3 +119,111 @@ async def test_preset_round_trip_and_warnings(tmp_path):
         assert r["style"] == "grid"
         assert len(r["warnings"]) == 1
         assert "bogus" in r["warnings"][0]
+
+
+def png(block):
+    return base64.b64decode(block.data)
+
+
+async def test_run_and_preview(tmp_path):
+    path = tmp_path / "i.png"
+    write_png(path, _core.synthetic_gradient(64, 48))
+    async with Client(build_server(Session())) as c:
+        await call(c, "load_image", path=str(path))
+        await call(c, "set_page", width_mm=100, height_mm=100)
+        r = await call(c, "run", settings={"tone": {"resolution": 64}})
+        assert not r.is_error
+        stats = json.loads(r.content[0].text)
+        assert set(stats) == {"path_count", "pen_down_mm", "pen_up_mm", "estimated_seconds"}
+        assert png(r.content[1]).startswith(b"\x89PNG")
+
+        r = await call(c, "preview", region_mm=[0, 0, 50, 50], width_px=200)
+        assert not r.is_error
+        assert struct.unpack(">II", png(r.content[0])[16:24]) == (200, 200)
+
+        for format, start in [("svg", b"<svg"), ("json", b"{"), ("png", b"\x89PNG")]:
+            out = tmp_path / f"o.{format}"
+            assert not (await call(c, "export", path=str(out), format=format)).is_error
+            assert out.read_bytes().startswith(start)
+
+
+async def test_refused_setting_changes_nothing():
+    async with Client(build_server(Session())) as c:
+        before = data(await call(c, "get_session"))
+        r = await call(
+            c, "run", style="hatch", settings={"tone": {"resolution": 64}, "nope": {"x": 1}}
+        )
+        assert r.is_error
+        assert 'style "hatch" has no stage "nope"' in text(r)
+        after = data(await call(c, "get_session"))
+        assert (after["style"], after["settings"]) == (before["style"], before["settings"])
+
+
+async def test_run_without_an_image_is_an_error():
+    async with Client(build_server(Session())) as c:
+        r = await call(c, "run")
+        assert r.is_error
+        assert "no image is loaded" in text(r)
+
+
+async def test_preview_limits(tmp_path):
+    path = tmp_path / "i.png"
+    write_png(path, _core.synthetic_gradient(64, 48))
+    async with Client(build_server(Session())) as c:
+        await call(c, "load_image", path=str(path))
+        assert not (await call(c, "run")).is_error
+        assert (await call(c, "preview", width_px=50)).is_error
+        assert (await call(c, "preview", region_mm=[0, 0, 1, 100])).is_error
+        assert (await call(c, "preview", region_mm=[0, 0, 0, 10])).is_error
+        assert (await call(c, "preview", region_mm=[0, 0, 1e-300, 1])).is_error  # no overflow
+
+        await call(c, "set_page", width_mm=10, height_mm=1000, margin_mm=0)
+        r = await call(c, "run")
+        assert not r.is_error
+        assert struct.unpack(">II", png(r.content[1])[16:24])[0] == 400
+        r = await call(c, "preview")
+        assert r.is_error
+        assert "16000000" in text(r)
+        assert "400" in text(r)
+
+
+async def test_progress_and_cancel():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(8, 8))
+    messages = []
+
+    async def progress(value, total, message):
+        messages.append(message)
+
+    async with Client(build_server(session)) as c:
+        args = {"style": "_slow", "settings": {"b": {"frames": 20, "delay_ms": 10}}}
+        r = await c.call_tool("run", args, progress_callback=progress)
+        assert not r.is_error
+        assert any(m.startswith("b: ") for m in messages)
+
+        with anyio.move_on_after(0.5):
+            await call(c, "run", style="_slow", settings={"b": {"frames": 200, "delay_ms": 50}})
+        for _ in range(200):
+            if session.state is RunState.cancelled:
+                break
+            await anyio.sleep(0.05)
+        assert session.state == RunState.cancelled
+
+
+async def test_a_second_run_cancels_the_first():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(8, 8))
+    results = {}
+    async with Client(build_server(session)) as c:
+
+        async def run(key, frames, delay_ms):
+            settings = {"b": {"frames": frames, "delay_ms": delay_ms}}
+            results[key] = await call(c, "run", style="_slow", settings=settings)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run, "first", 100, 20)
+            await anyio.sleep(0.2)
+            group.start_soon(run, "second", 5, 0)
+    assert results["first"].is_error
+    assert "the run was cancelled" in text(results["first"])
+    assert not results["second"].is_error
