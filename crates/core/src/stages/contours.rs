@@ -106,7 +106,6 @@ impl Stage for ContourStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stage::Kind;
     use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
     use serde_json::json;
 
@@ -144,12 +143,16 @@ mod tests {
         for path in paths.iter() {
             assert_eq!(path.first(), path.last(), "a contour closes");
             let n = path.len() - 1;
-            let mean = path[..n]
-                .iter()
-                .map(|p| math::hypot(p[0] - 50.0, p[1] - 50.0))
-                .sum::<f64>()
-                / n as f64;
-            radii.push(mean);
+            let vertices = &path[..n];
+            let mean =
+                |f: &dyn Fn(&[f64; 2]) -> f64| vertices.iter().map(f).sum::<f64>() / n as f64;
+            // The mean radius hardly moves when a ring shifts, so the centre pins the mapping.
+            let (cx, cy) = (mean(&|p| p[0]), mean(&|p| p[1]));
+            assert!(
+                (cx - 50.0).abs() < 0.25 && (cy - 50.0).abs() < 0.25,
+                "{cx} {cy}"
+            );
+            radii.push(mean(&|p| math::hypot(p[0] - 50.0, p[1] - 50.0)));
         }
         for (r, want) in radii.iter().zip([32.0, 24.0, 16.0, 8.0]) {
             assert!((r - want).abs() < 1.0, "{radii:?}");
@@ -187,8 +190,9 @@ mod tests {
 
     #[test]
     fn every_vertex_stays_on_the_map() {
-        // Flat black rises from the padding at the border, so the lines run along the padded
-        // border, half a pixel or more outside the map, and are clamped onto its edge.
+        // Flat black rises from the padding at the border, so every line runs along it. Only
+        // levels below 1/2 lie outside the map, and are clamped onto its edge; the others lie
+        // inside, within half a pixel of it.
         let tone = tone_map(10, 10, |_, _| 1.0);
         let rect = tone.rect_mm();
         let (_, paths) = run_tone_stage(&ContourStage, tone, json!({}));
