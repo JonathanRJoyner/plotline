@@ -26,14 +26,14 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 <table>
   <tr>
-    <td align="center" width="33%"><img src="docs/images/still-life.jpg" alt="A still life of three balls and a cube"><br><sub><b>The image</b></sub></td>
-    <td align="center" width="33%"><img src="docs/images/grid.png" alt="The still life drawn with the grid style"><br><sub><b>grid</b>: dots on a regular grid</sub></td>
-    <td align="center" width="33%"><img src="docs/images/hatch.png" alt="The still life drawn with the hatch style"><br><sub><b>hatch</b>: parallel lines that cross in the dark</sub></td>
+    <td align="center" valign="top" width="33%"><img src="docs/images/still-life.jpg" alt="A still life of three balls and a cube"><br><sub><b>The image</b></sub></td>
+    <td align="center" valign="top" width="33%"><img src="docs/images/grid.png" alt="The still life drawn with the grid style"><br><sub><b>grid</b>: dots on a regular grid</sub></td>
+    <td align="center" valign="top" width="33%"><img src="docs/images/hatch.png" alt="The still life drawn with the hatch style"><br><sub><b>hatch</b>: crossing parallel lines</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/waves.png" alt="The still life drawn with the waves style"><br><sub><b>waves</b>: rippling lines, one stroke each</sub></td>
-    <td align="center"><img src="docs/images/spiral.png" alt="The still life drawn with the spiral style"><br><sub><b>spiral</b>: one rippling spiral</sub></td>
-    <td align="center"><img src="docs/images/ink.png" alt="The plotline logo drawn with the ink style"><br><sub><b>ink</b>: line art, here the logo</sub></td>
+    <td align="center" valign="top"><img src="docs/images/waves.png" alt="The still life drawn with the waves style"><br><sub><b>waves</b>: rippling lines, one stroke each</sub></td>
+    <td align="center" valign="top"><img src="docs/images/spiral.png" alt="The still life drawn with the spiral style"><br><sub><b>spiral</b>: one rippling spiral</sub></td>
+    <td align="center" valign="top"><img src="docs/images/ink.png" alt="The plotline logo drawn with the ink style"><br><sub><b>ink</b>: line art, here the logo</sub></td>
   </tr>
 </table>
 
