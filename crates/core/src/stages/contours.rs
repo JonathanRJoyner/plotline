@@ -1,9 +1,9 @@
 //! The contours stage: level lines of the smoothed tone map, like a topographic map.
 //!
 //! The tone map is blurred, padded by one empty pixel on every side so every level closes, and
-//! traced at `levels` evenly spaced values between white and full ink, which crowds the lines
-//! where the tone changes fast. Each line is simplified to within half a pixel, mapped to page mm
-//! and clamped to the map. Equally spaced levels of a smoothed field follow no published plotting
+//! traced at `levels` evenly spaced values between white and full ink, one level at a time, which
+//! crowds the lines where the tone changes fast. Each line is simplified to within half a pixel,
+//! mapped to page mm and clamped to the map. Equally spaced levels of a smoothed field follow no published plotting
 //! algorithm, so there is nothing to cite for them; the iso-line tracer, [`raster::iso_lines`],
 //! cites its source in `raster.rs`, and so does the simplification.
 
@@ -41,8 +41,10 @@ impl Default for ContourSettings {
 
 /// Draw the level lines of the tone map.
 ///
-/// Level `j` of `L` lies at ink `j / (L + 1)` for `j` from 1 to `L`. Lines come in the order the
-/// tracer finds them, and each is one path, closed: its last vertex repeats the first.
+/// Level `j` of `L` lies at ink `j / (L + 1)` for `j` from 1 to `L`. Each level is traced in its
+/// own step of the run, lowest first, and its lines come in the order the tracer finds them. Each
+/// line is one path, closed: its last vertex repeats the first. A line that simplifies to a single
+/// point is dropped.
 pub struct ContourStage;
 
 impl Stage for ContourStage {
@@ -84,20 +86,22 @@ impl Stage for ContourStage {
             padded[(y + 1) * pw + 1..(y + 1) * pw + 1 + w].copy_from_slice(row);
         }
         let step = 1.0 / (f64::from(s.levels) + 1.0);
-        // Half a step past the top level: `first + j * step` can round above `levels * step`
-        // itself, which would drop the top level (10 levels do), and the next level is at 1.
-        let last = (f64::from(s.levels) + 0.5) * step;
-        let lines = raster::iso_lines(&padded, pw, ph, step, step, last);
         Ok(Box::new(ChunkRun::new(
-            lines.len(),
-            "lines",
+            s.levels as usize,
+            "levels",
             Box::new(move |i, paths, _| {
-                // Padded cell x is tone pixel x - 1, whose centre lies at x - 0.5.
-                let mm: Vec<[f64; 2]> = raster::simplify(&lines[i], 0.5)
-                    .into_iter()
-                    .map(|[x, y]| clamp_to(rect, tone.to_mm([x - 0.5, y - 0.5])))
-                    .collect();
-                paths.push(&mm);
+                // Level i + 1, summed as the tracer sums `first + j * step`.
+                let level = step + i as f64 * step;
+                for line in raster::iso_lines(&padded, pw, ph, level, step, level) {
+                    // Padded cell x is tone pixel x - 1, whose centre lies at x - 0.5.
+                    let mm: Vec<[f64; 2]> = raster::simplify(&line, 0.5)
+                        .into_iter()
+                        .map(|[x, y]| clamp_to(rect, tone.to_mm([x - 0.5, y - 0.5])))
+                        .collect();
+                    if mm.iter().any(|v| *v != mm[0]) {
+                        paths.push(&mm);
+                    }
+                }
             }),
         )))
     }
@@ -181,6 +185,22 @@ mod tests {
     }
 
     #[test]
+    fn a_line_that_simplifies_to_a_point_is_dropped() {
+        // A lone black pixel: level l rings it with a diamond 1 - l pixels from its centre. From
+        // level 49 of 64 up, the diamond is under half a pixel across and simplifies to its first
+        // vertex alone, so it is dropped rather than kept as a speck.
+        let (_, paths) = run_tone_stage(
+            &ContourStage,
+            tone_map(5, 5, |x, y| if (x, y) == (2, 2) { 1.0 } else { 0.0 }),
+            json!({"levels": 64, "smooth_mm": 0.0}),
+        );
+        assert_eq!(paths.len(), 48);
+        for path in paths.iter() {
+            assert!(path.iter().any(|v| *v != path[0]), "{path:?}");
+        }
+    }
+
+    #[test]
     fn white_gives_nothing() {
         let (frames, paths) =
             run_tone_stage(&ContourStage, tone_map(20, 20, |_, _| 0.0), json!({}));
@@ -217,5 +237,8 @@ mod tests {
             counts.windows(2).all(|w| w[0] <= w[1]) && counts[0] < 64,
             "{counts:?}"
         );
+        // One level is one item of work.
+        assert_eq!(frames[0].label, "3/64 levels");
+        assert_eq!(frames.last().unwrap().label, "64/64 levels");
     }
 }
