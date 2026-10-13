@@ -1,5 +1,6 @@
 //! The engine's built-in stages.
 
+pub mod contours;
 pub mod dashes;
 pub mod dither;
 pub mod edges;

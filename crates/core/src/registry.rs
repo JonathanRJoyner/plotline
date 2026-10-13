@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use crate::stage::Stage;
+use crate::stages::contours::ContourStage;
 use crate::stages::dashes::DashRenderer;
 use crate::stages::dither::DitherPlacer;
 use crate::stages::edges::{CellsRenderer, DelaunayRenderer, MstRenderer};
@@ -222,6 +223,16 @@ pub fn circles_style() -> Style {
     )
 }
 
+/// Level lines of the image, like a topographic map: tone, contours, order.
+pub fn contours_style() -> Style {
+    tone_style(
+        "contours",
+        "Contours",
+        "Level lines of the image, like a topographic map.",
+        Arc::new(ContourStage),
+    )
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -252,6 +263,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(halftone_style()),
         Arc::new(dither_style()),
         Arc::new(circles_style()),
+        Arc::new(contours_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -285,7 +297,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
-                "tree", "mesh", "cells", "halftone", "dither", "circles"
+                "tree", "mesh", "cells", "halftone", "dither", "circles", "contours"
             ]
         );
         assert!(get_style("_slow").is_some());
