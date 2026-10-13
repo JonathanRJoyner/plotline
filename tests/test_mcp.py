@@ -1,10 +1,11 @@
 import base64
 import json
 import struct
+import sys
 
 import anyio
 import pytest
-from mcp import Client
+from mcp import Client, StdioServerParameters
 from pngs import write_png
 
 from plotline import RunState, Session, _core, inks
@@ -227,3 +228,22 @@ async def test_a_second_run_cancels_the_first():
     assert results["first"].is_error
     assert "the run was cancelled" in text(results["first"])
     assert not results["second"].is_error
+
+
+async def test_stdio_server_lists_the_tools():
+    # The real thing: `plotline mcp` as a subprocess speaking the protocol over its pipes.
+    command = ["-c", "from plotline.cli.main import main; main()", "mcp"]
+    async with Client(StdioServerParameters(command=sys.executable, args=command)) as c:
+        names = {tool.name for tool in (await c.list_tools()).tools}
+    assert names == {
+        "list_styles",
+        "describe_style",
+        "load_image",
+        "set_page",
+        "set_pens",
+        "run",
+        "preview",
+        "get_session",
+        "load_preset",
+        "export",
+    }

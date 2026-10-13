@@ -1,10 +1,10 @@
 """The command line interface: list the styles, describe one, run one on an image, and serve the
-web interface.
+web interface and the MCP server.
 
 ``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. ``styles``
 and ``describe`` read the style registry. ``gui`` serves the web bundle that a release wheel
-carries. The work all happens in the session layer, so this module holds no algorithm code.
-``mcp`` is a placeholder until that front end exists.
+carries. ``mcp`` serves a session to an AI assistant on stdio. The work all happens in the session
+layer, so this module holds no algorithm code.
 """
 
 import http.server
@@ -239,6 +239,14 @@ def gui(port: int) -> None:
 
 @main.command()
 def mcp() -> None:
-    """Start the MCP server."""
-    click.echo("The MCP server is not available yet.", err=True)
-    sys.exit(1)
+    """Serve the session to an AI assistant over MCP on stdio."""
+    # Imported here so the other commands do not load the SDK.
+    try:
+        from plotline.mcp_server import build_server
+    except ModuleNotFoundError as error:
+        # Any other missing module is a bug, not a missing extra.
+        if error.name != "mcp" and not (error.name or "").startswith("mcp."):
+            raise
+        click.echo('The MCP server needs the mcp extra: pip install "plotline[mcp]"', err=True)
+        sys.exit(1)
+    build_server().run()
