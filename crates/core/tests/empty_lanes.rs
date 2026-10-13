@@ -19,7 +19,9 @@ fn layer_paths(style: &str, value: f32, mode: &str) -> Vec<usize> {
     ])
     .unwrap();
     s.set_style(style).unwrap();
-    s.update("tone", &json!({"resolution": 64})).unwrap();
+    // Gamma 1 for every style, so the ink is 1 - value even where a style starts darker.
+    s.update("tone", &json!({"resolution": 64, "gamma": 1.0}))
+        .unwrap();
     s.update("split", &json!({"mode": mode})).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
