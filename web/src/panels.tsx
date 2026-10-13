@@ -26,7 +26,7 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
     <label>{label}<span><input type="number" min="0" step="any" value={canvas[key]} onChange={(e) => set({ [key]: e.currentTarget.valueAsNumber })} /> mm</span></label>
   );
   return (
-    <fieldset>
+    <fieldset data-tour="page">
       <legend>Page</legend>
       <div class="grid">
         <label>
@@ -70,7 +70,7 @@ type PensProps = {
 // The pens as a short list with their preview toggles; they are edited in the pens dialog.
 export function PensPanel({ pens, hidden, error, drawn, onEdit, onToggle }: PensProps): JSX.Element {
   return (
-    <fieldset>
+    <fieldset data-tour="pens">
       <legend>Pens</legend>
       {pens.map((p, i) => (
         <div class="pen">
@@ -102,7 +102,7 @@ function Modal({ opens, title, icon, wide, children }: { opens: number; title: s
   }, [opens]);
   const id = `${title.toLowerCase()}-title`;
   return (
-    <dialog ref={ref} class={wide ? "wide" : undefined} aria-labelledby={id}>
+    <dialog ref={ref} class={wide ? "modal wide" : "modal"} aria-labelledby={id}>
       <header>
         <h2 id={id}>{icon} {title}</h2>
         <button type="button" class="icon" title="Close" aria-label="Close" onClick={() => ref.current!.close()}><X /></button>
@@ -247,7 +247,7 @@ type PresetsProps = { warnings: string[]; error?: string; onSave: () => void; on
 
 export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps): JSX.Element {
   return (
-    <fieldset>
+    <fieldset data-tour="presets">
       <legend>Presets</legend>
       <button type="button" onClick={onSave}><Save /> Save preset</button>
       <label class="button">
@@ -275,7 +275,7 @@ type ExportProps = {
 // One G-code file per layer of the drawing, once a machine is set.
 export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: ExportProps): JSX.Element {
   return (
-    <fieldset>
+    <fieldset data-tour="export">
       <legend>Export</legend>
       <button type="button" disabled={!drawing} onClick={() => onExport("svg")}><Download /> SVG</button>
       <button type="button" disabled={!drawing} onClick={() => onExport("json")}><Download /> JSON</button>
