@@ -361,6 +361,13 @@ pub fn synthetic_gradient(w: u32, h: u32) -> Vec<f32> {
     synthetic::gradient(w, h).rgb
 }
 
+/// The `w` by `h` still life the GUI offers as its sample, as RGB floats; see
+/// [`synthetic::still_life`].
+#[wasm_bindgen(js_name = syntheticStillLife)]
+pub fn synthetic_still_life(w: u32, h: u32) -> Vec<f32> {
+    synthetic::still_life(w, h).rgb
+}
+
 /// A `w` by `h` checkerboard `cells` wide as RGB floats; see [`synthetic::checkerboard`].
 #[wasm_bindgen(js_name = syntheticCheckerboard)]
 pub fn synthetic_checkerboard(w: u32, h: u32, cells: u32) -> Result<Vec<f32>, JsError> {
