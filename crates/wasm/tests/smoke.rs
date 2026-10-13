@@ -61,6 +61,8 @@ fn the_pen_bank_is_listed() {
     assert!(pens.as_array().unwrap().len() >= 30);
     assert_eq!(pens[1]["name"], "Sakura Pigma Micron 005");
     assert_eq!(pens[1]["width_mm"], 0.2);
+    assert_eq!(pens[1]["kind"], "fineliner");
+    assert_eq!(pens[1]["model"], "Sakura Pigma Micron");
 }
 #[wasm_bindgen_test]
 fn the_inks_are_listed() {

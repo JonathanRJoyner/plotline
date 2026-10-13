@@ -18,7 +18,7 @@ export const STEPS: Step[] = [
   { target: "preview", title: "Look closely", text: "The preview draws every mark at the pen's real width and colour. Drag to pan and scroll to zoom. With the preview focused, the arrow keys pan, plus and minus zoom and 0 fits the page." },
   { target: "view", title: "Check the drawing", text: "Source shows the image under the drawing. Travel shows the pen-up moves between paths. Fit shows the whole page again." },
   { target: "page", title: "Set the page", text: "The paper size, orientation and margin. Fit keeps the whole image on the page; fill covers the drawing area and crops the rest." },
-  { target: "pens", title: "Choose pens", text: "Add a pen from the bank of common fineliners, or set a width yourself. The colour picker suggests common ink colours." },
+  { target: "pens", title: "Choose pens", text: "Edit pens opens the pens dialog: pick a maker's pen from the bank at its published line width, or set a width yourself, and choose an ink colour. The tick hides a pen in the preview." },
   { target: "export", title: "Export", text: "SVG writes the drawing in millimetres, one layer per pen, for your plotter's own software. JSON writes the paths for other programs." },
   { target: "presets", title: "Keep a look", text: "A preset is a small file with the style, page, pens and settings, so you can come back to a look or share it. The page also remembers your last setup." },
   { target: "machine", title: "Plot from G-code", text: "Settings holds a pen-fitted 3D printer: its drawable area, pen heights and feeds. Once one is set, Export writes a G-code file per pen." },

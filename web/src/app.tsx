@@ -5,9 +5,9 @@
 import { CircleHelp, Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Spline, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
-import type { FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
+import type { BankPen, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
-import { ExportPanel, PagePanel, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar } from "./panels";
+import { ExportPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
@@ -232,7 +232,7 @@ export function App() {
     return new Engine(worker);
   });
   const [styles, setStyles] = useState<Style[] | null>(null);
-  const [bank, setBank] = useState<Pen[]>([]);
+  const [bank, setBank] = useState<BankPen[]>([]);
   const [inks, setInks] = useState<Ink[]>([]);
   const [state, setState] = useState<State | null>(null);
   const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [] }));
@@ -243,6 +243,7 @@ export function App() {
   const [hidden, setHidden] = useState(new Set<number>());
   const [help, setHelp] = useState(helpShown);
   const [settingsOpens, setSettingsOpens] = useState(0);
+  const [pensOpens, setPensOpens] = useState(0);
   const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -270,7 +271,7 @@ export function App() {
   }
 
   useEffect(() => {
-    engine.call<Pen[]>("listPens").then((r) => setBank(r.value), () => {});
+    engine.call<BankPen[]>("listPens").then((r) => setBank(r.value), () => {});
     engine.call<Ink[]>("listInks").then((r) => setInks(r.value), () => {});
     engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
       setStyles(value);
@@ -406,7 +407,11 @@ export function App() {
       <aside>
         <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
         <Pens
-          status={status} pens={state.pens} bank={bank} inks={inks} hidden={hidden} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
+          status={status} pens={state.pens} hidden={hidden} error={errors.pens}
+          onEdit={() => {
+            setErrors((es) => ({ ...es, pens: "" })); // as for the settings dialog
+            setPensOpens((n) => n + 1);
+          }}
           onToggle={(i) => setHidden((h) => {
             const next = new Set(h); // a new set each time: the preview redraws on its identity
             if (!next.delete(i)) next.add(i);
@@ -419,6 +424,9 @@ export function App() {
       <SettingsDialog
         opens={settingsOpens} machine={state.machine} error={errors.machine} speeds={state.speeds} onPick={pickMachine}
         onEdit={(m) => call("setMachine", [m], "machine")} onSpeeds={(s) => call("setSpeeds", [s])}
+      />
+      <PensDialog
+        opens={pensOpens} pens={state.pens} bank={bank} inks={inks} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
       />
       <Tour opens={tourOpens} />
     </div>
