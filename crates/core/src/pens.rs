@@ -1,10 +1,27 @@
 //! A bank of common drawing pens with the line widths their makers publish, so a pen can be
-//! picked by name instead of typed in. Every entry is black; a front end can recolour it.
+//! picked by name instead of typed in. Every entry is black; a front end can recolour it, and
+//! [`INKS`] lists common ink colours to offer when it does.
 //!
 //! Widths come from the makers' product pages and size charts as read on 2026-10-12. Some makers
 //! name a pen by a code rather than its width: Sakura's "005" draws about 0.20 mm.
 
 use crate::types::Pen;
+
+/// Common ink colours as (plain name, `#rrggbb`), in the order a front end lists them. The values
+/// are screen colours chosen for this project to look like each ink on white paper, not any
+/// maker's figures; a pen whose exact colour matters should be given its own.
+pub const INKS: &[(&str, &str)] = &[
+    ("black", "#000000"),
+    ("grey", "#808080"),
+    ("brown", "#7b4a2a"),
+    ("red", "#d0202e"),
+    ("orange", "#f07c1a"),
+    ("yellow", "#f5c400"),
+    ("green", "#1e8a3c"),
+    ("blue", "#1d4fb8"),
+    ("purple", "#6a2c91"),
+    ("pink", "#e8478b"),
+];
 
 /// Maker and model, then the (size name, width in mm) pairs sold under it.
 const BANK: &[(&str, &[(&str, f64)])] = &[
@@ -94,6 +111,15 @@ mod tests {
         assert_eq!(names.len(), pens.len());
         for p in &pens {
             Pen::new(&p.name, p.width_mm, &p.color).unwrap();
+        }
+    }
+    #[test]
+    fn inks_are_unique_valid_colours() {
+        let names: HashSet<&str> = INKS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(names.len(), INKS.len());
+        assert_eq!(INKS[0], ("black", "#000000"));
+        for (name, color) in INKS {
+            Pen::new(name, 0.3, color).unwrap();
         }
     }
     #[test]

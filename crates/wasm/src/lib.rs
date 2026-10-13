@@ -385,3 +385,10 @@ pub fn synthetic_checkerboard(w: u32, h: u32, cells: u32) -> Result<Vec<f32>, Js
 pub fn list_pens() -> String {
     json!(pens::bank()).to_string()
 }
+
+/// The ink colours as a JSON list of `{"name", "color"}`, in display order; see [`pens::INKS`].
+#[wasm_bindgen(js_name = listInks)]
+pub fn list_inks() -> String {
+    let inks = pens::INKS.iter();
+    Value::from_iter(inks.map(|(name, color)| json!({"name": name, "color": color}))).to_string()
+}

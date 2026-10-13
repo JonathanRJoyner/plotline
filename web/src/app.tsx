@@ -5,7 +5,7 @@
 import { Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Spline, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
-import type { FrameEvent, Machine, Pen, ResultEvent } from "./events";
+import type { FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
 import { ExportPanel, PagePanel, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar } from "./panels";
 import { Preview } from "./preview";
@@ -231,6 +231,7 @@ export function App() {
   });
   const [styles, setStyles] = useState<Style[] | null>(null);
   const [bank, setBank] = useState<Pen[]>([]);
+  const [inks, setInks] = useState<Ink[]>([]);
   const [state, setState] = useState<State | null>(null);
   const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [] }));
   const [stages, setStages] = useState<Stage[]>([]);
@@ -267,6 +268,7 @@ export function App() {
 
   useEffect(() => {
     engine.call<Pen[]>("listPens").then((r) => setBank(r.value), () => {});
+    engine.call<Ink[]>("listInks").then((r) => setInks(r.value), () => {});
     engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
       setStyles(value);
       const saved = remembered();
@@ -398,7 +400,7 @@ export function App() {
       <aside>
         <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
         <Pens
-          status={status} pens={state.pens} bank={bank} hidden={hidden} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
+          status={status} pens={state.pens} bank={bank} inks={inks} hidden={hidden} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
           onToggle={(i) => setHidden((h) => {
             const next = new Set(h); // a new set each time: the preview redraws on its identity
             if (!next.delete(i)) next.add(i);

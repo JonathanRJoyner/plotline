@@ -21,6 +21,7 @@ from typing import Any
 
 import click
 
+from plotline import inks
 from plotline.registry import get_style, list_styles
 from plotline.session import Session
 from plotline.types import Pen
@@ -56,13 +57,15 @@ def parse_pen(value: str) -> Pen:
     """Split ``NAME:WIDTH_MM:COLOR`` into a ``Pen``, as in ``Red 0.5:0.5:#ff0000``.
 
     Only the last two colons separate the fields, so the name may hold colons and the colour keeps
-    its ``#``. A wrong shape or a width that is not a number raise ``click.BadParameter``; the
-    engine checks the width and colour when the session is given the pen.
+    its ``#``. The colour may also be the name of one of the ``inks()``, in any case. A wrong
+    shape or a width that is not a number raise ``click.BadParameter``; the engine checks the
+    width and colour when the session is given the pen.
     """
     parts = value.rsplit(":", 2)
     if len(parts) != 3:
         raise click.BadParameter(f"{value!r} must look like NAME:WIDTH_MM:COLOR")
     name, width, color = parts
+    color = inks().get(color.lower(), color)
     try:
         return Pen(name, float(width), color)
     except ValueError as error:
@@ -137,7 +140,8 @@ def describe(style: str, as_json: bool) -> None:
     callback=lambda ctx, param, values: [parse_pen(v) for v in values],
     metavar="NAME:WIDTH_MM:COLOR",
     help=(
-        "A pen, such as 'Red:0.5:#ff0000'. The current style draws with the first pen. "
+        "A pen, such as 'Red:0.5:#ff0000' or 'Fine:0.3:blue'. The colour is #rrggbb or one of "
+        f"the inks {', '.join(inks())}. The current style draws with the first pen. "
         "Repeat the option to give more pens, which are kept for multi-pen styles to come."
     ),
 )
