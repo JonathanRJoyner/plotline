@@ -293,15 +293,17 @@ impl Session {
         self.drawing().map(|d| stats::compute(&d, self.speeds))
     }
 
-    /// The last finished drawing as PNG bytes `width_px` wide; see [`preview::render_png`].
+    /// The last finished drawing as PNG bytes `width_px` wide, of the page or of `region`, in page
+    /// mm as `[x, y, width, height]`; see [`preview::render_png`].
     pub fn preview_png(
         &self,
         width_px: u32,
         travel: bool,
         source: bool,
+        region: Option<[f64; 4]>,
     ) -> Option<Result<Vec<u8>, PreviewError>> {
         self.drawing()
-            .map(|d| preview::render_png(&d, width_px, travel, source))
+            .map(|d| preview::render_png(&d, width_px, travel, source, region))
     }
 
     /// The style, canvas, pens and settings as a preset.
@@ -410,7 +412,7 @@ mod tests {
         assert!(s.drawing().unwrap().layers[0].paths.len() > 0);
         assert!(s.svg().unwrap().starts_with("<svg"));
         assert!(s.stats().unwrap().path_count > 0);
-        assert!(s.preview_png(100, false, false).unwrap().is_ok());
+        assert!(s.preview_png(100, false, false, None).unwrap().is_ok());
     }
     #[test]
     fn a_new_run_cancels_the_previous_one() {

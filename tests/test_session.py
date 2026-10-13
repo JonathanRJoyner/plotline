@@ -1,6 +1,7 @@
 """Tests for the session: defaults, state changes, blocking runs and export."""
 
 import json
+import struct
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -122,6 +123,17 @@ def test_run_blocking_grid_and_exports(tmp_path):
     assert json.loads((tmp_path / "o.json").read_text())["format"] == "plotline-paths"
     assert s.svg().startswith("<svg") and s.json_dict()["units"] == "mm"
     assert s.preview_png(100)[:4] == b"\x89PNG"
+
+
+def test_preview_region():
+    s = Session()
+    s.set_image(_core.synthetic_gradient(64, 48))
+    s.update("tone", resolution=64)
+    s.run_blocking()
+    png = s.preview_png(100, region=(0, 0, 105, 148.5))  # the top-left quarter of the A4 page
+    assert struct.unpack(">II", png[16:24]) == (100, 141)
+    with pytest.raises(ValueError, match="preview region"):
+        s.preview_png(100, region=(0, 0, 0, 10))
 
 
 def test_frames_carry_points_and_paths_as_arrays():
