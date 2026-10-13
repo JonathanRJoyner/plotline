@@ -11,9 +11,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # shortcut: Linux only while the repo is private (Actions minutes are capped and macOS bills at 10x), add windows-latest and macos-latest and 3.12 when the repo goes public
-        os: [ubuntu-latest]
-        python: ["3.11", "3.13"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
