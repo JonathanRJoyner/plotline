@@ -16,7 +16,7 @@ This spec adds that step once, for every style, instead of a multi-pen style fam
 - `crates/core/src/stages/{hatch,waves,spiral,grid}.rs`: spread each pen's lines or dots so pens do not draw on top of each other.
 - `crates/core/src/registry.rs`: every style except `_slow` gets the split stage right after tone.
 - Hosts: the frame's pen reaches Python (`Frame.pen`), the WebAssembly handle and the worker's frame event.
-- `web/`: the Pen use setting sits in the Pens panel, pens can be moved up, and the preview draws each pen's frames in that pen.
+- `web/`: the Pen use setting sits in the Pens panel, and the preview draws each pen's frames in that pen.
 - `src/plotline/cli/main.py`: the `--pen` help stops saying the extra pens are kept for later.
 - Docs: the brief (§5, §7.2, §10 and the decision log) and the README.
 
@@ -40,7 +40,7 @@ The number of pens is the list in the Pens panel, as now. Below the list, one se
 
 The pen list sets the drawing order: the first pen is plotted first. The help text says to list light inks first.
 
-Each pen row gets a "Move up" icon button, disabled on the first row, because the list order now decides the bands and the drawing order. The note under the list changes: in `one_pen` with more than one pen it reads "Pen use is set to one pen, so only the first pen draws." In the other modes there is no note.
+The list order now decides the bands and the drawing order. The pens dialog that landed on main alongside this work already moves pens up and down, so the Pens panel's own "Move up" buttons, built first, were dropped when the two met. The note under the list changes: in `one_pen` with more than one pen it reads "Pen use is set to one pen, so only the first pen draws." In the other modes there is no note.
 
 Old presets have no `split` settings and load as `one_pen`, so they draw what they drew before. No preset version bump is needed: missing keys already take their defaults.
 
@@ -167,7 +167,7 @@ If every pen drew the same lines, each pen would cover the one before and the in
 - vitest: underscores read as spaces in enum options, and `splitStages` leaves out `split`.
 - Manual, in `npm run dev`, on the sample and scene images:
   - all three modes with two and with four pens;
-  - Move up reorders the pens;
+  - the pens dialog's move buttons reorder the pens;
   - each pen's frames draw in its own colour, and finished pens stay on the page while the next one runs;
   - G-code exports one file per pen.
 
