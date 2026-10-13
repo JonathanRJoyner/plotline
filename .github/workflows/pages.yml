@@ -26,7 +26,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
-          tool: wasm-pack
+          tool: wasm-pack,cargo-about
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -36,6 +36,8 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+      # The licences of the Rust crates compiled into the WebAssembly module, as in release.yml.
+      - run: cargo about generate --workspace about.hbs -o src/plotline/web/THIRD-PARTY-LICENSES.txt
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: src/plotline/web

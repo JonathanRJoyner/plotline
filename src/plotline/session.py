@@ -220,7 +220,8 @@ class Session:
 
     def set_style(self, name: str) -> None:
         """Switch to the built-in style called ``name`` and reset the settings to its defaults.
-        The cache is kept, so stages that the styles share are not run again. Raises
+        The cache is kept, so a stage that the styles share, with the same settings and
+        inputs, is not run again. Raises
         ``ValueError`` for an unknown name."""
         self._core.set_style(name)
 

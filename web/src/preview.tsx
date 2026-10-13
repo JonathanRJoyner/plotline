@@ -91,7 +91,9 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   for (const l of layers) strokeChunks(l.pen, pathCount(l.offsets), (p, i) => trace(p, l.coords, l.offsets[i], l.offsets[i + 1]));
 
   if (s.showTravel && !f) {
-    const p = new Path2D();
+    const travel = { name: "travel", color: "red", width_mm: 1 / view.scale };
+    let p = new Path2D();
+    let moves = 0;
     let last: [number, number] | null = null;
     for (const l of layers) {
       eachPath(l.coords, l.offsets, (a, b) => {
@@ -99,11 +101,16 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
         if (last) {
           p.moveTo(last[0], last[1]);
           p.lineTo(l.coords[2 * a], l.coords[2 * a + 1]);
+          // In chunks like the layers, or a drawing of a million paths shows no travel at all.
+          if (++moves % CHUNK === 0) {
+            stroke(travel, p);
+            p = new Path2D();
+          }
         }
         last = [l.coords[2 * b - 2], l.coords[2 * b - 1]];
       });
     }
-    stroke({ name: "travel", color: "red", width_mm: 1 / view.scale }, p);
+    stroke(travel, p);
   }
 
   if (!s.hasImage) {
@@ -192,7 +199,9 @@ export function Preview(props: Props): JSX.Element {
           e.preventDefault();
           const r = e.currentTarget.getBoundingClientRect();
           // In proportion to the delta, so a trackpad's stream of small deltas zooms gradually.
-          zoom(Math.exp(-e.deltaY * 0.002), e.clientX - r.left, e.clientY - r.top);
+          // Firefox may count the delta in lines or pages; a line is taken as 33 px.
+          const px = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? r.height : 1;
+          zoom(Math.exp(-e.deltaY * px * 0.002), e.clientX - r.left, e.clientY - r.top);
         }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
