@@ -1,6 +1,7 @@
 //! The engine's built-in stages.
 
 pub mod dashes;
+pub mod dither;
 pub mod graph;
 pub mod grid;
 pub mod hatch;

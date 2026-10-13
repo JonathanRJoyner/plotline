@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::stage::Stage;
 use crate::stages::dashes::DashRenderer;
+use crate::stages::dither::DitherPlacer;
 use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
 use crate::stages::ink::InkStage;
@@ -159,6 +160,17 @@ pub fn halftone_style() -> Style {
     .with_defaults("stipple", json!({"size_mm": 2.0, "vary": 1.0}))
 }
 
+/// Dots where error diffusion puts them: tone, dither, render, order.
+pub fn dither_style() -> Style {
+    point_style(
+        "dither",
+        "Dither",
+        "Dots where error diffusion puts them.",
+        Arc::new(DitherPlacer),
+        Arc::new(DotRenderer),
+    )
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -184,6 +196,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(dashes_style()),
         Arc::new(sketch_style()),
         Arc::new(halftone_style()),
+        Arc::new(dither_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -217,7 +230,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
-                "halftone"
+                "halftone", "dither"
             ]
         );
         assert!(get_style("_slow").is_some());
