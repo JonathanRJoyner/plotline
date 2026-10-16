@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0
+New entries go under Unreleased until the next release.
+
+## Unreleased
+
+## 0.1.0 (2026-10-16)
 
 The first release. One Rust engine runs everything: the Python package, the command line and the MCP server use it as a native extension, and the browser GUI runs it as WebAssembly.
 
