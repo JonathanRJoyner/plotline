@@ -67,7 +67,8 @@ Overdraw counts one pen against itself, because pens that share a drawing overla
 | `lifts` | info | pen lifts take over half the estimated plot time | none: the message names a long-stroke style |
 | `travel` | warning with `order.optimize` off, info with it on | pen-up travel takes over 30 % of the estimated plot time | `order.optimize` on when it is off |
 | `vertices` | info | in some layer with at least 1000 segments, over half are shorter than an eighth of its pen width | none |
-| `unused_pens` | info | Pen use is one pen and there are more pens; or some pen's layer has no paths | Pen use set to light to dark in the first case; none in the second |
+| `unused_pens` | info | Pen use is one pen and there are more pens | Pen use set to light to dark |
+| `idle_pens` | info | Pen use is not one pen and some pen's layer has no paths | none |
 
 The messages are English sentences with the measured numbers in them, written for a person and read by the assistant as well. `value` is the number the rule tests: the spacing, the overdrawn share, the dark coverage, a time share, a count.
 

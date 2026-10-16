@@ -454,7 +454,7 @@ pub fn check(
                 idle.join(", ")
             );
             add(
-                "unused_pens",
+                "idle_pens",
                 Severity::Info,
                 message,
                 idle.len() as f64,
@@ -742,9 +742,12 @@ mod tests {
             paths: Paths::new(),
         });
         let found = all(&d, &settings);
-        let unused = find(&found, "unused_pens").unwrap();
+        let idle = find(&found, "idle_pens").unwrap();
         let message = "These pens draw nothing at these settings: Red.";
-        assert_eq!((unused.message.as_str(), &unused.patch), (message, &None));
+        assert_eq!((idle.message.as_str(), &idle.patch), (message, &None));
+        // The one-pen note and the idle note never stand together, so the note's patch cannot
+        // leave the same code behind.
+        assert!(find(&found, "unused_pens").is_none());
     }
 
     #[test]
