@@ -29,8 +29,9 @@ const Mark = () => (
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-// The styles dialog's pictures are this many pixels wide, about twice their size on screen.
-const THUMB_PX = 300;
+// The styles dialog's pictures are this many pixels wide: sharp when shown at two and a half
+// times a cell's width, as pointing at a cell does.
+const THUMB_PX = 600;
 // The style a first visit starts on: its lines read as the picture at the fit zoom, where grid's dots barely show.
 const FIRST_STYLE = "waves";
 // Where Ctrl+Z belongs to the browser's own undo of typing.

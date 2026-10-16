@@ -210,3 +210,17 @@ fn golden_grid_lint_matches_native() {
     let dark = all.iter().find(|f| f.code == "dark").unwrap();
     assert_eq!(dark.value, 0.015042735042735043);
 }
+#[wasm_bindgen_test]
+fn iso_lines_keep_their_levels_apart_past_u32() {
+    // 256 x 256 cells have 2^17 edges, so on wasm32 `level * edges` wrapped to 0 at level 2^15
+    // and that level's ring took level 0's keys. One cell at 40,000 gives one ring per level.
+    let n = 256;
+    let mut field = vec![0.0f32; n * n];
+    field[128 * n + 128] = 40_000.0;
+    let lines = plotline_core::raster::iso_lines(&field, n, n, 0.5, 1.0, 39_999.5);
+    assert_eq!(lines.len(), 40_000);
+    assert!(
+        lines.iter().all(|l| l.len() == 5),
+        "every ring is a closed diamond"
+    );
+}

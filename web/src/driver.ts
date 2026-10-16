@@ -23,6 +23,16 @@ export function macrotask(): Promise<void> {
   return new Promise((resolve) => { waiting.push(resolve); next.postMessage(null); });
 }
 
+// Frees an engine object. A trap inside a call on it leaves it borrowed for good, and freeing it
+// then throws an error that would hide the trap's, so that error is dropped.
+export function free(o: { free(): void }): void {
+  try {
+    o.free();
+  } catch {
+    // left to leak: the session is rebuilt after a trap
+  }
+}
+
 // The engine returns fresh arrays, so their buffers can move to the page without a copy.
 const buffers = (arrays: Array<ArrayBufferView | undefined>): Transferable[] =>
   arrays.flatMap((a) => (a ? [a.buffer as ArrayBuffer] : []));
@@ -43,7 +53,7 @@ function postResult(session: Session, id: number, post: Post): void {
     };
     post(event, buffers([...layers.flatMap((l) => [l.coords, l.offsets]), ink]));
   } finally {
-    drawing.free();
+    free(drawing);
   }
 }
 
@@ -70,7 +80,7 @@ export async function drive(
           lastPost = t;
         }
       } finally {
-        frame.free();
+        free(frame);
       }
       if (now() - lastYield >= yieldMs) {
         await yieldFn();
@@ -84,6 +94,6 @@ export async function drive(
     const lint = session.lint();
     post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, fit: fit ? JSON.parse(fit) : null, lint: lint ? JSON.parse(lint) : [] }, []);
   } finally {
-    run.free();
+    free(run);
   }
 }
