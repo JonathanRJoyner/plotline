@@ -1,11 +1,13 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
 import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Optimum, Pen, Stats, ToneMatch } from "./events";
+import { download } from "./files";
+import { addPen, libraryFile, loadLibrary, mergeLibraries, parseLibrary, removePen, samePen, saveLibrary, usable } from "./library";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 import { controlsFor } from "./schema";
 import { place } from "./tour";
@@ -202,11 +204,13 @@ export function StylesDialog({ opens, styles, style, canvas, thumbs, onPick, onC
 type PensDialogProps = { opens: number; pens: Pen[]; bank: BankPen[]; inks: Ink[]; error?: string; onChange: (pens: Pen[]) => void };
 
 // Your pens in drawing order on the left, the chosen one's name, width and colour on the right,
-// and the pen bank under them to give it a maker's pen. Changes apply as they are made.
+// and under them your saved pens and the pen bank to give it a pen. Changes apply as they are made.
 export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDialogProps): JSX.Element {
   const [chosen, choose] = useState(0);
   const [kind, setKind] = useState("");
   const [query, setQuery] = useState("");
+  const [library, setLibrary] = useState(loadLibrary);
+  const [importError, setImportError] = useState<string>();
   const i = Math.min(chosen, pens.length - 1); // the list can shrink under it, as on a refused change
   const pen = pens[i];
   const set = (patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
@@ -216,6 +220,22 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
     const list = [...pens];
     [list[i], list[i + by]] = [list[i + by], list[i]];
     put(list, i + by);
+  };
+  const keep = (list: Pen[]) => { setLibrary(list); saveLibrary(list); };
+  // Merges the pens of a library file in, or says why it cannot.
+  const importFile = async (file: File) => {
+    let value: unknown;
+    try {
+      value = JSON.parse(await file.text());
+    } catch {
+      return setImportError(`${file.name} is not a pen library: it is not valid JSON.`);
+    }
+    try {
+      keep(mergeLibraries(library, parseLibrary(value)));
+      setImportError(undefined);
+    } catch (e) {
+      setImportError(`${file.name} could not be imported (${(e as Error).message}).`);
+    }
   };
   const kinds = [...new Set(bank.map((p) => p.kind))];
   const groups = filterBank(bank, kind, query);
@@ -258,6 +278,41 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
             />
           ))}
           <input type="color" title="Any colour" aria-label="Any colour" value={pen.color} onChange={(e) => set({ color: e.currentTarget.value })} />
+        </div>
+        <div data-tour="library">
+          <h3>My pens</h3>
+          <p class="help">Pens you save stay in this browser. Choosing one gives this pen its name, line width and colour.</p>
+          {library.length === 0 ? <p class="help">No saved pens yet. Save this pen keeps the pen above for next time.</p> : (
+            <ul class="library">
+              {library.map((p, j) => (
+                <li>
+                  <button type="button" aria-pressed={samePen(p, pen)} onClick={() => set({ name: p.name, width_mm: p.width_mm, color: p.color })}>
+                    <span class="swatch" style={{ background: p.color }} />
+                    <span class="name">{p.name}</span>
+                    <span class="muted">{p.width_mm}</span>
+                  </button>
+                  <button type="button" class="icon" title="Remove from my pens" aria-label={`Remove ${p.name} from my pens`} onClick={() => keep(removePen(library, j))}><X /></button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div class="actions">
+            {/* A pen the file could not read back stays out, such as one with no name. */}
+            <button type="button" disabled={!usable(pen) || library.some((p) => samePen(p, pen))} onClick={() => keep(addPen(library, { name: pen.name, width_mm: pen.width_mm, color: pen.color }))}><BookmarkPlus /> Save this pen</button>
+            <button type="button" disabled={library.length === 0} onClick={() => download("plotline-pens.json", libraryFile(library), "application/json")}><Download /> Export</button>
+            <label class="button">
+              <FolderOpen /> Import
+              <input
+                class="visually-hidden" type="file" accept="application/json,.json"
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  e.currentTarget.value = ""; // so the same file can be imported again
+                  if (file) void importFile(file);
+                }}
+              />
+            </label>
+          </div>
+          {importError && <p class="error">{importError}</p>}
         </div>
         <h3>Pen bank</h3>
         <p class="help">Choosing a size gives this pen its name and line width, as the maker publishes it. The colour stays.</p>
@@ -365,9 +420,12 @@ export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOp
     const label = c?.label ?? o.key;
     const at = (v: unknown) => `${String(v)}${c && "unit" in c && c.unit ? ` ${c.unit}` : ""}`;
     const within = o.budget ? ` within ${o.budget.target} ${unit(o.budget.metric)}` : "";
-    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best${within}, with a tone error of ${o.error.toFixed(3)}.`;
-    const against = o.current_error === null ? `${at(o.current)} goes over the target` : `against ${o.current_error.toFixed(3)} at ${at(o.current)}`;
-    return `${label} at ${at(o.value)} follows the image's tones best${within}: a tone error of ${o.error.toFixed(3)}, ${against}.`;
+    const time = (minutes: number) => `${minutes.toFixed(1)} min`;
+    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best${within}, with a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot.`;
+    const against = o.current_error === null
+      ? `${at(o.current)} goes over the target in ${time(o.current_minutes)}`
+      : `against ${o.current_error.toFixed(3)} and ${time(o.current_minutes)} at ${at(o.current)}`;
+    return `${label} at ${at(o.value)} follows the image's tones best${within}: a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot, ${against}.`;
   };
   return (
     <form
@@ -386,7 +444,7 @@ export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOp
       </button>
       <button
         type="button" disabled={disabled} data-tour="optimize"
-        title="Reruns the style eight times with its density setting changed and suggests the value whose drawing's tones follow the image best, within the target if one is typed. Nothing changes until you apply it."
+        title="Reruns the style up to nine times with its density setting from a quarter to four times its value, and suggests the value whose drawing's tones follow the image best. It leaves out values that plot for over twice as long, or an hour if that is more, or that the plot lint warns about, and keeps within the target if one is typed. Nothing changes until you apply it."
         onClick={() => (Number(target) > 0 ? onOptimize(metric, Number(target)) : onOptimize())}
       >
         <Wand /> Optimize
@@ -456,18 +514,20 @@ export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps):
 
 type ExportProps = {
   drawing: boolean; layers: Pen[]; machine: boolean; error?: string;
-  onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void; onTestchart: () => void;
+  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void; onTestchart: () => void;
 };
 
-// One G-code file per layer of the drawing, once a machine is set. With several pens each gets a
-// row told apart by its number and swatch, since pens can share a name. The test chart replaces
-// the drawing with a calibration page for the first pen, so it needs no image.
-export function ExportPanel({ drawing, layers, machine, error, onExport, onGcode, onTestchart }: ExportProps): JSX.Element {
+// SVG, JSON and one HPGL file for the whole drawing; then, once a machine is set, one G-code file
+// per layer. With several pens each G-code file gets a row told apart by its number and swatch,
+// since pens can share a name. The test chart replaces the drawing with a calibration page for the
+// first pen, so it needs no image.
+export function ExportPanel({ drawing, layers, machine, error, onExport, onHpgl, onGcode, onTestchart }: ExportProps): JSX.Element {
   return (
     <fieldset data-tour="export">
       <legend>Export</legend>
       <button type="button" disabled={!drawing} onClick={() => onExport("svg")}><Download /> SVG</button>
       <button type="button" disabled={!drawing} onClick={() => onExport("json")}><Download /> JSON</button>
+      <button type="button" disabled={!drawing} onClick={onHpgl}><Download /> HPGL</button>
       {!machine ? <p class="help">For G-code, set up a machine in Settings.</p>
         : layers.length < 2 ? <button type="button" disabled={!drawing} onClick={() => onGcode(0)}><Download /> G-code</button>
         : (
@@ -503,7 +563,7 @@ const AREA: [keyof Area, string][] = [["width", "Width"], ["height", "Height"], 
 const SPEEDS: [keyof Speeds, string, string, number][] = [
   ["draw_mm_s", "Draw", "mm/s", 0.1], ["travel_mm_s", "Travel", "mm/s", 0.1], ["pen_lift_s", "Pen lift", "s", 0],
 ];
-const SECTIONS = ["Machine", "Pen lift", "G-code", "Plot time"] as const;
+const SECTIONS = ["Machine", "Pen lift", "G-code", "HPGL", "Plot time"] as const;
 // A starting point to edit, not a real machine: its values must be replaced with the machine's own.
 const NEW_MACHINE: Machine = {
   name: "My machine", area: { x: 0, y: 0, width: 200, height: 200 },
@@ -528,13 +588,14 @@ type SettingsProps = {
   opens: number;
   machine: Machine | null; error?: string; speeds: Speeds;
   onPick: (machine: Machine | null) => void; onEdit: (machine: Machine) => void; onSpeeds: (speeds: Speeds) => void;
+  hpglUnits: number; onHpglUnits: (units: number) => void;
 };
 
 // The setup that rarely changes, in a modal dialog: the machine, its pen lift and G-code, and the
 // speeds the time estimate uses (spec 2026-10-12-settings-dialog section 4). Changes apply as they
 // are made. Picking is told apart from editing because a pick also sets the page to the machine's
 // area.
-export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, onSpeeds }: SettingsProps): JSX.Element {
+export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, onSpeeds, hpglUnits, onHpglUnits }: SettingsProps): JSX.Element {
   const [section, setSection] = useState<(typeof SECTIONS)[number]>("Machine");
   const value = machine === null ? "none" : "current";
   const choose = <p>Choose a machine first</p>;
@@ -620,6 +681,23 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
         <p class="help">For firmware that draws a long straight move as a curve, as a hanging plotter's may: plotline cuts every move into pieces no longer than this. Leave it empty to keep moves whole.</p>
       </>
     ) : choose,
+    "HPGL": (
+      <>
+        <label>
+          Plotter units per mm{" "}
+          <input
+            type="number" min={0} step="any" value={hpglUnits}
+            onChange={(e) => {
+              // Above 0, as the engine requires; anything else snaps back.
+              const v = e.currentTarget.valueAsNumber;
+              if (Number.isFinite(v) && v > 0) onHpglUnits(v);
+              else e.currentTarget.value = String(hpglUnits);
+            }}
+          />
+        </label>
+        <p class="help">The resolution of the HPGL file, which needs no machine. HPGL's plotter unit is 0.025 mm, so 40 to the mm, which most plotters use; change it only if your plotter's manual gives another, up to 1000. It is kept in this browser.</p>
+      </>
+    ),
     "Plot time": (
       <>
         {SPEEDS.map(([key, label, unit, min]) => (

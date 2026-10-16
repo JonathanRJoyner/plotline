@@ -17,7 +17,7 @@ Each picture is the code-rendered still life from the README, drawn on A4 with a
 
 **Pen use** (the `split` stage) shares the drawing between the pens: the first pen alone, light to dark in list order, or each pen by its colour. With several pens, every style but `ink` spreads its marks so that one pen does not draw on top of another.
 
-**Path order** (the `order` stage) reorders the paths to cut pen-up travel (`optimize`) and drops paths shorter than `min_length_mm`, which clears specks.
+**Path order** (the `order` stage) reorders the paths to cut pen-up travel (`optimize`), drops paths shorter than `min_length_mm`, which clears specks, and, with `simplify_mm` above 0, removes the vertices a pen cannot show (Ramer–Douglas–Peucker; see [the decision](decisions/2026-10-16-path-simplification.md)).
 
 **Density.** Every style but `ink` has one density setting, named in its section. Fit to target in the GUI, the `--fit-minutes`, `--fit-paths`, `--fit-metres` and `--fit-dots` flags and the MCP `fit` tool change that setting until the drawing meets a plot time, a path count, metres of line or a dot count.
 

@@ -71,6 +71,8 @@ export function Settings({ stages, values, errors, help, part = "style", onChang
     );
     if (part === "pens") return <div key={s.name}>{body}</div>;
     // Keyed by name, so a changed style does not hand one stage's open or closed state to another.
+    // The tour rings the Image section by this attribute, which tour.test.ts looks for as written.
+    if (s.name === "tone") return <details class="stage" data-tour="image-settings" key={s.name} open={open}><summary>{s.label}</summary>{body}</details>;
     return <details class="stage" key={s.name} open={open}><summary>{s.label}</summary>{body}</details>;
   };
   if (part === "pens") return <>{pens.map((s) => stage(s, true))}</>;

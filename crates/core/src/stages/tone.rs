@@ -5,6 +5,9 @@
 //! wide-screen 16:9 aspect ratios"). A source much larger than the tone map is averaged in blocks
 //! before it is sampled bilinearly, so fine detail is averaged rather than skipped.
 //!
+//! With `flatten_mm` set, the paper's own tone is divided out of the resized map before the
+//! levels; see [`flatten`].
+//!
 //! With `levels` auto, the black and white points come from the resized map: the single-channel
 //! case of the "Simplest Color Balance" (N. Limare, J.-L. Lisani, J.-M. Morel, A. B. Petro and
 //! C. Sbert, *Image Processing On Line* 1, 2011, doi:10.5201/ipol.2011.llmps-scb), written from
@@ -77,6 +80,12 @@ pub struct ToneSettings {
     /// Contrast around mid-grey: positive values push tones apart, negative values squeeze them towards mid-grey. Mid-grey itself stays put, so a style that thresholds at 0.5, such as grid at its default, shows no change.
     #[schemars(range(min = -1.0, max = 1.0), extend("x-step" = 0.05))]
     pub contrast: f64,
+    /// Evens out grey, yellowed or unevenly lit paper: the paper's tone is estimated over this width and divided out, so it draws as white; set it wider than the widest stroke, for drawings and text rather than photos; 0 turns it off.
+    #[schemars(
+        range(min = 0.0, max = 50.0),
+        extend("x-step" = 0.5, "x-unit" = "mm", "x-label" = "Flatten paper")
+    )]
+    pub flatten_mm: f64,
     /// Gaussian blur, given as sigma in mm, that smooths the tone map; 0 turns it off.
     #[schemars(
         range(min = 0.0, max = 10.0),
@@ -98,6 +107,7 @@ impl Default for ToneSettings {
             clip_percent: 0.5,
             gamma: 1.0,
             contrast: 0.0,
+            flatten_mm: 0.0,
             blur_mm: 0.0,
             response: Response::Off,
         }
@@ -105,8 +115,9 @@ impl Default for ToneSettings {
 }
 
 /// Turn the image into a tone map. In order: luminance, the canvas's crop and for `fill` a centre
-/// crop to the drawing area's aspect (see [`source_rect`]), resize, levels (found from the resized
-/// map when `levels` is auto), gamma, contrast, invert and blur.
+/// crop to the drawing area's aspect (see [`source_rect`]), resize, flatten (when `flatten_mm` is
+/// set), levels (found from the flattened map when `levels` is auto), gamma, contrast, invert and
+/// blur.
 pub struct ToneStage;
 
 impl Stage for ToneStage {
@@ -149,42 +160,85 @@ impl Stage for ToneStage {
         }
         Ok(Box::new(ToneRun {
             input: Some((image, canvas, settings)),
+            resized: None,
             map: None,
         }))
     }
 }
 
-/// The work happens in the first step, which reports one frame; the second gives the map.
+/// The resized luminance, `w x h`, kept for the second step to flatten.
+struct Resized {
+    y: Vec<f32>,
+    w: usize,
+    h: usize,
+    canvas: Arc<Canvas>,
+    settings: ToneSettings,
+}
+
+/// The first step resizes and, with `flatten_mm` 0, finishes the map and reports one frame. With
+/// it set, the second step flattens and finishes. The last step gives the map.
 struct ToneRun {
     /// What the first step reads; `None` once it has run.
     input: Option<(Arc<Image>, Arc<Canvas>, ToneSettings)>,
-    /// The finished map, between the first step and the second.
+    /// The resized map, between the first step and the second, when flattening is on.
+    resized: Option<Resized>,
+    /// The finished map, before the last step.
     map: Option<ToneMap>,
+}
+
+fn frame(progress: f32, label: &str) -> Step {
+    Step::Frame(Frame {
+        stage: String::new(),
+        progress,
+        label: label.into(),
+        points: None,
+        paths: None,
+        pen: 0,
+    })
 }
 
 impl StageRun for ToneRun {
     fn step(&mut self) -> Result<Step, StageError> {
         if let Some((image, canvas, settings)) = self.input.take() {
-            self.map = Some(tone_map(&image, &canvas, &settings));
-            return Ok(Step::Frame(Frame {
-                stage: String::new(),
-                progress: 1.0,
-                label: "tone map".into(),
-                points: None,
-                paths: None,
-                pen: 0,
-            }));
+            let (y, w, h) = resized(&image, &canvas, &settings);
+            if settings.flatten_mm > 0.0 {
+                self.resized = Some(Resized {
+                    y,
+                    w,
+                    h,
+                    canvas,
+                    settings,
+                });
+                return Ok(frame(0.5, "tone map"));
+            }
+            self.map = Some(finish(y, w, h, &canvas, &settings));
+            return Ok(frame(1.0, "tone map"));
+        }
+        if let Some(r) = self.resized.take() {
+            self.map = Some(finish(r.y, r.w, r.h, &r.canvas, &r.settings));
+            return Ok(frame(1.0, "flatten paper"));
         }
         let map = self.map.take().expect("the tone run has already finished");
         Ok(Step::Done(Artifact::Tone(Arc::new(map))))
     }
 }
 
-/// The tone map for `image` on `canvas`, in the order the module documents.
-fn tone_map(image: &Image, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
+/// The resized luminance of `image` on `canvas` and its width and height: luminance, the crop of
+/// [`source_rect`] and the resize.
+fn resized(image: &Image, canvas: &Canvas, s: &ToneSettings) -> (Vec<f32>, usize, usize) {
     let all = image.luminance();
     let (lum, w, h) = crop_to_source(&all, image.width as usize, image.height as usize, canvas);
-    let (y, tw, th) = resize(&lum, w, h, s.resolution as usize);
+    resize(&lum, w, h, s.resolution as usize)
+}
+
+/// The tone map from the resized luminance `y`, `tw x th` on `canvas`: flatten on, in the order
+/// the module documents.
+fn finish(mut y: Vec<f32>, tw: usize, th: usize, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
+    let (tw32, th32) = (tw as u32, th as u32);
+    let (mm_per_px, origin_mm) = canvas.image_transform(tw32, th32);
+    if s.flatten_mm > 0.0 {
+        y = flatten(&y, tw, th, s.flatten_mm / mm_per_px);
+    }
     let (black, white) = match s.levels {
         Levels::Manual => (s.black, s.white),
         Levels::Auto => {
@@ -215,8 +269,6 @@ fn tone_map(image: &Image, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
             }
         })
         .collect();
-    let (tw32, th32) = (tw as u32, th as u32);
-    let (mm_per_px, origin_mm) = canvas.image_transform(tw32, th32);
     let ink = if s.blur_mm > 0.0 {
         math::blur(&ink, tw, th, s.blur_mm / mm_per_px)
     } else {
@@ -229,6 +281,82 @@ fn tone_map(image: &Image, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
         mm_per_px,
         origin_mm,
     }
+}
+
+/// Divide the paper's own tone out of a row-major `w x h` luminance grid `y`, for a window of
+/// `window_px` pixels. The paper is estimated as a grey-level closing of `y`, a maximum filter then
+/// a minimum filter wider than the widest stroke, and `y` is divided by it. This is background
+/// subtraction by a morphological closing, after S. R. Sternberg, "Biomedical image processing",
+/// *IEEE Computer* 16(1), 1983, pp. 22-34, doi:10.1109/MC.1983.1654163, whose rolling ball the flat
+/// square window stands in for. Document binarisation uses the same estimate-and-divide step: S. Lu,
+/// B. Su and C. L. Tan, "Document image binarization using background estimation and stroke
+/// edges", *IJDAR* 13(4), 2010, pp. 303-314, doi:10.1007/s10032-010-0130-8.
+///
+/// The paper is smooth, so it is estimated on a coarse grid of `k x k` blocks, `k = max(1,
+/// floor(n / 8), ceil(max(w, h) / 1024))` for `n = window_px`, each holding the largest value in it
+/// (blocks at the right and bottom edges are partial). On the grid the closing runs over a square
+/// of `2r + 1` blocks, `r = max(1, ceil(n / (2k)))`, rows then columns, the window cut off at the
+/// edges. The grid is blurred with a sigma of `r` blocks, which rounds the closing's plateaus off,
+/// and resampled back so that block centres line up with pixel centres. The result is
+/// `min(1, y / paper)`, and 0 where the paper is 0.
+///
+/// A dark area wider than the window reads as paper and turns white, so the window must be wider
+/// than the widest stroke, and flattening suits drawings and text rather than photographs. It
+/// assumes light paper. Only comparisons, [`math::blur`], [`math::resample`] and one f32 division
+/// are used, so native and WebAssembly builds give the same bits.
+pub fn flatten(y: &[f32], w: usize, h: usize, window_px: f64) -> Vec<f32> {
+    if y.is_empty() {
+        return Vec::new();
+    }
+    let k = ((window_px / 8.0).floor() as usize)
+        .max(w.max(h).div_ceil(1024))
+        .max(1);
+    let (cw, ch) = (w.div_ceil(k), h.div_ceil(k));
+    // Luminance is not negative, so a block starts from 0.
+    let mut grid = vec![0.0f32; cw * ch];
+    for (i, row) in y.chunks_exact(w).enumerate() {
+        for (j, &v) in row.iter().enumerate() {
+            let g = &mut grid[(i / k) * cw + j / k];
+            *g = g.max(v);
+        }
+    }
+    let r = ((window_px / (2.0 * k as f64)).ceil() as usize).max(1);
+    for keep in [f32::max as fn(f32, f32) -> f32, f32::min] {
+        grid = window(&grid, (cw, ch), r, keep, true);
+        grid = window(&grid, (cw, ch), r, keep, false);
+    }
+    let grid = math::blur(&grid, cw, ch, r as f64);
+    let paper = math::resample(&grid, cw, ch, cw * k, ch * k);
+    let mut out = Vec::with_capacity(y.len());
+    for (i, row) in y.chunks_exact(w).enumerate() {
+        for (j, &v) in row.iter().enumerate() {
+            let b = paper[i * cw * k + j];
+            out.push(if b > 0.0 { (v / b).min(1.0) } else { 0.0 });
+        }
+    }
+    out
+}
+
+/// `keep`, the larger or the smaller of two values, over the `2r + 1` samples around each sample
+/// of a row-major grid of `(w, h)`, along its rows or along its columns, with the window cut off at
+/// the edges.
+fn window(
+    g: &[f32],
+    (w, h): (usize, usize),
+    r: usize,
+    keep: fn(f32, f32) -> f32,
+    rows: bool,
+) -> Vec<f32> {
+    let (len, lines) = if rows { (w, h) } else { (h, w) };
+    let at = |line: usize, j: usize| if rows { line * w + j } else { j * w + line };
+    let mut out = vec![0.0f32; g.len()];
+    for line in 0..lines {
+        for j in 0..len {
+            let (lo, hi) = (j.saturating_sub(r), (j + r).min(len - 1));
+            out[at(line, j)] = (lo + 1..=hi).fold(g[at(line, lo)], |m, i| keep(m, g[at(line, i)]));
+        }
+    }
+    out
 }
 
 /// The width and height of the tone map the stage makes from a `w x h` image on `canvas` at
@@ -320,7 +448,9 @@ fn resize_size(w: usize, h: usize, long_edge: usize) -> (usize, usize) {
 mod tests {
     use super::*;
     use crate::settings::merge;
-    use crate::synthetic::{checkerboard, color_bars, flat, gradient, noise, ramp, still_life};
+    use crate::synthetic::{
+        checkerboard, color_bars, flat, gradient, lit_strokes, noise, ramp, still_life,
+    };
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -650,6 +780,91 @@ mod tests {
         )
         .1);
         assert!(small < plain && big > small);
+    }
+    /// The pixels of `lit_strokes` that are paper, and the ones inside a vertical stroke, a few
+    /// pixels from where it meets another.
+    fn is_paper(x: usize, y: usize) -> bool {
+        x % 16 >= 2 && y % 16 >= 2
+    }
+    fn is_stroke(x: usize, y: usize) -> bool {
+        x % 16 < 2 && (4..14).contains(&(y % 16))
+    }
+
+    #[test]
+    fn flatten_turns_lit_paper_white_and_keeps_the_strokes() {
+        let image = lit_strokes(160, 160, 0.4);
+        let y = flatten(&image.luminance(), 160, 160, 8.0);
+        for (i, &v) in y.iter().enumerate() {
+            let (x, row) = (i % 160, i / 160);
+            if is_paper(x, row) {
+                assert!(v >= 0.97, "paper at ({x}, {row}) is {v}");
+            } else if is_stroke(x, row) {
+                assert!(v <= 0.3, "stroke at ({x}, {row}) is {v}");
+            }
+        }
+    }
+    #[test]
+    fn flatten_leaves_a_flat_image_white_and_a_black_one_black() {
+        // Windows with one block, with several, and a grid whose last blocks are partial.
+        for (w, h, window) in [(40, 30, 3.0), (40, 30, 20.0), (37, 19, 40.0), (1, 1, 5.0)] {
+            let grey = flatten(&vec![0.6; w * h], w, h, window);
+            assert!(grey.iter().all(|&v| (1.0 - 1e-6..=1.0).contains(&v)));
+            assert_eq!(flatten(&vec![0.0; w * h], w, h, window), vec![0.0; w * h]);
+        }
+    }
+    #[test]
+    fn flatten_blocks_follow_a_wide_map() {
+        // 1300 pixels wide forces blocks of 2 whatever the window.
+        let y: Vec<f32> = (0..1300 * 3)
+            .map(|i| 0.5 + 0.5 * (i % 1300) as f32 / 1300.0)
+            .collect();
+        let flat = flatten(&y, 1300, 3, 6.0);
+        assert_eq!(flat.len(), y.len());
+        assert!(flat.iter().all(|&v| v > 0.95 && v <= 1.0));
+    }
+    #[test]
+    fn flatten_off_makes_the_map_it_always_did() {
+        let image = || lit_strokes(160, 160, 0.4);
+        let (frames, off) = run_tone(image(), SQUARE, json!({"flatten_mm": 0.0}));
+        let (_, default) = run_tone(image(), SQUARE, json!({}));
+        assert_eq!(off.ink, default.ink);
+        let labels: Vec<_> = frames
+            .iter()
+            .map(|f| (f.label.as_str(), f.progress))
+            .collect();
+        assert_eq!(labels, [("tone map", 1.0)]);
+    }
+    #[test]
+    fn flatten_on_reports_two_frames_and_whitens_the_paper() {
+        let image = || lit_strokes(160, 160, 0.4);
+        let (frames, on) = run_tone(
+            image(),
+            SQUARE,
+            json!({"resolution": 160, "flatten_mm": 5.0}),
+        );
+        let labels: Vec<_> = frames
+            .iter()
+            .map(|f| (f.label.as_str(), f.progress))
+            .collect();
+        assert_eq!(labels, [("tone map", 0.5), ("flatten paper", 1.0)]);
+        let (_, off) = run_tone(image(), SQUARE, json!({"resolution": 160}));
+        let paper = |t: &ToneMap| t.ink[88 * 160 + 8];
+        assert!(paper(&off) > 0.5 && paper(&on) < 0.05);
+    }
+    #[test]
+    #[ignore = "timing: cargo test --release flatten_timing -- --ignored --nocapture"]
+    fn flatten_timing() {
+        let (w, h) = (4000, 2800);
+        let y: Vec<f32> = (0..w * h)
+            .map(|i| 0.5 + 0.5 * ((i % w) as f32 / w as f32))
+            .collect();
+        let start = std::time::Instant::now();
+        let out = flatten(&y, w, h, 250.0);
+        eprintln!(
+            "flatten of {w} x {h} with a 250-pixel window: {:?}",
+            start.elapsed()
+        );
+        assert_eq!(out.len(), y.len());
     }
     #[test]
     fn synthetic_images_have_the_documented_values() {

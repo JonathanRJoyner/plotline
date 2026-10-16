@@ -126,6 +126,12 @@ impl Session {
         Ok(self.inner.gcode(layer)?)
     }
 
+    /// The last finished drawing as one HPGL program with `unitsPerMm` plotter units to the
+    /// millimetre, above 0 and at most 1000.
+    pub fn hpgl(&self, units_per_mm: f64) -> Result<String, JsError> {
+        Ok(self.inner.hpgl(units_per_mm)?)
+    }
+
     /// Switch to the built-in style `name`; a stage the old style also has keeps the values the
     /// user changed, and everything else takes the new style's defaults.
     #[wasm_bindgen(js_name = setStyle)]
@@ -336,8 +342,9 @@ impl Run {
     }
 
     /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}` JSON, or what
-    /// a search found, as `{stage, key, value, error, current, current_error, budget, trials,
-    /// reason, patch}` JSON, once it is done; `undefined` for a plain run.
+    /// a search found, as `{stage, key, value, error, minutes, current, current_error,
+    /// current_minutes, budget, trials, reason, patch}` JSON, once it is done; `undefined` for a
+    /// plain run.
     pub fn result(&self) -> Option<String> {
         self.inner.result().map(|r| r.to_string())
     }

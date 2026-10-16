@@ -249,6 +249,7 @@ test("Optimize suggests a spacing and changes nothing until Apply", async ({ pag
   const searched = await ran(page, id);
   const found = page.locator("form.fit span");
   await expect(found).toContainText("follows the image's tones best");
+  await expect(found).toContainText(/\d min to plot/);
   await expect(spacing).toHaveValue(before);
   // The still life's best hatch spacing is wider than the default (brief §14, "Optimize").
   const [, value] = /^Spacing at ([\d.]+) mm follows/.exec((await found.textContent()) ?? "") ?? [];
@@ -263,6 +264,17 @@ test("Response auto corrects the tone map for the style", async ({ page }) => {
   const stats = await page.locator(".stats").textContent();
   await page.locator("summary", { hasText: /^Image$/ }).click();
   await page.getByRole("combobox", { name: /^response$/i }).selectOption("auto");
+  await ran(page, id);
+  await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
+});
+
+test("Flatten paper changes the drawing", async ({ page }) => {
+  const id = await pick(page, "ink", await sample(page));
+  const stats = await page.locator(".stats").textContent();
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  const flatten = page.getByRole("spinbutton", { name: /^flatten paper$/i });
+  await flatten.fill("10");
+  await flatten.blur();
   await ran(page, id);
   await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
 });
@@ -328,6 +340,18 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await ran(page, id);
 });
 
+test("the toolbar keeps to one row on a wide window and two on a phone, its buttons still named", async ({ page }) => {
+  await open(page);
+  const toolbar = page.locator(".toolbar");
+  for (const [width, rows] of [[1730, 1], [1280, 1], [960, 2], [375, 2]] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    const { height, overflow } = await toolbar.evaluate((e) => ({ height: e.getBoundingClientRect().height, overflow: e.scrollWidth > e.clientWidth }));
+    expect(Math.round((height - 8) / 36), `rows at ${width} px`).toBe(rows); // a row is a 30 px button and a 6 px gap
+    expect(overflow, `overflow at ${width} px`).toBe(false);
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+  }
+});
+
 test("the test chart draws without an image", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Test chart" }).click();
@@ -373,6 +397,89 @@ test("a machine lifted by G-code lines writes them, with long moves cut", async 
   expect(points.length).toBeGreaterThan(10);
   const longer = points.slice(1).filter(([x, y], i) => Math.hypot(x - points[i][0], y - points[i][1]) > 2.002);
   expect(longer).toEqual([]);
+});
+
+test("HPGL exports one file with a pen for the layer, at the resolution in Settings", async ({ page }) => {
+  await sample(page);
+  const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "HPGL", exact: true }).click()]);
+  expect(file.suggestedFilename()).toMatch(/^plotline-[\w-]+\.hpgl$/);
+  const text = readFileSync(await file.path(), "utf8");
+  expect(text.startsWith("IN;\n")).toBe(true);
+  expect(text).toContain("SP1;");
+  expect(text.endsWith("PU;\nSP0;\n")).toBe(true);
+  // A quarter of the units to the mm gives a smaller file, and a value that is no use snaps back.
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("button", { name: "HPGL", exact: true }).click();
+  const units = dialog.getByRole("spinbutton", { name: /^Plotter units per mm/ });
+  await expect(units).toHaveValue("40");
+  await units.fill("0");
+  await units.blur();
+  await expect(units).toHaveValue("40");
+  await units.fill("10");
+  await units.blur();
+  await expect(units).toHaveValue("10");
+  await dialog.getByRole("button", { name: "Close" }).click();
+  const [coarser] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "HPGL", exact: true }).click()]);
+  const small = readFileSync(await coarser.path(), "utf8");
+  expect(small.length).toBeLessThan(text.length);
+  // Kept in the browser, so a reload keeps it.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await dialog.getByRole("button", { name: "HPGL", exact: true }).click();
+  await expect(units).toHaveValue("10");
+  // The engine refuses more than 1000, and the page shows its message instead of a download. The
+  // reload left no image, so the sample is drawn again first.
+  await units.fill("2000");
+  await units.blur();
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Sample image" }).click();
+  await ran(page, 0);
+  await page.getByRole("button", { name: "HPGL", exact: true }).click();
+  await expect(page.getByText("plotter units per mm must be above 0 and at most 1000, not 2000")).toBeVisible();
+});
+
+test("a saved pen comes back from My pens after a reload, and exports as a file", async ({ page }) => {
+  await open(page);
+  const edit = () => page.getByRole("button", { name: "Edit pens" }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Pens", exact: true }) });
+  const mine = dialog.locator('[data-tour="library"]');
+  const name = dialog.getByLabel("Name");
+  const width = dialog.getByLabel("Line width");
+  await edit();
+  // Each change waits for the engine's reply, which the list shows, as one made on the stale list would undo the last.
+  const list = dialog.locator("ol.pens");
+  await name.fill("Fine red");
+  await name.blur();
+  await expect(list).toContainText("Fine red");
+  await width.fill("0.25");
+  await width.blur();
+  await expect(list).toContainText("0.25");
+  const red = dialog.getByRole("button", { name: "red", exact: true });
+  await red.click();
+  await expect(red).toHaveAttribute("aria-pressed", "true");
+  await mine.getByRole("button", { name: "Save this pen" }).click();
+  await expect(mine.getByRole("button", { name: /^Fine red/ })).toHaveCount(1);
+  await expect(mine.getByRole("button", { name: "Save this pen" })).toBeDisabled();
+  // A second pen takes the saved one's name and width from the list.
+  await dialog.getByRole("button", { name: "Add pen" }).click();
+  await expect(dialog.getByRole("heading", { name: "Pen 2" })).toBeVisible();
+  await expect(name).toHaveValue("Pen 2");
+  await mine.getByRole("button", { name: /^Fine red/ }).click();
+  await expect(name).toHaveValue("Fine red");
+  await expect(width).toHaveValue("0.25");
+  // Kept in the browser, so a reload keeps it.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await edit();
+  await expect(mine.getByRole("button", { name: /^Fine red/ })).toHaveCount(1);
+  const [file] = await Promise.all([page.waitForEvent("download"), mine.getByRole("button", { name: "Export" }).click()]);
+  expect(file.suggestedFilename()).toBe("plotline-pens.json");
+  const saved = JSON.parse(readFileSync(await file.path(), "utf8"));
+  expect(saved.format).toBe("plotline-pens");
+  expect(saved.pens).toHaveLength(1);
+  expect(saved.pens[0]).toMatchObject({ name: "Fine red", width_mm: 0.25 });
 });
 
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.

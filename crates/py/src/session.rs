@@ -167,6 +167,13 @@ impl Session {
         self.inner.gcode(layer).map_err(session_error)
     }
 
+    /// The latest result as one HPGL program with `units_per_mm` plotter units to the millimetre.
+    /// Raises `RuntimeError` without a result and `ValueError` for a resolution that is not above
+    /// 0 and at most 1000.
+    fn hpgl(&self, units_per_mm: f64) -> PyResult<String> {
+        self.inner.hpgl(units_per_mm).map_err(session_error)
+    }
+
     /// Cancel the latest run and start a new one over a snapshot of the session. Raises
     /// `RuntimeError` when no image is set.
     fn start(&mut self) -> PyResult<Run> {
@@ -339,8 +346,8 @@ impl Run {
     }
 
     /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}`, or what a
-    /// search found, as `{stage, key, value, error, current, current_error, budget, trials,
-    /// reason, patch}`, once it is done; `None` for a plain run.
+    /// search found, as `{stage, key, value, error, minutes, current, current_error,
+    /// current_minutes, budget, trials, reason, patch}`, once it is done; `None` for a plain run.
     fn result<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         let found = self.peek(None, |run| run.result());
         found.map(|r| value_to_py(py, &r)).transpose()

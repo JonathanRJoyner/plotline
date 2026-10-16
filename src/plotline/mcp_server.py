@@ -394,12 +394,15 @@ def build_server(session: Session | None = None) -> MCPServer:
         look: str | None = None,
     ) -> list[str | Image]:
         """Search the style's density setting for the value whose drawing's tones follow the
-        image most closely, by the tone match's error, in eight runs: the current value, then a
-        golden-section search from a quarter to four times it. Given metric and target, as for
-        fit, a trial over the target does not count. style, look and settings apply first, as in
-        run.
-        Nothing else changes: returns {stage, key, value, error, current, current_error, budget,
-        trials, reason, patch} as JSON, or null when no trial stayed within the target, then the
+        image most closely, by the tone match's error, in up to nine runs: the current value, then
+        half-octave steps from a quarter to four times it. A trial does not count when it plots for
+        over twice the current value's time or an hour, whichever is more, or has a plot lint
+        warning or error the current value does not. Given metric and target, as for fit, a trial
+        over the target does not count either, and a minutes target replaces the time limit.
+        style, look and settings apply first, as in run.
+        Nothing else changes: returns {stage, key, value, error, minutes, current, current_error,
+        current_minutes, budget, trials, reason, patch} as JSON, with plot times in minutes, or
+        null when no trial stayed within the target, then the
         stats and a preview of the current settings as run does. Apply the patch with
         run(settings=patch["settings"]) if it suits; fidelity to the image is not always the
         aim."""
@@ -470,15 +473,19 @@ def build_server(session: Session | None = None) -> MCPServer:
     @server.tool()
     async def export(
         path: str,
-        format: Literal["svg", "json", "png", "preset", "gcode"],
+        format: Literal["svg", "json", "png", "preset", "gcode", "hpgl"],
         overwrite: bool = False,
+        units_per_mm: float = 40.0,
     ) -> dict[str, Any]:
-        """Write the result as svg, json (the paths) or png (a preview), or the settings as a
-        preset, to the absolute path. A file that exists is kept unless overwrite is true. With
-        format gcode the path is a folder, made if it is missing, and the result is written into
-        it as one file per pen, plot_1_<pen>.gcode and so on, for the machine from set_machine;
-        if any of those files exists, none is written unless overwrite is true. Returns the path
-        and size of each file for gcode, and the size of the file for the other formats."""
+        """Write the result as svg, json (the paths), png (a preview) or hpgl (one plotter file,
+        with a pen selected for each layer), or the settings as a preset, to the absolute path.
+        units_per_mm is the plotter units to the millimetre of hpgl, above 0 and at most 1000,
+        40 for most plotters, and no other format reads it. A file that exists is kept unless
+        overwrite is true. With format gcode the path is a folder, made if it is missing, and the
+        result is written into it as one file per pen, plot_1_<pen>.gcode and so on, for the
+        machine from set_machine; if any of those files exists, none is written unless overwrite
+        is true. Returns the path and size of each file for gcode, and the size of the file for
+        the other formats."""
         with _errors():
             p = _absolute(path)
             if format == "gcode":
@@ -491,6 +498,8 @@ def build_server(session: Session | None = None) -> MCPServer:
                 session.export_svg(p)
             elif format == "json":
                 session.export_json(p)
+            elif format == "hpgl":
+                session.export_hpgl(p, units_per_mm)
             elif format == "png":
                 p.write_bytes(session.preview_png(_page_px(session)))
             else:
