@@ -61,6 +61,7 @@ export class Protocol {
       listInks: () => JSON.parse(listInks()),
       setMachine: (machine: Machine | null) => s().setMachine(JSON.stringify(machine)),
       gcode: (layer: number) => s().gcode(layer),
+      hpgl: (unitsPerMm: number) => s().hpgl(unitsPerMm),
       describe: (name: string) => JSON.parse(describe(name)),
       setImageBytes: (bytes: Uint8Array) => this.setSource((t) => t.setImageBytes(bytes)),
       setImage: (width: number, height: number, rgb: Float32Array) => this.setSource((t) => t.setImage(width, height, rgb)),

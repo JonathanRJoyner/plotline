@@ -35,6 +35,7 @@ pub fn session_error(e: SessionError) -> PyErr {
         | SessionError::UnknownLook { .. }
         | SessionError::Machine(_)
         | SessionError::Gcode(_)
+        | SessionError::Hpgl(_)
         | SessionError::NoPens
         | SessionError::Fit(_)
         | SessionError::Testchart(_) => value_error(e),

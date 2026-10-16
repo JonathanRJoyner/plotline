@@ -16,9 +16,8 @@
 
 use serde::Serialize;
 
-use crate::coverage::{self, Coverage};
 use crate::math;
-use crate::types::{Drawing, ToneMap};
+use crate::types::ToneMap;
 
 /// The eye filter's sigma in mm: line texture at the default spacings of 1 to 2 mm fades under
 /// it, as when a plot is seen from a metre or two. A taste default, recorded in the brief.
@@ -86,23 +85,6 @@ pub fn pixel_coverage(
             n => (f64::from(hits[i]) / f64::from(n)) as f32,
         })
         .collect()
-}
-
-/// The tone error of `d` against its tone map alone, without the SSIM, for a search that runs
-/// many drawings: the inked cells of every layer on a raster over the page with the cell size of
-/// the thinnest pen, as plot lint lays it, then as [`compare`]. `None` as there.
-pub fn error(d: &Drawing) -> Option<f64> {
-    let t = d.tone.as_deref()?;
-    let page = [0.0, 0.0, d.canvas.width_mm, d.canvas.height_mm];
-    let thinnest = d.layers.iter().map(|l| l.pen.width_mm).reduce(f64::min);
-    let cell = coverage::cell_size(thinnest.unwrap_or(0.3), page);
-    let mut grid = Coverage::new(page, cell);
-    for layer in &d.layers {
-        grid.stamp(&layer.paths, layer.pen.width_mm);
-    }
-    let inked: Vec<bool> = grid.count.iter().map(|&n| n > 0).collect();
-    let c = pixel_coverage(&inked, grid.width, grid.height, [0.0; 2], cell, t);
-    Fitted::new(&c, t).map(|f| f.error)
 }
 
 /// Compare `coverage`, one value per pixel of `t` as [`pixel_coverage`] gives it, with `t`'s ink;
