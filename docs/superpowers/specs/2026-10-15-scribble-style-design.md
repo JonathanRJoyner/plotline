@@ -6,7 +6,7 @@ Brief §7.2 lists circular scribbles among the renderers that later point placer
 
 ## 1. Source
 
-C.-C. Chiu, Y.-H. Lo, R.-R. Lee and H.-K. Chu, "Tone- and Feature-Aware Circular Scribble Art", *Computer Graphics Forum* 34(7), 2015 (Proc. Pacific Graphics), doi:10.1111/cgf.12761. The paper builds a tracing path through points sampled by tone (§4), then draws a "rolling disk": a point on a disk whose centre moves along the path (§5.1, a trochoid). The disk radius and the centre's speed per turn follow the luminance `L` at the centre (equations 5 and 6):
+C.-C. Chiu, Y.-H. Lo, R.-R. Lee and H.-K. Chu, "Tone- and Feature-Aware Circular Scribble Art", *Computer Graphics Forum* 34(7), 2015 (Proc. Pacific Graphics), pp. 225-234, doi:10.1111/cgf.12761. The paper builds a tracing path through points sampled by tone (§4), then draws a "rolling disk": a point on a disk whose centre moves along the path (§5.1, a trochoid). The disk radius and the centre's speed per turn follow the luminance `L` at the centre (equations 5 and 6):
 
 - `r = Rmin + L (Rmax - Rmin)`
 - `v = Vmin + L (Vmax - Vmin)`, with the turning speed held constant, so the loops stay loops while `v` is under one turn's length.

@@ -2,12 +2,13 @@
 //! dark, wide and loose where it is light.
 //!
 //! After C.-C. Chiu, Y.-H. Lo, R.-R. Lee and H.-K. Chu, "Tone- and Feature-Aware Circular Scribble
-//! Art", *Computer Graphics Forum* 34(7), 2015 (Proc. Pacific Graphics), doi:10.1111/cgf.12761.
-//! A point turns on a disk whose centre moves along the path (the paper's rolling disk, a
-//! trochoid). With luminance `L` under the centre, the disk's radius is `Rmin + L (Rmax - Rmin)`
-//! and the centre moves `Vmin + L (Vmax - Vmin)` in one turn, the turning speed being constant;
-//! while the move per turn is under the loop's circumference the point loops. The disk's normal
-//! tilts the loops into ellipses; here the tilt is one fixed ellipse for the whole drawing.
+//! Art", *Computer Graphics Forum* 34(7), 2015 (Proc. Pacific Graphics), pp. 225-234,
+//! doi:10.1111/cgf.12761. A point turns on a disk whose centre moves along the path (the paper's
+//! rolling disk, a trochoid). With luminance `L` under the centre, the disk's radius is
+//! `Rmin + L (Rmax - Rmin)` and the centre moves `Vmin + L (Vmax - Vmin)` in one turn, the turning
+//! speed being constant; while the move per turn is under the loop's circumference the point
+//! loops. The disk's normal tilts the loops into ellipses; here the tilt is one fixed ellipse for
+//! the whole drawing.
 //!
 //! plotline takes the path from the `tsp` stage in place of the paper's tour of superpixels, and
 //! leaves out the paper's cut of the radius near edges, its blurred tone curve and the jitter of
