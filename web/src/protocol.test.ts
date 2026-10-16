@@ -373,6 +373,25 @@ test("thumbs without an image posts each style's error", async () => {
   expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
 });
 
+test("setPaper only repaints: no run, and a restore brings the old paper back", async () => {
+  const { posted, call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const before = ok("preset").state;
+  expect(before.paper).toBe("#ffffff");
+  const { state } = ok("setPaper", "#f5ecd7");
+  expect(state.paper).toBe("#f5ecd7");
+  expect((ok("preset").value as { paper: string }).paper).toBe("#f5ecd7");
+  expect(state.run.id).toBe(1);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+  expect(call("setPaper", "cream").ok).toBe(false);
+  expect(ok("preset").state.paper).toBe("#f5ecd7");
+  expect(setupOf(state)).not.toBe(setupOf(before));
+  const { style, canvas, paper, pens, machine, settings } = before;
+  expect(ok("restore", { style, canvas, paper, pens, machine, settings }).state.paper).toBe("#ffffff");
+  await ended(2); // a restore redraws, as for any setup
+});
+
 test("restore applies a setup over the preset and redraws", async () => {
   const { posted, ok, ended } = setup();
   ok("setImage", ...image());
@@ -406,6 +425,7 @@ test("undoing a random run of edits through restore returns the start, and undo 
     () => ok("update", "split", { mode: pick(["one_pen", "light_to_dark", "by_colour"]) }),
     () => ok("setCanvas", { width_mm: pick([148, 210, 297]), height_mm: 297, margin_mm: Math.round(rand() * 20), fit: pick(["fit", "fill"]) }),
     () => ok("setPens", [{ name: "P", width_mm: 0.1 + Math.round(rand() * 8) / 10, color: pick(["#000000", "#d0202e"]) }]),
+    () => ok("setPaper", pick(["#ffffff", "#f5ecd7", "#000000"])),
   ];
   for (let i = 0; i < 40; i++) see(pick(edits)().state);
   see(ok("update", "tone", { gamma: 1.3 }).state);

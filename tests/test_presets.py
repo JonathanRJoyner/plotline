@@ -65,6 +65,21 @@ def test_an_exported_drawing_loads_as_a_preset(tmp_path, kind):
     assert (t.style, t.canvas, t.pens, t.settings) == (s.style, s.canvas, s.pens, s.settings)
 
 
+def test_a_preset_keeps_the_paper_and_an_old_one_loads_white(files):
+    read, apply = files
+    s = Session()
+    s.set_paper("#f5f0e1")
+    d = read(s)
+    assert d["paper"] == "#f5f0e1"
+    t = Session()
+    t.set_paper("#000000")
+    apply(t, d)
+    assert t.paper == "#f5f0e1"
+    del d["paper"]  # a preset saved before the paper existed
+    apply(t, d)
+    assert t.paper == "#ffffff"
+
+
 def test_a_file_with_no_preset_is_refused(tmp_path):
     s = Session()
     for text, message in [

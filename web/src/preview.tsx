@@ -2,10 +2,12 @@ import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
 import { eachPath, pathCount } from "./paths";
-import { fitView, zoomAt, type View } from "./view";
+import { fitView, onPaper, zoomAt, type View } from "./view";
 
 type Props = {
   canvas: Canvas;
+  // The paper's colour as #rrggbb.
+  paper: string;
   // The latest frame with geometry from each pen of the run, by pen index; empty before the first.
   frames: (FrameEvent | undefined)[];
   result: ResultEvent | null;
@@ -70,7 +72,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   ctx.shadowColor = "rgba(0, 0, 0, 0.35)";
   ctx.shadowBlur = 8 * dpr;
   ctx.shadowOffsetY = 2 * dpr;
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = s.paper;
   ctx.fillRect(0, 0, page.width_mm, page.height_mm);
   ctx.restore();
 
@@ -91,8 +93,8 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   const layers: Layer[] = held
     ? live.flatMap((f, i) => (f?.coords && f.offsets && !s.hidden.has(i) ? [{ pen: penOf(i), coords: f.coords, offsets: f.offsets }] : []))
     : (result?.layers ?? []).filter((_, i) => !s.hidden.has(i));
-  // Multiply, so pens that overlap darken like layered transparent inks on the plot; one pen on
-  // white looks the same. The rest of the page draws normally.
+  // Multiply, so pens that overlap darken like layered transparent inks on the plot, and ink takes
+  // the paper's colour; one pen on white looks the same. The rest of the page draws normally.
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
   live.forEach((f, i) => {
@@ -126,7 +128,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   }
 
   if (!s.hasImage) {
-    ctx.fillStyle = "#6b7280"; // 4.8:1 on the white paper
+    ctx.fillStyle = onPaper(s.paper);
     ctx.font = "6px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -186,7 +188,7 @@ export function Preview(props: Props): JSX.Element {
       paint(ctx, props, view, size.w, size.h, window.devicePixelRatio || 1, bitmap);
     });
     return () => cancelAnimationFrame(id);
-  }, [props.canvas, props.frames, props.result, props.running, props.showSource, props.showTravel, props.hidden, props.pens, props.hasImage, view, size, bitmap]);
+  }, [props.canvas, props.paper, props.frames, props.result, props.running, props.showSource, props.showTravel, props.hidden, props.pens, props.hasImage, view, size, bitmap]);
 
   // Zooms by `k`, keeping the page point under (px, py) in place.
   const zoom = (k: number, px: number, py: number) => setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));

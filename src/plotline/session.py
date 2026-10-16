@@ -248,6 +248,18 @@ class Session:
         drawing area."""
         self._core.set_canvas(asdict(canvas))
 
+    @property
+    def paper(self) -> str:
+        """The colour of the paper, as ``#rrggbb``; ``#ffffff`` until it is set."""
+        return self._core.paper()
+
+    def set_paper(self, color: str) -> None:
+        """Use ``color``, ``#rrggbb``, as the paper. Only the previews and the preset read it: the
+        previews fill the page with it and multiply the ink onto it, and the preset keeps it. No
+        stage reruns, and the SVG, JSON paths and G-code leave it out. Raises ``ValueError``
+        for anything but ``#rrggbb``, and changes nothing."""
+        self._core.set_paper(color)
+
     def set_pens(self, pens: Sequence[Pen]) -> None:
         """Use ``pens``, in drawing order. Raises ``ValueError`` when there are none, because
         every result needs a pen, and for a pen the engine refuses."""
@@ -295,16 +307,16 @@ class Session:
         self._core.apply_look(name)
 
     def save_preset(self, path: str | os.PathLike[str]) -> None:
-        """Write the style, canvas, pens and settings to ``path`` as a JSON preset, UTF-8 with LF
-        line ends and indented by two spaces so that it reads and diffs well."""
+        """Write the style, canvas, paper, pens and settings to ``path`` as a JSON preset, UTF-8
+        with LF line ends and indented by two spaces so that it reads and diffs well."""
         text = json.dumps(self._core.preset(), indent=2) + "\n"
         Path(path).write_text(text, encoding="utf-8", newline="\n")
 
     def load_preset(self, path: str | os.PathLike[str]) -> None:
-        """Read the file at ``path`` and apply the preset it holds, so its style, canvas, pens,
-        machine and settings replace the current ones. The file is a preset, an SVG exported with
-        its preset embedded or a JSON drawing exported with one. A key the file leaves out keeps
-        its default, and each stage or setting the style does not have is dropped with a
+        """Read the file at ``path`` and apply the preset it holds, so its style, canvas, paper,
+        pens, machine and settings replace the current ones. The file is a preset, an SVG exported
+        with its preset embedded or a JSON drawing exported with one. A key the file leaves out
+        keeps its default, and each stage or setting the style does not have is dropped with a
         ``UserWarning``. A preset with a machine also sets ``speeds`` to the machine's. Raises
         ``ValueError`` for a file that holds no preset or that the engine refuses."""
         data = _core.preset_from_text(Path(path).read_text(encoding="utf-8"))

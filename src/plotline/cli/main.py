@@ -136,6 +136,14 @@ def page_options(command: Callable[..., Any]) -> Callable[..., Any]:
     """Give ``command`` the options that set the page, which ``set_page`` then applies."""
     for option in (
         click.option(
+            "--paper",
+            metavar="COLOR",
+            help=(
+                "Paper colour for the preview, #rrggbb or an ink name; the drawing itself is "
+                "unchanged."
+            ),
+        ),
+        click.option(
             "--fit",
             type=click.Choice(["fit", "fill"]),
             help="Keep the whole image on the page (fit) or fill the drawing area with it (fill).",
@@ -185,8 +193,10 @@ def set_page(
     height: float | None,
     margin: float | None,
     fit: str | None,
+    paper: str | None,
 ) -> None:
-    """Change the page of ``session`` by the options that were given; the rest stay as they are."""
+    """Change the page and the paper colour of ``session`` by the options that were given; the
+    rest stay as they are. The paper may be the name of one of the ``inks()``, in any case."""
     page: dict[str, Any] = {
         "width_mm": width,
         "height_mm": height,
@@ -196,19 +206,26 @@ def set_page(
     changes = {key: value for key, value in page.items() if value is not None}
     if changes:
         session.set_canvas(replace(session.canvas, **changes))
+    if paper is not None:
+        session.set_paper(inks().get(paper.lower(), paper))
 
 
 @main.command()
 @click.argument("image", type=click.Path())
 @page_options
 def analyse(
-    image: str, width: float | None, height: float | None, margin: float | None, fit: str | None
+    image: str,
+    width: float | None,
+    height: float | None,
+    margin: float | None,
+    fit: str | None,
+    paper: str | None,
 ) -> None:
     """Print what IMAGE looks like and the changes that would suit it, as JSON."""
     session = Session()
     with _errors():
         session.load_image(image)
-        set_page(session, width, height, margin, fit)
+        set_page(session, width, height, margin, fit, paper)
         click.echo(json.dumps(session.analysis(), indent=2))
 
 
@@ -336,6 +353,7 @@ def run(
     height: float | None,
     margin: float | None,
     fit: str | None,
+    paper: str | None,
     pens: list[Pen],
     sets: list[tuple[str, str, bool | int | float | str]],
     preset: str | None,
@@ -374,7 +392,7 @@ def run(
                 raise click.BadParameter(str(error), param_hint=["--look"]) from error
         if machine is not None:
             use_machine(session, machine)
-        set_page(session, width, height, margin, fit)
+        set_page(session, width, height, margin, fit, paper)
         if pens:
             session.set_pens(pens)
         for stage, key, value in sets:
@@ -448,6 +466,7 @@ def testchart(
     height: float | None,
     margin: float | None,
     fit: str | None,
+    paper: str | None,
     pens: list[Pen],
     machine: str | None,
 ) -> None:
@@ -458,7 +477,7 @@ def testchart(
     with _errors():
         if machine is not None:
             use_machine(session, machine)
-        set_page(session, width, height, margin, fit)
+        set_page(session, width, height, margin, fit, paper)
         if pens:
             session.set_pens(pens)
         session.testchart()

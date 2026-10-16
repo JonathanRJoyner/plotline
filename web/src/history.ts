@@ -1,10 +1,10 @@
 // Undo and redo over whole setups (spec 2026-10-15-try-styles-and-undo section 3). A setup is the
-// preset's style, canvas, pens, machine and settings, kept as JSON text so equal setups compare
+// preset's style, canvas, paper, pens, machine and settings, kept as JSON text so equal setups compare
 // equal as strings.
 import type { State } from "./protocol";
 
-export const setupOf = ({ style, canvas, pens, machine, settings }: State): string =>
-  JSON.stringify({ style, canvas, pens, machine, settings });
+export const setupOf = ({ style, canvas, paper, pens, machine, settings }: State): string =>
+  JSON.stringify({ style, canvas, paper, pens, machine, settings });
 
 export class History {
   past: string[] = [];
