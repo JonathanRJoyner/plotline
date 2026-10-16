@@ -717,7 +717,7 @@ fn an_applied_suggestion_goes_away() {
 const RISING: &[&str] = &["empty", "dark"];
 
 /// Lint findings whose patch can miss, which the law skips until issue #32 is closed.
-const LINT_MISSES: &[&str] = &["empty", "unused_pens", "dark", "travel"];
+const LINT_MISSES: &[&str] = &["unused_pens", "dark", "travel"];
 
 #[test]
 fn an_applied_lint_fix_removes_or_shrinks_its_finding() {

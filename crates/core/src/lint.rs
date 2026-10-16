@@ -13,11 +13,12 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::coverage::{self, Coverage};
+use crate::fit::Density;
 use crate::machine::Machine;
 use crate::stats::{self, Speeds};
 use crate::style::Style;
 use crate::tone_match::{self, ToneMatch};
-use crate::types::{Drawing, Paths, Pen};
+use crate::types::{Drawing, Paths, Pen, ToneMap};
 
 /// A pen passing a spot this often risks the paper; over `OVERDRAW_SHARE` of the inked cells
 /// passed that often is overdraw. Two passes are normal where hatching crosses and fill rings meet.
@@ -247,6 +248,119 @@ impl Context<'_> {
         };
         Some(json!({"settings": {stage: {key: v}}}))
     }
+
+    /// The largest length in mm among the settings of `stage` that end in `_mm`, which is the scale
+    /// of its pattern: a truchet tile or a scribble loop is bigger than the spacing of its lines.
+    fn scale(&self, stage: &str) -> f64 {
+        let all = self.settings.get(stage).and_then(Value::as_object);
+        let lengths = all
+            .into_iter()
+            .flatten()
+            .filter(|(k, _)| k.ends_with("_mm"));
+        lengths.filter_map(|(_, v)| v.as_f64()).fold(0.0, f64::max)
+    }
+
+    /// A patch moving the density setting `d` one step denser: doubled for a count, halved for a
+    /// spacing, or `None` at the end of its range.
+    fn denser(&self, d: &Density) -> Option<Value> {
+        let v = self.number(&d.stage, &d.key)?;
+        self.set(
+            &d.stage,
+            &d.key,
+            d.grain(if d.direct { v * 2.0 } else { v / 2.0 }),
+        )
+    }
+}
+
+/// A region needs this many spacings squared of area before a closer spacing is sure to put a
+/// mark more in it: it holds some four lines across at the spacing it has, and a few lines more
+/// or fewer, as the lines fall, do not undo the gain. A style whose stage has longer lengths than
+/// its spacing, such as truchet's tiles, counts those as the spacing ([`Context::scale`]).
+const ROOM: f64 = 16.0;
+
+/// How many pixels of `tone` have ink of at least `level`, and their area in mm2.
+fn over(tone: &ToneMap, level: f32) -> (usize, f64) {
+    let n = tone.ink.iter().filter(|&&i| i >= level).count();
+    (n, n as f64 * tone.mm_per_px * tone.mm_per_px)
+}
+
+/// Whether the pixels of `tone` with ink of at least `level` can take a denser setting: a spacing
+/// needs `ROOM` spacings squared of them, `v` being the spacing it has now, and a count of points
+/// `v` needs a pixel to snap to well before there is one per pixel (relaxation drops a point whose
+/// cell holds none), so a quarter.
+fn room(tone: &ToneMap, level: f32, direct: bool, v: f64) -> bool {
+    let (n, area) = over(tone, level);
+    if direct {
+        v <= n as f64 / 4.0
+    } else {
+        area >= ROOM * v * v
+    }
+}
+
+/// Whether the order stage keeps every path: it drops those under its minimum length, dots among
+/// them, and a denser drawing makes shorter marks (smaller cells, shorter pieces of a line), so
+/// with a minimum no setting is sure to add marks.
+fn keeps_all(cx: &Context) -> bool {
+    cx.number("order", "min_length_mm").unwrap_or(0.0) == 0.0
+}
+
+/// The patch for a nearly empty drawing, or `None` where no setting is sure to add marks.
+fn more_ink(cx: &Context, d: &Drawing, paths: usize) -> Option<Value> {
+    // A blank tone map has nothing for a setting to draw, and without one nothing says what can.
+    let tone = d.tone.as_deref()?;
+    let top = tone.ink.iter().copied().fold(0.0, f32::max);
+    if top <= 0.0 || !keeps_all(cx) {
+        return None;
+    }
+    if paths > 0 {
+        let density = Density::of(cx.style)?;
+        let patch = cx.denser(&density)?;
+        // The count wanted, or the scale of the pattern now.
+        let v = if density.direct {
+            patch["settings"][&density.stage][&density.key].as_f64()?
+        } else {
+            cx.number(&density.stage, &density.key)?
+                .max(cx.scale(&density.stage))
+        };
+        // Marks lie where the ink reaches the style's threshold, if it has one.
+        let level = cx.find(&["threshold"]).map_or(0.0, |t| t.2 as f32);
+        let level = level.max(f32::MIN_POSITIVE);
+        return room(tone, level, density.direct, v).then_some(patch);
+    }
+    // Some pens read other tone maps than the one the drawing keeps: one per colour, or the map
+    // corrected for the style's response.
+    let own =
+        cx.settings["split"]["mode"] != "by_colour" && cx.settings["tone"]["response"] != "auto";
+    let (stage, key, t) = cx.find(&["threshold"]).filter(|_| own)?;
+    // The new threshold, in 0.01 steps, lets through the darkest pixels, as many as it takes for
+    // the drawing to leave the finding: those the dots of the style's spacing (a pen width for a
+    // style with none) would lay twice [`NEARLY_EMPTY`] of the drawing area on, the least ink a
+    // mark lays for its spacing. But never fewer than [`ROOM`] needs, which is sure to take marks;
+    // with fewer than those, or a threshold of 0, which takes blank paper too, there is no patch.
+    let pens = d.layers.iter().map(|l| l.pen.width_mm);
+    let (thinnest, widest) = (
+        pens.clone().fold(f64::MAX, f64::min),
+        pens.fold(0.0, f64::max),
+    );
+    let spacing = cx.find(SPACING);
+    let s = spacing.map_or(widest, |f| f.2);
+    let big = spacing.map_or(widest, |f| f.2.max(cx.scale(f.0)));
+    let [_, _, aw, ah] = d.canvas.drawing_rect();
+    let dot = PI * thinnest * thinnest / 4.0 / (s * s);
+    let px = tone.mm_per_px * tone.mm_per_px;
+    let sure = (ROOM * big * big / px).ceil().max(1.0) as usize;
+    let clear = (2.0 * NEARLY_EMPTY * aw * ah / dot / px).ceil() as usize;
+    let mut ink: Vec<f32> = tone.ink.iter().copied().filter(|&i| i > 0.0).collect();
+    let k = clear.max(sure).min(ink.len());
+    let level = f64::from(
+        *ink.select_nth_unstable_by(k.checked_sub(1)?, |a, b| b.total_cmp(a))
+            .1,
+    );
+    let to = (level * 100.0).floor() / 100.0;
+    let patch = cx
+        .set(stage, key, to)
+        .filter(|_| k >= sure && 0.0 < to && to < t)?;
+    (patch["settings"][stage][key].as_f64()? <= level).then_some(patch)
 }
 
 const SPACING: &[&str] = &["spacing_mm", "min_spacing_mm"];
@@ -279,13 +393,6 @@ pub fn check(
 
     let empty = m.laid_share < NEARLY_EMPTY;
     if empty {
-        let threshold = cx.find(&["threshold"]);
-        let patch = threshold
-            .and_then(|(stage, key, t)| cx.set(stage, key, (t * 50.0).floor() / 100.0))
-            .or_else(|| {
-                (cx.settings["tone"]["levels"] == "manual")
-                    .then(|| json!({"settings": {"tone": {"levels": "auto"}}}))
-            });
         let what = if paths == 0 {
             "No marks at these settings.".to_string()
         } else {
@@ -296,6 +403,7 @@ pub fn check(
         };
         let message =
             format!("{what} Try a lower threshold, or the tone's black, white and gamma settings.");
+        let patch = more_ink(&cx, d, paths);
         add("empty", Severity::Warning, message, m.laid_share, patch);
     }
     if m.off_page > 0 {
@@ -528,38 +636,90 @@ mod tests {
         (0..n).map(|i| vec![[1.0 + i as f64 * 0.9, 50.0]]).collect()
     }
 
-    #[test]
-    fn an_empty_drawing_suggests_a_lower_threshold_then_auto_levels() {
-        let d = page(vec![]);
-        let all = lint(&d, "grid", |_| {});
-        let empty = find(&all, "empty").unwrap();
-        assert_eq!(empty.severity, Severity::Warning);
-        assert!(empty.message.starts_with("No marks at these settings."));
-        let patch = json!({"settings": {"points": {"threshold": 0.25}}});
-        assert_eq!(empty.patch, Some(patch));
-        let all = lint(&d, "grid", |s| s["points"]["threshold"] = json!(0.0));
-        let patch = json!({"settings": {"tone": {"levels": "auto"}}});
-        assert_eq!(find(&all, "empty").unwrap().patch, Some(patch));
-        let all = lint(&d, "grid", |s| {
-            s["points"]["threshold"] = json!(0.0);
-            s["tone"]["levels"] = json!("auto");
-        });
-        assert_eq!(find(&all, "empty").unwrap().patch, None);
-        // The ink threshold stops at its schema's least value.
-        let all = lint(&d, "ink", |s| s["ink"]["threshold"] = json!(0.06));
-        let patch = json!({"settings": {"ink": {"threshold": 0.05}}});
-        assert_eq!(find(&all, "empty").unwrap().patch, Some(patch));
+    /// A tone map `side` pixels square over the 100 mm page, every pixel with ink `ink`.
+    fn flat_tone(ink: f32, side: u32) -> Arc<ToneMap> {
+        Arc::new(ToneMap {
+            width: side,
+            height: side,
+            ink: vec![ink; (side * side) as usize],
+            mm_per_px: 100.0 / f64::from(side),
+            origin_mm: [0.0; 2],
+        })
+    }
+
+    /// The `empty` finding's patch for `d` under `style` at its defaults changed by `change`.
+    fn empty_patch(d: &Drawing, style: &str, change: impl Fn(&mut Value)) -> Option<Value> {
+        find(&lint(d, style, change), "empty")
+            .unwrap()
+            .patch
+            .clone()
     }
 
     #[test]
-    fn a_speck_of_ink_is_nearly_empty() {
-        let speck = drawing_with(vec![vec![[50.0, 50.0], [51.0, 50.0]]]);
-        let all = lint(&speck, "hatch", |_| {});
-        assert!(find(&all, "empty")
-            .unwrap()
-            .message
-            .starts_with("The drawing inks under 0.1 % of"));
-        assert!(!finds(&page(lines(1.0)), "hatch", "empty"));
+    fn an_empty_drawing_lowers_the_threshold_below_its_darkest_ink() {
+        let mut d = page(vec![]);
+        let all = lint(&d, "grid", |_| {});
+        let empty = find(&all, "empty").unwrap();
+        assert_eq!(empty.severity, Severity::Warning);
+        assert_eq!((empty.value, &empty.patch), (0.0, &None));
+        assert!(empty.message.starts_with("No marks at these settings."));
+        // A blank tone map has nothing to draw, whatever the settings.
+        d.tone = Some(flat_tone(0.0, 10));
+        assert_eq!(empty_patch(&d, "grid", |_| {}), None);
+        d.tone = Some(flat_tone(0.4, 10));
+        let patch = json!({"settings": {"points": {"threshold": 0.4}}});
+        assert_eq!(empty_patch(&d, "grid", |_| {}), Some(patch));
+        // The darkest ink is already past the threshold, so the threshold is not the cause.
+        let low = |s: &mut Value| s["points"]["threshold"] = json!(0.3);
+        assert_eq!(empty_patch(&d, "grid", low), None);
+        // A style with no threshold has no patch, nor does one that reads other tone maps.
+        assert_eq!(empty_patch(&d, "waves", |_| {}), None);
+        let colours = |s: &mut Value| s["split"]["mode"] = json!("by_colour");
+        assert_eq!(empty_patch(&d, "grid", colours), None);
+        let corrected = |s: &mut Value| s["tone"]["response"] = json!("auto");
+        assert_eq!(empty_patch(&d, "grid", corrected), None);
+        // A minimum length drops dots, so the marks may be there and dropped.
+        let long = |s: &mut Value| s["order"]["min_length_mm"] = json!(1.0);
+        assert_eq!(empty_patch(&d, "grid", long), None);
+        // The ink threshold stops at its schema's least value, and not above the darkest ink.
+        d.tone = Some(flat_tone(0.06, 10));
+        let patch = json!({"settings": {"ink": {"threshold": 0.05}}});
+        assert_eq!(empty_patch(&d, "ink", |_| {}), Some(patch));
+        d.tone = Some(flat_tone(0.04, 10));
+        assert_eq!(empty_patch(&d, "ink", |_| {}), None);
+    }
+
+    #[test]
+    fn a_drawing_with_marks_gets_its_density_one_step_up() {
+        let mut d = page(vec![vec![[50.0, 50.0], [51.0, 50.0]]]);
+        d.tone = Some(flat_tone(1.0, 100));
+        // A spacing is halved, to its least, and a count is doubled, up to the pixels' room.
+        let patch = json!({"settings": {"hatch": {"spacing_mm": 0.5}}});
+        assert_eq!(empty_patch(&d, "hatch", |_| {}), Some(patch));
+        let least = |s: &mut Value| s["hatch"]["spacing_mm"] = json!(0.2);
+        assert_eq!(empty_patch(&d, "hatch", least), None);
+        let patch = json!({"settings": {"voronoi": {"count": 2000}}});
+        let few = |s: &mut Value| s["voronoi"]["count"] = json!(1000);
+        assert_eq!(empty_patch(&d, "stipple", few), Some(patch));
+        // 10000 pixels hold 2500 points, which 5000 doubled passes by far.
+        assert_eq!(empty_patch(&d, "stipple", |_| {}), None);
+        // A denser drawing makes shorter marks, which a minimum length drops.
+        let long = |s: &mut Value| s["order"]["min_length_mm"] = json!(1.0);
+        assert_eq!(empty_patch(&d, "hatch", long), None);
+        assert_eq!(
+            empty_patch(&d, "stipple", |s| {
+                few(s);
+                long(s)
+            }),
+            None
+        );
+        // Marks lie only where the ink reaches the threshold, and a closer spacing needs room
+        // there: with ink 0.2 a threshold of 0.1 leaves the whole page, one of 0.3 nothing.
+        d.tone = Some(flat_tone(0.2, 100));
+        let low = |s: &mut Value| s["hatch"]["threshold"] = json!(0.1);
+        assert!(empty_patch(&d, "hatch", low).is_some());
+        let high = |s: &mut Value| s["hatch"]["threshold"] = json!(0.3);
+        assert_eq!(empty_patch(&d, "hatch", high), None);
     }
 
     #[test]
@@ -582,6 +742,17 @@ mod tests {
         let line = drawing_100(vec![vec![[0.0, 0.0], [10.0, 0.0]]], 0.5, "#000000");
         let want = (10.0 * 0.5 + PI * 0.25 * 0.25) / 10000.0;
         assert!((measure(&line).laid_share - want).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_speck_of_ink_is_nearly_empty() {
+        let speck = drawing_with(vec![vec![[50.0, 50.0], [51.0, 50.0]]]);
+        let all = lint(&speck, "hatch", |_| {});
+        assert!(find(&all, "empty")
+            .unwrap()
+            .message
+            .starts_with("The drawing inks under 0.1 % of"));
+        assert!(!finds(&page(lines(1.0)), "hatch", "empty"));
     }
 
     #[test]
