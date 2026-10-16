@@ -49,11 +49,9 @@ const SPEED_CAPS: &[(&str, &str, f64)] = &[
     ("sketch", "candidates", 64.0),
 ];
 
-/// The seed of the pull request run. Re-picked on 2026-10-16: a new tone setting shifts every
-/// case the seed draws, and the old seed's new cases broke the density law on settings the new
-/// one does not touch, a nearest-neighbour `line` and `sketch`; seed 3 breaks it on `circles`
-/// too. See docs/decisions/2026-10-16-paper-flattening.md.
-const SEED: u64 = 1;
+/// The seed of the pull request run. Every law must hold for any seed, since a new setting shifts
+/// every case a seed draws; see docs/decisions/2026-10-16-property-law-fixes.md.
+const SEED: u64 = 0x706c_6f74_6c69_6e65;
 
 /// How many times more cases to run than a pull request does, from `PLOTLINE_LAWS_SCALE`.
 fn scale() -> u32 {

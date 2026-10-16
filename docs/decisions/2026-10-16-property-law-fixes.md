@@ -21,3 +21,5 @@
 - **`ink`** has no density setting.
 
 No style needed a declared "approximately monotone" mark: each rule follows from what the setting controls, and no break pointed to a defect in a style.
+
+The pull request seed goes back to `0x706c_6f74_6c69_6e65`, after the paper flattening work moved it to 1 (docs/decisions/2026-10-16-paper-flattening.md). The cases recorded there all fall under the rules above. A nearest-neighbour `line` and `circles` are judged on their points. `sketch` is judged on its length within one average stroke.
