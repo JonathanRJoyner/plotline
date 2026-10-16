@@ -201,6 +201,18 @@ def analyse(
         click.echo(json.dumps(session.analysis(), indent=2))
 
 
+def read_machine(path: str) -> dict[str, Any]:
+    """Read the machine in the JSON file at ``path``, which holds either a machine or a preset
+    (``"format": "plotline-preset"``) whose ``machine`` is used. A preset with no machine raises
+    ``click.BadParameter``; the engine checks the machine when the session is given it."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and data.get("format") == "plotline-preset":
+        data = data.get("machine")
+        if data is None:
+            raise click.BadParameter(f"{path} is a preset with no machine", param_hint="--machine")
+    return data
+
+
 @main.command()
 @click.argument("style")
 @click.argument("image", type=click.Path())
@@ -235,6 +247,22 @@ def analyse(
     type=click.Path(),
     help="Write the style, page, pens and settings used to a preset file.",
 )
+@click.option(
+    "--machine",
+    type=click.Path(),
+    help=(
+        "A JSON file with a machine, or a preset that has one, which sets the plot speeds and "
+        "makes the page the machine's drawable area. --width and --height still override that."
+    ),
+)
+@click.option(
+    "--gcode",
+    type=click.Path(),
+    metavar="DIR",
+    help=(
+        "Also write one G-code file per pen into DIR. Needs a machine, from --machine or --preset."
+    ),
+)
 @fit_options
 @click.option("--quiet", is_flag=True, help="Do not print progress.")
 @click.option(
@@ -256,6 +284,8 @@ def run(
     sets: list[tuple[str, str, bool | int | float | str]],
     preset: str | None,
     save_preset: str | None,
+    machine: str | None,
+    gcode: str | None,
     fit_minutes: float | None,
     fit_paths: float | None,
     fit_metres: float | None,
@@ -278,11 +308,21 @@ def run(
             session.load_preset(preset)
         # The preset's changed settings carry into STYLE where it has the same stages.
         session.set_style(style)
+        if machine is not None:
+            loaded = read_machine(machine)
+            session.set_machine(loaded)
+            area = loaded["area"]
+            page = replace(session.canvas, width_mm=area["width"], height_mm=area["height"])
+            session.set_canvas(page)
         set_page(session, width, height, margin, fit)
         if pens:
             session.set_pens(pens)
         for stage, key, value in sets:
             session.update(stage, **{key: value})
+        if gcode is not None and session.machine is None:
+            raise click.UsageError(
+                "--gcode needs a machine: give --machine or a --preset that has one"
+            )
         if fits:
             [(metric, target)] = fits
             handle = session.fit(metric, target)
@@ -306,6 +346,9 @@ def run(
             Path(preview).write_bytes(session.preview_png())
         if save_preset is not None:
             session.save_preset(save_preset)
+        if gcode is not None:
+            files = session.export_gcode(gcode)
+            click.echo(f"gcode: {len(files)} {'file' if len(files) == 1 else 'files'} in {gcode}")
     stats = session.stats()
     click.echo(
         f"paths: {stats.path_count}  pen down: {stats.pen_down_mm:.1f} mm  "
