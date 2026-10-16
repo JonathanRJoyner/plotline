@@ -37,10 +37,11 @@ from plotline.types import Cancelled, Canvas, Frame, Pen, RunState
 INSTRUCTIONS = (
     "plotline turns an image into line art for a pen plotter. Work in this order: load_image, "
     "then set_page and set_pens if the defaults do not fit, then list_styles and describe_style "
-    "to choose a style and see its settings. Call analyse_image to see the image's statistics and "
-    "suggested changes; apply a suggestion with run(style=..., settings=...) or set_page. run "
-    "draws the image and returns its stats, the tone match, the plot lint's findings and a "
-    "preview at true pen width; apply a finding's patch the same way as a suggestion's. Look at "
+    "to choose a style and see its settings and looks. Call analyse_image to see the image's "
+    "statistics and suggested changes; apply a suggestion with run(style=..., settings=...) or "
+    "set_page. run draws the image and returns its stats, the tone match, the plot lint's "
+    "findings and a preview at true pen width; apply a finding's patch the same way as a "
+    "suggestion's. Look at "
     "the preview, change settings with run(settings=...), and repeat; only the stages after a "
     "changed setting run again. To meet a budget of plot time, paths, pen-down metres or dots, "
     "call fit, which sets the style's density setting. To make the drawing's tones follow the "
@@ -260,16 +261,22 @@ def build_server(session: Session | None = None) -> MCPServer:
             return {"machine": session.machine, "page": asdict(session.canvas)}
 
     def change(
-        style: str | None, settings: dict[str, dict[str, Any]] | None, reset: bool = False
+        style: str | None,
+        settings: dict[str, dict[str, Any]] | None,
+        reset: bool = False,
+        look: str | None = None,
     ) -> None:
-        """Switch to ``style``, reset the settings when ``reset`` is set, and apply ``settings``;
-        when a change is refused, put the style and settings back and raise."""
+        """Switch to ``style``, reset the settings when ``reset`` is set, start from ``look``, and
+        apply ``settings``; when a change is refused, put the style and settings back and
+        raise."""
         old_style, old_settings = session.style.name, session.settings
         try:
             if style is not None and style != old_style:
                 session.set_style(style)
             if reset:
                 session.reset_settings()
+            if look is not None:
+                session.apply_look(look)
             for stage, values in (settings or {}).items():
                 session.update(stage, **values)
         except Exception:
@@ -315,6 +322,7 @@ def build_server(session: Session | None = None) -> MCPServer:
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
         reset: bool = False,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
         px wide. The JSON's tone key is {error, ssim, floor, reach}: how the drawing's tones,
@@ -325,11 +333,13 @@ def build_server(session: Session | None = None) -> MCPServer:
         applies like an analyse_image suggestion's. A style that
         differs from the current one replaces it; a stage the two styles share keeps the values
         changed from the old style's defaults, and the rest take the new style's defaults. reset
-        puts every setting back to the style's defaults first. settings is {stage: {setting:
-        value}} and changes only the values given; only the stages after a changed setting run
-        again. When a change is refused, nothing changes and nothing runs."""
+        puts every setting back to the style's defaults first. look starts from one of the style's
+        looks, such as faithful, quick or fine, after reset and before settings; describe_style
+        lists them. settings is {stage: {setting: value}} and changes only the values given; only
+        the stages after a changed setting run again. When a change is refused, nothing changes
+        and nothing runs."""
         with _errors():
-            change(style, settings, reset)
+            change(style, settings, reset, look)
             await follow(ctx, session.run)
             return shown()
 
@@ -353,16 +363,17 @@ def build_server(session: Session | None = None) -> MCPServer:
         target: float,
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Find the value of the style's density setting that brings a metric of the drawing near
         target: minutes of estimated plot time, paths, metres of pen-down length, or dots for a
-        style that places points. style and settings apply first, as in run. The style reruns
+        style that places points. style, look and settings apply first, as in run. The style reruns
         with the setting changed, up to eight times, and keeps the run nearest the target; the
         setting keeps its value. Returns the stage, key, chosen value and the value and metric of
         every trial as JSON, then the stats and a preview as run does. The time estimate leaves
         out acceleration, so a time target runs optimistic on styles of short strokes or dots."""
         with _errors():
-            change(style, settings)
+            change(style, settings, look=look)
             handle = await follow(ctx, lambda: session.fit(metric, target))
             return [json.dumps(handle.fit), *shown()]
 
@@ -373,11 +384,13 @@ def build_server(session: Session | None = None) -> MCPServer:
         target: float | None = None,
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Search the style's density setting for the value whose drawing's tones follow the
         image most closely, by the tone match's error, in eight runs: the current value, then a
         golden-section search from a quarter to four times it. Given metric and target, as for
-        fit, a trial over the target does not count. style and settings apply first, as in run.
+        fit, a trial over the target does not count. style, look and settings apply first, as in
+        run.
         Nothing else changes: returns {stage, key, value, error, current, current_error, budget,
         trials, reason, patch} as JSON, or null when no trial stayed within the target, then the
         stats and a preview of the current settings as run does. Apply the patch with
@@ -386,7 +399,7 @@ def build_server(session: Session | None = None) -> MCPServer:
         with _errors():
             if (metric is None) != (target is None):
                 raise ValueError("give both a metric and a target, or neither")
-            change(style, settings)
+            change(style, settings, look=look)
             handle = await follow(ctx, lambda: session.optimize(metric, target))
             return [json.dumps(handle.optimum), *shown()]
 
@@ -420,13 +433,15 @@ def build_server(session: Session | None = None) -> MCPServer:
 
     @server.tool()
     async def get_session() -> dict[str, Any]:
-        """Show the style, its settings, the page in mm, the pens, the image size, the state of the
-        latest run and the stats of the result, where there is one."""
+        """Show the style, its settings, the look they are at (null for none), the page in mm, the
+        pens, the image size, the state of the latest run and the stats of the result, where there
+        is one."""
         with _errors():
             stats = asdict(session.stats()) if session.result is not None else None
             return {
                 "style": session.style.name,
                 "settings": session.settings,
+                "look": session.look,
                 "page": asdict(session.canvas),
                 "pens": [asdict(pen) for pen in session.pens],
                 "machine": session.machine,

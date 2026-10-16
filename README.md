@@ -56,7 +56,8 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Plotter-ready output.** An SVG in millimetres holds one layer per pen that draws, each labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI, the command line and the MCP server write one G-code file per pen.
 - **Several pens.** Pen use shares a drawing between your pens: light to dark in list order, or each pen by its colour, so cyan, magenta, yellow and black pens can draw a colour image. By default the first pen draws alone.
 - **Real pens.** A bank of common fineliners, technical pens, gel pens, ballpoints and markers gives each pen its maker's line width, and a list of common inks gives it a colour.
-- **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a look and share it. An exported SVG or JSON drawing carries the preset of the run that made it, and loads as a preset too.
+- **Looks.** Most styles offer a few starting points chosen by measuring test images: Balanced is the defaults, Faithful follows the image's tones most closely, Quick plots in about half an hour and Fine draws the densest marks that still plot cleanly. A look changes only the few settings that set it.
+- **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a setup and share it. An exported SVG or JSON drawing carries the preset of the run that made it, and loads as a preset too.
 - **One engine.** The engine is written in Rust and compiled twice: to a native extension for the Python package, and to WebAssembly for the browser. The Python package and the command line are thin layers over it.
 
 | Style | What it draws |
@@ -90,7 +91,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 Open **[jonathanrjoyner.github.io/plotline](https://jonathanrjoyner.github.io/plotline/)**. There is nothing to install.
 
 1. Drop or paste a PNG, JPEG or WebP image, or click Sample image.
-2. Pick a style, change its settings and click Run to watch it draw. Try all styles, under the style menu, draws every style small on your image so you can choose by eye, and Undo in the toolbar (Ctrl+Z) steps back through changes to the style, settings, page and pens.
+2. Pick a style and a look, change its settings and click Run to watch it draw. Try all styles, under the style menu, draws every style small on your image so you can choose by eye, and Undo in the toolbar (Ctrl+Z) steps back through changes to the style, settings, page and pens.
 3. Set up your pens in the Pens dialog, and choose how they share the drawing under Pen use. The page remembers your setup between visits.
 4. Click Export SVG in the toolbar, ready for a pen plotter's own software.
 
@@ -127,8 +128,9 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Also find the density whose drawing follows the image's tones best, and print the `--set` that applies it | `--optimize`, within a budget when given with a `--fit-…` option |
 | Correct the tone map for the style's own response | `--set tone.response=auto` |
 | List a style's settings | `plotline describe grid` |
-| Save the run's look as a preset | `--save-preset my-look.json` |
-| Start a later run from a preset, or from an exported SVG or JSON drawing | `--preset my-look.json` or `--preset drawing.svg` |
+| Start from one of the style's looks, which `plotline describe` lists | `--look faithful`, `quick` or `fine` |
+| Save the run's setup as a preset | `--save-preset my-setup.json` |
+| Start a later run from a preset, or from an exported SVG or JSON drawing | `--preset my-setup.json` or `--preset drawing.svg` |
 | See an image's statistics and suggested changes as JSON | `plotline analyse your-photo.jpg` |
 | Fail when the plot lint finds a warning or an error | `--strict` |
 | Draw for a machine: its drawable area becomes the page | `--machine my-printer.json`, a machine or a preset that has one |
@@ -142,7 +144,7 @@ A machine file holds the same object as a preset's `machine`: `name`, `area` (`x
 
 ## With an AI assistant
 
-`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles and read the tone match and the plot lint's findings in each result, `fit` one to a budget, ask `optimize` for the density that matches the image's tones best, draw a `testchart` for the pen, look at previews, also zoomed in on a part of the page, and export the result, as G-code too once `set_machine` has described the plotter.
+`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, starting from one of their looks if it likes, and read the tone match and the plot lint's findings in each result, `fit` one to a budget, ask `optimize` for the density that matches the image's tones best, draw a `testchart` for the pen, look at previews, also zoomed in on a part of the page, and export the result, as G-code too once `set_machine` has described the plotter.
 
 ## Roadmap
 

@@ -33,7 +33,7 @@ use crate::runner::{Run, RunState, Shared};
 use crate::settings::{merge, validate, SettingsError};
 use crate::stage::Artifact;
 use crate::stats::{self, Speeds, Stats};
-use crate::style::{Style, StyleError};
+use crate::style::{same, Look, Style, StyleError};
 use crate::testchart;
 use crate::tone_match::ToneMatch;
 use crate::types::{Canvas, Drawing, Fit, Image, Pen, TypeError};
@@ -77,6 +77,13 @@ pub enum SessionError {
         style: String,
         stage: String,
         stages: String,
+    },
+    /// The style has no look of this name; `looks` lists the ones it has.
+    #[error("style {style:?} has no look {look:?}; its looks are {looks}")]
+    UnknownLook {
+        style: String,
+        look: String,
+        looks: String,
     },
     /// The pens were set to an empty list.
     #[error("a session needs at least one pen")]
@@ -271,6 +278,40 @@ impl Session {
         }
         self.settings[stage] = merged;
         Ok(())
+    }
+
+    /// Set every key the look `name` of the style sets to the look's value, through
+    /// [`Session::update`]: a key set to its default stops counting as the user's change, and any
+    /// other counts as one. Nothing else changes, neither the image settings and Pen use nor a
+    /// setting no look of the style sets. Fails, changing nothing, for a name the style has no
+    /// look of; see [`Style::looks`].
+    pub fn apply_look(&mut self, name: &str) -> Result<(), SessionError> {
+        let looks = self.style.looks();
+        let Some(look) = looks.iter().find(|l| l.name == name) else {
+            let names: Vec<&str> = looks.iter().map(|l| l.name.as_str()).collect();
+            return Err(SessionError::UnknownLook {
+                style: self.style.name.clone(),
+                look: name.to_string(),
+                looks: names.join(", "),
+            });
+        };
+        for (stage, values) in look.settings.as_object().into_iter().flatten() {
+            self.update(stage, values)?;
+        }
+        Ok(())
+    }
+
+    /// The name of the first look of the style whose settings all equal the current ones, numbers
+    /// by value, or `None` when none does. It is worked out from the settings on each call, so it
+    /// follows an edit, an undo, a preset, a reset and a style switch with nothing stored.
+    pub fn look(&self) -> Option<String> {
+        let holds = |look: &Look| {
+            (look.settings.as_object().into_iter().flatten()).all(|(stage, values)| {
+                (values.as_object().into_iter().flatten())
+                    .all(|(key, v)| same(v, &self.settings[stage][key]))
+            })
+        };
+        self.style.looks().into_iter().find(holds).map(|l| l.name)
     }
 
     /// The speeds [`Session::stats`] times a plot at.
@@ -624,15 +665,6 @@ impl Session {
     }
 }
 
-/// Whether two setting values are equal, numbers by value: JavaScript writes `1.0` as `1`, which
-/// JSON reads as an integer.
-fn same(a: &Value, b: &Value) -> bool {
-    match (a.as_f64(), b.as_f64()) {
-        (Some(x), Some(y)) => x == y,
-        _ => a == b,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -734,6 +766,109 @@ mod tests {
         assert!(s.load_preset(&v).unwrap().is_empty());
         assert_eq!(s.settings()["tone"]["gamma"], 1.0);
         assert_eq!(s.settings()["split"]["mode"], "one_pen");
+    }
+    fn mark(stage: &str, key: &str) -> (String, String) {
+        (stage.to_string(), key.to_string())
+    }
+
+    #[test]
+    fn a_look_sets_its_keys_and_is_then_the_look() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("waves").unwrap();
+        assert_eq!(s.look().as_deref(), Some("balanced"));
+        s.apply_look("fine").unwrap();
+        assert_eq!(s.look().as_deref(), Some("fine"));
+        assert_eq!(s.settings()["waves"]["spacing_mm"], 1.0);
+        assert!(s.changed.contains(&mark("waves", "spacing_mm")));
+        s.apply_look("faithful").unwrap();
+        assert_eq!(s.look().as_deref(), Some("faithful"));
+        assert_eq!(s.settings()["waves"]["spacing_mm"], 2.8);
+        // Balanced is the defaults, so its keys stop counting as the user's changes.
+        s.apply_look("balanced").unwrap();
+        assert_eq!(s.look().as_deref(), Some("balanced"));
+        assert_eq!(s.settings(), &s.style().defaults());
+        assert!(s.changed.is_empty());
+    }
+    #[test]
+    fn a_reset_and_an_edit_move_the_look() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("waves").unwrap();
+        s.apply_look("fine").unwrap();
+        s.reset_settings();
+        assert_eq!(s.look().as_deref(), Some("balanced"));
+        s.apply_look("fine").unwrap();
+        // A key of the look set to another value is no look; set back, in either JSON number
+        // form, it is the look again.
+        s.update("waves", &json!({"spacing_mm": 1.5})).unwrap();
+        assert_eq!(s.look(), None);
+        s.update("waves", &json!({"spacing_mm": 1})).unwrap();
+        assert_eq!(s.look().as_deref(), Some("fine"));
+        // A setting no look of the style sets leaves the look alone.
+        s.update("tone", &json!({"gamma": 1.4})).unwrap();
+        s.update("waves", &json!({"amplitude": 0.5})).unwrap();
+        assert_eq!(s.look().as_deref(), Some("fine"));
+    }
+    #[test]
+    fn an_unknown_look_fails_and_changes_nothing() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("waves").unwrap();
+        s.apply_look("fine").unwrap();
+        let (settings, changed) = (s.settings().clone(), s.changed.clone());
+        let message = |e: SessionError| e.to_string();
+        assert_eq!(
+            message(s.apply_look("nope").unwrap_err()),
+            r#"style "waves" has no look "nope"; its looks are balanced, faithful, fine"#
+        );
+        // A look in the list that this style does not declare is unknown to it too.
+        assert!(matches!(
+            s.apply_look("quick"),
+            Err(SessionError::UnknownLook { .. })
+        ));
+        assert_eq!(s.settings(), &settings);
+        assert_eq!(s.changed, changed);
+        // A style with no looks but Balanced has that one.
+        s.set_style("ink").unwrap();
+        assert_eq!(
+            message(s.apply_look("fine").unwrap_err()),
+            r#"style "ink" has no look "fine"; its looks are balanced"#
+        );
+        assert_eq!(s.look().as_deref(), Some("balanced"));
+        s.apply_look("balanced").unwrap();
+    }
+    #[test]
+    fn a_look_leaves_pen_use_and_the_image_settings_alone() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("line").unwrap();
+        s.update("split", &json!({"mode": "light_to_dark"}))
+            .unwrap();
+        s.update("tone", &json!({"invert": true})).unwrap();
+        let before = s.settings().clone();
+        s.apply_look("faithful").unwrap();
+        assert_eq!(s.look().as_deref(), Some("faithful"));
+        assert_eq!(s.settings()["split"], before["split"]);
+        assert_eq!(s.settings()["tone"]["invert"], true);
+        assert_eq!(s.settings()["tone"]["response"], "auto");
+        assert_eq!(s.settings()["voronoi"]["count"], 20000);
+        assert_eq!(
+            s.settings()["voronoi"]["iterations"],
+            before["voronoi"]["iterations"]
+        );
+        s.apply_look("balanced").unwrap();
+        assert_eq!(s.settings()["split"], before["split"]);
+        assert_eq!(s.settings()["tone"]["invert"], true);
+        assert_eq!(s.settings()["voronoi"], before["voronoi"]);
+    }
+    #[test]
+    fn a_look_survives_a_switch_to_a_style_sharing_its_stages_and_back() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("stipple").unwrap();
+        s.apply_look("fine").unwrap();
+        s.set_style("line").unwrap();
+        // The point count is kept, so the points are reused; line's looks are not this one.
+        assert_eq!(s.settings()["voronoi"]["count"], 12000);
+        assert_eq!(s.look(), None);
+        s.set_style("stipple").unwrap();
+        assert_eq!(s.look().as_deref(), Some("fine"));
     }
     #[test]
     #[allow(clippy::len_zero)] // the brief's assertion, kept as written

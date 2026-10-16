@@ -124,6 +124,17 @@ impl Session {
         self.inner.update(stage, &patch).map_err(session_error)
     }
 
+    /// Set the settings the style's look `name` sets, as `update` does for each of its stages. An
+    /// unknown name raises `ValueError`, naming the style's looks, and changes nothing.
+    fn apply_look(&mut self, name: &str) -> PyResult<()> {
+        self.inner.apply_look(name).map_err(session_error)
+    }
+
+    /// The name of the style's look the settings are at, or `None` when they are at none.
+    fn look(&self) -> Option<String> {
+        self.inner.look()
+    }
+
     fn speeds<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         serde_to_py(py, &self.inner.speeds())
     }

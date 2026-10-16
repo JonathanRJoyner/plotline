@@ -12,10 +12,11 @@ import click
 import numpy as np
 import pytest
 from click.testing import CliRunner
+from looks import off_look, style_with_looks
 from machines import MACHINE
 from pngs import write_png
 
-from plotline import Pen, _core, inks
+from plotline import Pen, _core, get_style, inks, list_styles
 from plotline.cli.main import main, parse_pen, parse_set
 
 
@@ -39,6 +40,65 @@ def test_styles_and_describe():
     assert "resolution  integer  default 1000  min 64  max 4000" in out
     assert json.loads(run("describe", "grid", "--json").output)["stages"][0]["name"] == "tone"
     assert run("describe", "nope").exit_code != 0
+
+
+def test_describe_lists_the_looks():
+    name, looks = style_with_looks()
+    shown = run("describe", name).output.partition("\n\nLooks\n")[2].splitlines()
+    assert len(shown) == len(looks)
+    for line, look in zip(shown, looks, strict=True):
+        assert line.startswith(f"  {look['name']}  {look['label']}  {look['description']}")
+        pairs = [
+            f"{stage}.{key}={v}" for stage, s in look["settings"].items() for key, v in s.items()
+        ]
+        assert line.endswith("  " + " ".join(pairs))
+    # A style whose only look is balanced lists it with no settings.
+    bare = next(s.name for s in list_styles() if len(get_style(s.name).schema()["looks"]) == 1)
+    last = run("describe", bare).output.splitlines()[-1]
+    assert last.startswith("  balanced  Balanced  ") and "=" not in last
+    assert json.loads(run("describe", name, "--json").output)["looks"] == looks
+
+
+def test_look_sets_the_settings_and_set_adjusts_it(tmp_path, image):
+    name, looks = style_with_looks()
+    look = looks[-1]
+    stage, key, value = off_look(name, looks)
+    page = ["--width", "40", "--height", "30", "--margin", "2"]
+    base = ["run", name, image, "--out", str(tmp_path / "o.svg"), "--quiet", *page]
+    saved = tmp_path / "p.json"
+
+    r = run(*base, "--look", look["name"], "--save-preset", str(saved))
+    assert r.exit_code == 0, r.output
+    settings = json.loads(saved.read_text())["settings"]
+    for st, values in look["settings"].items():
+        for k, v in values.items():
+            assert settings[st][k] == v
+
+    # --set adjusts the look, wherever it is on the command line.
+    r = run(
+        *base,
+        "--set",
+        f"{stage}.{key}={value}",
+        "--look",
+        look["name"],
+        "--save-preset",
+        str(saved),
+    )
+    assert r.exit_code == 0, r.output
+    assert json.loads(saved.read_text())["settings"][stage][key] == value
+
+    # The fit options work on the settings the look made.
+    r = run(*base, "--look", look["name"], "--fit-minutes", "1")
+    assert r.exit_code == 0 and "fit: " in r.stdout, r.output
+
+
+def test_an_unknown_look_exits_2_and_names_the_looks(tmp_path, image):
+    name, looks = style_with_looks()
+    out = tmp_path / "o.svg"
+    r = run("run", name, image, "--out", str(out), "--look", "nope")
+    assert r.exit_code == 2, r.output
+    assert "Invalid value for '--look'" in r.stderr and 'has no look "nope"' in r.stderr
+    assert all(look["name"] in r.stderr for look in looks) and not out.exists()
 
 
 def test_run_writes_all_outputs(tmp_path, image):

@@ -10,7 +10,10 @@ export type Patch = { style?: string; settings?: Record<string, Record<string, u
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
 export type State = {
-  image: boolean; style: string; canvas: Canvas; pens: Pen[]; machine: Machine | null;
+  image: boolean; style: string;
+  /** The name of the style's look the settings match; null when they match none, which the page calls Custom. */
+  look: string | null;
+  canvas: Canvas; pens: Pen[]; machine: Machine | null;
   settings: Record<string, Record<string, unknown>>; speeds: Speeds;
   run: { id: number; state: string; error: string | null }; stats: Stats | null;
   /** The pens of the last drawing's layers; empty without a drawing. */
@@ -26,7 +29,7 @@ export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
 // The commands that change what a drawing is made from: each one redraws once it succeeds.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
 
@@ -54,6 +57,7 @@ export class Protocol {
       setCanvas: (canvas: Canvas) => s.setCanvas(JSON.stringify(canvas)),
       setPens: (pens: Pen[]) => s.setPens(JSON.stringify(pens)),
       setStyle: (name: string) => s.setStyle(name),
+      applyLook: (name: string) => s.applyLook(name),
       resetSettings: () => s.resetSettings(),
       update: (stage: string, values: Record<string, unknown>) => s.update(stage, JSON.stringify(values)),
       // The session calls, not `methods`, so the whole patch redraws once. A refusal partway leaves
@@ -173,7 +177,7 @@ export class Protocol {
     const lint = s.lint();
     const tone = s.toneMatch();
     return {
-      image: this.image, style, canvas, pens, machine, settings, speeds: JSON.parse(s.speeds()), layers,
+      image: this.image, style, look: s.look() ?? null, canvas, pens, machine, settings, speeds: JSON.parse(s.speeds()), layers,
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
       tone: tone ? JSON.parse(tone) : null,

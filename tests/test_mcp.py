@@ -8,11 +8,12 @@ from functools import partial
 
 import anyio
 import pytest
+from looks import off_look, style_with_looks
 from machines import MACHINE
 from mcp import Client, StdioServerParameters
 from pngs import write_png
 
-from plotline import RunState, Session, _core, inks
+from plotline import RunState, Session, _core, inks, list_styles
 from plotline.mcp_server import build_server
 
 pytestmark = pytest.mark.anyio
@@ -49,6 +50,8 @@ async def test_lists_and_describes_styles():
         assert "grid" in [s["name"] for s in styles]
         assert set(styles[0]) == {"name", "label", "description"}
         assert "stages" in data(await call(c, "describe_style", style="grid"))
+        looks = data(await call(c, "describe_style", style=style_with_looks()[0]))["looks"]
+        assert looks[0]["name"] == "balanced" and len(looks) > 1
         assert (await call(c, "describe_style", style="nope")).is_error
 
 
@@ -328,6 +331,76 @@ async def test_refused_setting_changes_nothing():
             assert f'style "{style}" has no stage "nope"' in text(r)
             after = data(await call(c, "get_session"))
             assert (after["style"], after["settings"]) == (before["style"], before["settings"])
+
+
+def small_page(c):
+    """A page that keeps a run short, whatever the look."""
+    return call(c, "set_page", width_mm=40, height_mm=30, margin_mm=2)
+
+
+async def test_run_starts_from_a_look_and_get_session_reports_it():
+    name, looks = style_with_looks()
+    look = looks[-1]
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        await small_page(c)
+        settings = {"tone": {"resolution": 64}}
+        r = await call(c, "run", style=name, look=look["name"], settings=settings)
+        assert not r.is_error, text(r)
+        after = data(await call(c, "get_session"))
+        assert after["look"] == look["name"]
+        for stage, values in look["settings"].items():
+            for key, value in values.items():
+                assert after["settings"][stage][key] == value
+        # settings apply after the look, so they adjust it, and the settings are then at no look.
+        stage, key, value = off_look(name, looks)
+        r = await call(c, "run", look=looks[0]["name"], settings={stage: {key: value}})
+        assert not r.is_error, text(r)
+        after = data(await call(c, "get_session"))
+        assert after["settings"][stage][key] == value and after["look"] is None
+        # reset comes before the look, and with no look puts the defaults back.
+        r = await call(c, "run", reset=True, settings=settings)
+        assert not r.is_error and data(await call(c, "get_session"))["look"] == "balanced"
+
+
+async def test_a_refused_look_changes_nothing_and_runs_nothing():
+    name, looks = style_with_looks()
+    other = next(s.name for s in list_styles() if s.name != name)
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        await small_page(c)
+        r = await call(
+            c, "run", style=name, look=looks[-1]["name"], settings={"tone": {"resolution": 64}}
+        )
+        assert not r.is_error, text(r)
+        before = data(await call(c, "get_session"))
+        # A switch to another style comes first, so it has to be put back too.
+        for tool, args in (
+            ("run", {}),
+            ("fit", {"metric": "minutes", "target": 1}),
+            ("optimize", {}),
+        ):
+            r = await call(c, tool, style=other, look="nope", **args)
+            assert r.is_error and 'has no look "nope"' in text(r)
+            assert data(await call(c, "get_session")) == before
+
+
+async def test_fit_and_optimize_start_from_a_look():
+    name, looks = style_with_looks()
+    look = looks[-1]
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        await small_page(c)
+        settings = {"tone": {"resolution": 64}}
+        r = await call(c, "optimize", style=name, look=look["name"], settings=settings)
+        assert not r.is_error, text(r)
+        # Optimize changes nothing more, so the look it started from still holds.
+        assert data(await call(c, "get_session"))["look"] == look["name"]
+        r = await call(c, "fit", metric="minutes", target=1, look=looks[0]["name"])
+        assert not r.is_error, text(r)
 
 
 async def test_a_new_style_keeps_changed_settings():
