@@ -428,6 +428,48 @@ test("HPGL exports one file with a pen for the layer, at the resolution in Setti
   await expect(page.getByText("plotter units per mm must be above 0 and at most 1000, not 2000")).toBeVisible();
 });
 
+test("a saved pen comes back from My pens after a reload, and exports as a file", async ({ page }) => {
+  await open(page);
+  const edit = () => page.getByRole("button", { name: "Edit pens" }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Pens", exact: true }) });
+  const mine = dialog.locator('[data-tour="library"]');
+  const name = dialog.getByLabel("Name");
+  const width = dialog.getByLabel("Line width");
+  await edit();
+  // Each change waits for the engine's reply, which the list shows, as one made on the stale list would undo the last.
+  const list = dialog.locator("ol.pens");
+  await name.fill("Fine red");
+  await name.blur();
+  await expect(list).toContainText("Fine red");
+  await width.fill("0.25");
+  await width.blur();
+  await expect(list).toContainText("0.25");
+  const red = dialog.getByRole("button", { name: "red", exact: true });
+  await red.click();
+  await expect(red).toHaveAttribute("aria-pressed", "true");
+  await mine.getByRole("button", { name: "Save this pen" }).click();
+  await expect(mine.getByRole("button", { name: /^Fine red/ })).toHaveCount(1);
+  await expect(mine.getByRole("button", { name: "Save this pen" })).toBeDisabled();
+  // A second pen takes the saved one's name and width from the list.
+  await dialog.getByRole("button", { name: "Add pen" }).click();
+  await expect(dialog.getByRole("heading", { name: "Pen 2" })).toBeVisible();
+  await expect(name).toHaveValue("Pen 2");
+  await mine.getByRole("button", { name: /^Fine red/ }).click();
+  await expect(name).toHaveValue("Fine red");
+  await expect(width).toHaveValue("0.25");
+  // Kept in the browser, so a reload keeps it.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await edit();
+  await expect(mine.getByRole("button", { name: /^Fine red/ })).toHaveCount(1);
+  const [file] = await Promise.all([page.waitForEvent("download"), mine.getByRole("button", { name: "Export" }).click()]);
+  expect(file.suggestedFilename()).toBe("plotline-pens.json");
+  const saved = JSON.parse(readFileSync(await file.path(), "utf8"));
+  expect(saved.format).toBe("plotline-pens");
+  expect(saved.pens).toHaveLength(1);
+  expect(saved.pens[0]).toMatchObject({ name: "Fine red", width_mm: 0.25 });
+});
+
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.
 const STEPS = [...readFileSync(new URL("../src/tour.tsx", import.meta.url), "utf8").matchAll(/\{ (?:target: "([^"]+)", )?title: "([^"]+)"/g)]
   .map(([, target, title]) => ({ target, title }));

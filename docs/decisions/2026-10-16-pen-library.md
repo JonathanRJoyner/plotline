@@ -1,0 +1,7 @@
+# Pen library
+
+**Decided:** 2026-10-16
+
+**Choice:** The GUI keeps a library of the user's own pens in the browser, under the storage key `plotline.pens`. It lives beside the remembered setup and is shown in the pens dialog as "My pens". Save this pen adds the chosen pen. Choosing a saved pen gives the chosen pen its name, line width and colour. Export writes `plotline-pens.json`, and Import merges such a file. The file is `{"format": "plotline-pens", "version": 1, "pens": [...]}`, with each pen in the same fields a preset uses. Pens that match in name, width and colour (colour compared without case) count as one, so saving, importing and merging never duplicate a pen. Nothing changes in the engine, the CLI or MCP. This settles the saved pen library proposed for after 0.1 in §12, question 8.
+
+**Reason:** People with plotters reuse the same few pens across drawings. The bank lists makers' pens, but not a pen the user has measured or given its own ink colour. A preset already carries a drawing's pens, but it also carries a whole setup. The library is a convenience of one browser, like the remembered setup, so the browser's storage is enough. A file lets it move to another browser or be shared. The CLI and MCP already take pens as JSON or flags, and a script keeps its own list, so a library in the engine would add state there that nothing reads. Merging, rather than replacing, on import keeps an import from losing saved pens. The fast-check properties beside the code check the format's round trip and that merging keeps every pen of both sides.
