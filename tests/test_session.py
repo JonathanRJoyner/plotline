@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
+from machines import MACHINE
 from pngs import write_png
 
 from plotline import (
@@ -341,3 +342,121 @@ def test_fit_meets_a_budget_and_applies_the_value():
         s.fit("hours", 10)
     with pytest.raises(RuntimeError, match="no image"):
         Session().fit("paths", 10)
+
+
+def drawn(*pens, page=(200, 174), **split):
+    """A session with ``MACHINE`` that has run a coarse grid on a page of size ``page``, which is
+    the machine's drawable area unless given."""
+    s = Session()
+    s.set_image(_core.synthetic_gradient(64, 48))
+    s.set_canvas(Canvas(*page, 10))
+    if pens:
+        s.set_pens(pens)
+    s.update("tone", resolution=64)
+    s.update("points", spacing_mm=5)
+    if split:
+        s.update("split", **split)
+    s.set_machine(MACHINE)
+    s.run_blocking()
+    return s
+
+
+def test_a_machine_is_set_read_and_cleared_and_sets_the_speeds():
+    s = Session()
+    assert s.machine is None
+    s.set_machine(MACHINE)
+    assert s.machine == MACHINE
+    assert (s.speeds.draw_mm_s, s.speeds.travel_mm_s) == (60, 100)
+    assert s.speeds.pen_lift_s == pytest.approx(0.6)
+    # No machine has no speeds to put back, so clearing leaves them as they are.
+    s.speeds.draw_mm_s = 30.0
+    s.set_machine(None)
+    assert s.machine is None and s.speeds.draw_mm_s == 30
+
+
+def test_a_refused_machine_raises_and_changes_nothing():
+    s = Session()
+    s.set_machine(MACHINE)
+    refused = (({"z_up_mm": 3}, "z_up_mm"), ({"draw_feed": 0}, "draw_feed"), ({"x": 1}, "x"))
+    for change, word in refused:
+        # The travel feed is changed too, so that a speed taken from the refused machine would show.
+        with pytest.raises(ValueError, match=word):
+            s.set_machine({**MACHINE, "travel_feed": 1, **change})
+    assert s.machine == MACHINE and s.speeds.travel_mm_s == 100
+    t = Session()
+    with pytest.raises(ValueError, match="z_up_mm"):
+        t.set_machine({**MACHINE, "z_up_mm": 3})
+    assert t.machine is None and t.speeds.draw_mm_s == 50
+
+
+def test_gcode_is_the_text_of_one_layer():
+    s = drawn()
+    text = s.gcode(0)
+    assert "G1 Z4 F1200" in text and "M104 S0\nM140 S0" in text
+    with pytest.raises(ValueError, match="no layer 1"):
+        s.gcode(1)
+
+
+def test_export_gcode_writes_a_file_for_each_pen_layer(tmp_path):
+    pens = (Pen("Light 0.3", 0.3, "#808080"), Pen("Stift é/2", 0.3, "#000000"))
+    s = drawn(*pens, mode="light_to_dark")
+    out = tmp_path / "a" / "b"
+    files = s.export_gcode(out)
+    # Each run of characters outside [A-Za-z0-9_.-] is one underscore.
+    assert [f.name for f in files] == ["plot_1_Light_0.3.gcode", "plot_2_Stift_2.gcode"]
+    assert sorted(out.iterdir()) == files
+    for i, file in enumerate(files):
+        raw = file.read_bytes()
+        assert raw.decode("utf-8") == s.gcode(i) and b"\r" not in raw
+
+
+def test_export_gcode_refuses_an_existing_file_before_writing_any(tmp_path):
+    s = drawn(Pen("A", 0.3, "#808080"), Pen("B", 0.3, "#000000"), mode="light_to_dark")
+    assert len(s.export_gcode(tmp_path / "new", overwrite=False)) == 2
+    first, second = s.export_gcode(tmp_path)
+    first.unlink()
+    second.write_text("keep")
+    with pytest.raises(FileExistsError, match=second.name):
+        s.export_gcode(tmp_path, overwrite=False)
+    assert not first.exists() and second.read_text() == "keep"
+    assert s.export_gcode(tmp_path) == [first, second] and second.read_text() != "keep"
+
+
+def test_gcode_needs_a_machine_a_result_and_a_page_that_fits(tmp_path):
+    out = tmp_path / "g"
+    s = Session()
+    with pytest.raises(RuntimeError, match="no machine"):
+        s.gcode(0)
+    with pytest.raises(RuntimeError, match="no result"):
+        s.export_gcode(out)
+    s.set_machine(MACHINE)
+    with pytest.raises(RuntimeError, match="no drawing"):
+        s.gcode(0)
+    s = drawn()
+    s.set_machine(None)
+    with pytest.raises(RuntimeError, match="no machine"):
+        s.gcode(0)
+    with pytest.raises(RuntimeError, match="no machine"):
+        s.export_gcode(out)
+    s = drawn(page=(210, 297))  # the default A4 page, which is larger than 200 by 174 mm
+    with pytest.raises(ValueError, match="larger than the machine's"):
+        s.gcode(0)
+    with pytest.raises(ValueError, match="larger than the machine's"):
+        s.export_gcode(out)
+    assert not out.exists()
+
+
+def test_a_preset_with_a_machine_brings_its_speeds(tmp_path):
+    s = drawn()
+    s.save_preset(tmp_path / "p.json")
+    t = Session()
+    t.set_image(_core.synthetic_gradient(64, 48))
+    t.load_preset(tmp_path / "p.json")
+    assert t.machine == MACHINE
+    assert t.speeds.draw_mm_s == 60 and t.speeds.pen_lift_s == pytest.approx(0.6)
+    # stats pushes the session's speeds into the engine, so they must be the machine's already.
+    t.run_blocking()
+    assert t.stats() == s.stats()
+    Session().save_preset(tmp_path / "none.json")
+    t.load_preset(tmp_path / "none.json")
+    assert t.machine is None and t.speeds.draw_mm_s == 60
