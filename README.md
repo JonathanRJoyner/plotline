@@ -72,7 +72,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `circles` | Circles packed without overlap, larger and closer where the image is darker. |
 | `contours` | Level lines of the image, like a topographic map. |
 | `flow` | Evenly spaced lines that follow the image's edges, closer together where it is darker. |
-| `hilbert` | A space-filling curve that folds tighter where the image is darker, broken where it leaves the image. |
+| `hilbert` | One space-filling curve over the whole page that folds tighter where the image is darker. |
 
 `stipple`, `line`, `dashes`, `tree`, `mesh` and `cells` share one placement of points, so switching between them reuses the points. A style switch keeps the settings you changed wherever the new style has the same stage, Pen use included, and gives the rest the new style's defaults; Reset to defaults puts them all back.
 
