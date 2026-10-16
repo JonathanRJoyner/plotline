@@ -335,6 +335,18 @@ fn value(stage: &str, key: &str, prop: &Value, defs: &Value) -> BoxedStrategy<Va
                 .prop_map(Value::from)
                 .boxed()
         }
+        // A list of number lists, such as the focus points: none to three of them, each number
+        // in the range the schema gives the items' items.
+        Some("array") => {
+            let item = &prop["items"];
+            let n = item["minItems"].as_u64().expect("fixed-length items") as usize;
+            let lo = item["items"]["minimum"].as_f64().expect("a range");
+            let hi = item["items"]["maximum"].as_f64().expect("a range");
+            let list = prop::collection::vec(lo..=hi, n);
+            prop::collection::vec(list, 0..=3)
+                .prop_map(Value::from)
+                .boxed()
+        }
         other => panic!("{stage}.{key} has type {other:?}; teach laws.rs to draw it"),
     }
 }
@@ -1089,6 +1101,48 @@ fn a_test_chart_is_made_on_the_page_or_refused_with_a_message() {
                 let mut t = new();
                 t.testchart().unwrap();
                 prop_assert_eq!(digest(&d), digest(&t.drawing().unwrap()));
+            }
+        }
+        Ok(())
+    });
+}
+
+#[test]
+fn focus_points_keep_the_ink_within_their_radius() {
+    // Every tone-map pixel within `focus_mm` of a focus point has the ink it has without focus.
+    let points = prop::collection::vec(prop::array::uniform2(0.0..=1.0f64), 1..=3);
+    check("focus", 12, (case(all_styles()), points), |(c, points)| {
+        let drawn = |focus: Value| -> Result<Option<Arc<Drawing>>, TestCaseError> {
+            let mut s = c.session();
+            s.update("tone", &json!({ "focus": focus })).unwrap();
+            run(&mut s)?;
+            Ok(s.drawing())
+        };
+        // A run that ends in a message has no tone map to compare.
+        let (Some(with), Some(without)) = (drawn(json!(points))?, drawn(json!([]))?) else {
+            return Ok(());
+        };
+        let (Some(a), Some(b)) = (&with.tone, &without.tone) else {
+            return Ok(());
+        };
+        prop_assert_eq!((a.width, a.height), (b.width, b.height));
+        let radius = c.settings.0["tone"]["focus_mm"].as_f64().unwrap();
+        let image = c.picture.image();
+        let at: Vec<[f64; 2]> = (points.iter())
+            .map(|&p| with.canvas.page_point(p, image.width, image.height))
+            .collect();
+        for y in 0..a.height as usize {
+            for x in 0..a.width as usize {
+                let [mx, my] = a.to_mm([x as f64 + 0.5, y as f64 + 0.5]);
+                let near = at.iter().any(|p| {
+                    let (dx, dy) = (mx - p[0], my - p[1]);
+                    (dx * dx + dy * dy).sqrt() <= radius - 1e-6
+                });
+                let i = y * a.width as usize + x;
+                prop_assert!(
+                    !near || a.ink[i] == b.ink[i],
+                    "({x}, {y}) changed within {radius} mm"
+                );
             }
         }
         Ok(())

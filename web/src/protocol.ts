@@ -27,6 +27,8 @@ export type State = {
   lint: Finding[];
   /** How the last drawing's tones follow its tone map; null without one or with nothing to compare. */
   tone: ToneMatch | null;
+  /** Where the tone stage's focus points are drawn, in page mm; empty without an image. */
+  focus: [number, number][];
 };
 export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
@@ -89,6 +91,11 @@ export class Protocol {
       // The settings stay as they are, and the page only offers what the search found.
       optimize: (metric?: string, target?: number) => this.start(() => s().optimize(metric ?? null, target ?? null), "optimize"),
       cancel: () => this.current?.cancel(),
+      // The share of the image, from its top-left corner, under a page point in mm; null off the image.
+      imagePoint: (x: number, y: number) => {
+        const p = s().imagePoint(x, y);
+        return p ? Array.from(p) : null;
+      },
       // The calibration chart for the page and the first pen. The engine cancels the run, and the
       // events a finished run posts follow the reply. A refusal changes nothing.
       testchart: () => {
@@ -241,11 +248,17 @@ export class Protocol {
     const analysis = s.analysis();
     const lint = s.lint();
     const tone = s.toneMatch();
+    const focus: [number, number][] = [];
+    for (const [x, y] of (settings.tone?.focus ?? []) as [number, number][]) {
+      const p = s.pagePoint(x, y);
+      if (p) focus.push([p[0], p[1]]);
+    }
     return {
       image: this.image, style, look: s.look() ?? null, canvas, paper, pens, machine, settings, speeds: JSON.parse(this.saved.speeds), layers,
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
       tone: tone ? JSON.parse(tone) : null,
+      focus,
       run: { id: this.counter, state: s.state(), error: s.error() ?? null },
       stats: stats ? JSON.parse(stats) : null,
     };

@@ -109,6 +109,20 @@ impl Session {
         Ok(self.inner.set_paper(color)?)
     }
 
+    /// The share `[x, y]` of the source image under the page point (`x`, `y`) in mm, as a pair of
+    /// numbers, or `undefined` without an image or where the page shows none of it.
+    #[wasm_bindgen(js_name = imagePoint)]
+    pub fn image_point(&self, x: f64, y: f64) -> Option<Vec<f64>> {
+        self.inner.image_point([x, y]).map(|p| p.to_vec())
+    }
+
+    /// The page point `[x, y]` in mm where the share (`x`, `y`) of the source image is drawn, as a
+    /// pair of numbers, or `undefined` without an image.
+    #[wasm_bindgen(js_name = pagePoint)]
+    pub fn page_point(&self, x: f64, y: f64) -> Option<Vec<f64>> {
+        self.inner.page_point([x, y]).map(|p| p.to_vec())
+    }
+
     /// Use a list of `{"name", "width_mm", "color"}` as the pens, in drawing order.
     #[wasm_bindgen(js_name = setPens)]
     pub fn set_pens(&mut self, json: &str) -> Result<(), JsError> {

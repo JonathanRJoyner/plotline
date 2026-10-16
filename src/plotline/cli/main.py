@@ -29,12 +29,18 @@ from plotline.registry import get_style, list_styles
 from plotline.session import Session
 from plotline.types import Pen
 
+Setting = bool | int | float | str | list[Any] | dict[str, Any]
 
-def coerce(text: str) -> bool | int | float | str:
-    """Read a ``--set`` value: ``true`` and ``false`` as booleans, then an integer, then a
-    float, and anything else as the text itself. The engine checks the value against the setting."""
+
+def coerce(text: str) -> Setting:
+    """Read a ``--set`` value: ``true`` and ``false`` as booleans, text that starts with ``[`` or
+    ``{`` as JSON (so ``[[0.5,0.3]]`` is a list of points; bad JSON raises ``ValueError``), then an
+    integer, then a float, and anything else as the text itself. The engine checks the value
+    against the setting."""
     if text in ("true", "false"):
         return text == "true"
+    if text.startswith(("[", "{")):
+        return json.loads(text)
     for kind in (int, float):
         try:
             return kind(text)
@@ -43,7 +49,7 @@ def coerce(text: str) -> bool | int | float | str:
     return text
 
 
-def parse_set(value: str) -> tuple[str, str, bool | int | float | str]:
+def parse_set(value: str) -> tuple[str, str, Setting]:
     """Split ``STAGE.KEY=VALUE`` into ``(stage, key, value)``, with the value read by ``coerce``.
 
     There must be exactly one ``.`` before the ``=`` and exactly one ``=``, and the stage and the
@@ -53,7 +59,10 @@ def parse_set(value: str) -> tuple[str, str, bool | int | float | str]:
     stage, _, key = target.partition(".")
     if not (equals and stage and key) or "." in key or "=" in text:
         raise click.BadParameter(f"{value!r} must look like STAGE.KEY=VALUE")
-    return stage, key, coerce(text)
+    try:
+        return stage, key, coerce(text)
+    except ValueError as error:
+        raise click.BadParameter(f"{value!r}: {error}") from error
 
 
 def parse_pen(value: str) -> Pen:
@@ -371,7 +380,7 @@ def run(
     fit: str | None,
     paper: str | None,
     pens: list[Pen],
-    sets: list[tuple[str, str, bool | int | float | str]],
+    sets: list[tuple[str, str, Setting]],
     preset: str | None,
     look: str | None,
     save_preset: str | None,

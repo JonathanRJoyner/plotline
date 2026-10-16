@@ -1,0 +1,3 @@
+Section: Images
+
+- **Focus points:** mark where the picture matters and every style keeps its detail there and abstracts it further away, after DeCarlo and Santella (2002). In the GUI, turn on Focus in the toolbar and click the drawn image to add a point, or click a point to remove it; each point shows as a dashed ring of the focus radius. An assistant or a script sets the same list as `tone.focus`, `[x, y]` shares of the image from its top-left corner, for example `plotline run --set "tone.focus=[[0.5,0.3]]"` or the MCP `run` tool's `settings`. `tone.focus_mm` is the radius that keeps all its detail and `tone.focus_blur_mm` the blur furthest from every point. With no points the drawing is unchanged.
