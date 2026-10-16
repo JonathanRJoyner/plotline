@@ -716,9 +716,6 @@ fn an_applied_suggestion_goes_away() {
 /// other finding's number falls.
 const RISING: &[&str] = &["empty", "dark"];
 
-/// Lint findings whose patch can miss, which the law skips until issue #32 is closed.
-const LINT_MISSES: &[&str] = &["empty", "dark"];
-
 #[test]
 fn an_applied_lint_fix_removes_or_shrinks_its_finding() {
     check("lint", 24, case(all_styles()), |c| {
@@ -728,9 +725,7 @@ fn an_applied_lint_fix_removes_or_shrinks_its_finding() {
             return Ok(());
         };
         for f in findings {
-            let Some(patch) = f.patch.as_ref().filter(|_| !LINT_MISSES.contains(&f.code)) else {
-                continue;
-            };
+            let Some(patch) = &f.patch else { continue };
             let mut t = c.session();
             apply(&mut t, patch)?;
             run(&mut t)?;
