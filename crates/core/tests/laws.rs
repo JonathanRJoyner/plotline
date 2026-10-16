@@ -814,6 +814,10 @@ fn metrics(s: &Session, run: &Run) -> [f64; 4] {
     ]
 }
 
+/// The least pen-down length, in metres, on which the density law judges the length. A
+/// 24 mm line across a white map came out 0.46 mm longer at a flow spacing of 8 mm than of 0.7 mm.
+const JUDGED_METRES: f64 = 0.25;
+
 #[test]
 fn a_density_setting_moves_its_metrics_one_way() {
     let strategy = (case(dense_styles()), 0.0..1.0f64, 0.0..1.0f64);
@@ -840,12 +844,19 @@ fn a_density_setting_moves_its_metrics_one_way() {
         let (Some(a), Some(b)) = (measure(lo)?, measure(hi)?) else {
             return Ok(());
         };
-        // The time, the pen-down length and the points of the denser drawing are at least those
-        // of the sparser one, give or take 1 percent: lines and grids land on whole steps, which
-        // wobble a little. The path count is left out, because it follows where lines break,
-        // such as where a pen's share of the image runs out, as much as the density.
+        // The pen-down length and the points of the denser drawing are at least those of the
+        // sparser one, give or take 1 percent: lines and grids land on whole steps, which wobble
+        // a little. The path count is left out, because it follows where lines break, such as
+        // where a pen's share of the image runs out, and the time, because its pen-up travel
+        // follows the path order, as much as the density. The length is judged only from
+        // JUDGED_METRES of line: a line ends within a tracing step of the edge, and flow's step
+        // is half its minimum spacing, so on a drawing of one or two lines where that step falls
+        // outweighs the density.
         let (sparse, dense) = if d.direct { (a, b) } else { (b, a) };
-        for (i, name) in [(0, "minutes"), (2, "metres"), (3, "dots")] {
+        for (i, name) in [(2, "metres"), (3, "dots")] {
+            if i == 2 && sparse[2] < JUDGED_METRES {
+                continue;
+            }
             prop_assert!(
                 dense[i] >= 0.99 * sparse[i],
                 "{}.{} {lo} gives {} {name}, {hi} gives {}",

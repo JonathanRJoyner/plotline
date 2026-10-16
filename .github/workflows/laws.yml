@@ -23,7 +23,8 @@ jobs:
       issues: write
     env:
       PLOTLINE_LAWS_SCALE: ${{ github.event_name == 'pull_request' && '1' || '25' }}
-      PLOTLINE_LAWS_SEED: ${{ github.run_id }}
+      # A pull request keeps the suite's fixed seed; the weekly run takes a new one each time.
+      PLOTLINE_LAWS_SEED: ${{ github.event_name != 'pull_request' && github.run_id || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
