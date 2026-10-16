@@ -10,3 +10,4 @@ Rules (the repo will become public, so treat every commit as public):
 - No personal paths, credentials or private notes.
 - Keep algorithm code in the core. The CLI, GUI and MCP only call the session layer.
 - A user-visible GUI feature adds or updates its step in the tour (`STEPS` in `web/src/tour.tsx`).
+- A feature with a contract adds its law to the property suite (`crates/core/tests/laws.rs`, or a fast-check test in `web/`).
