@@ -19,10 +19,12 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use plotline_core::cache::StageCache;
+use plotline_core::export::hpgl::MAX_UNITS_PER_MM;
 use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
 use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
+use plotline_core::optimize::{LONGEST, SLOWER, TRIALS};
 use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
@@ -964,6 +966,55 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
     });
 }
 
+/// The plot lint warnings and errors of the session's drawing, by code.
+fn warned(s: &Session) -> Vec<&'static str> {
+    (s.lint().unwrap_or_default().into_iter())
+        .filter(|f| matches!(f.severity, Severity::Warning | Severity::Error))
+        .map(|f| f.code)
+        .collect()
+}
+
+#[test]
+fn an_optimize_suggestion_keeps_the_limits() {
+    check("optimize", 8, case(dense_styles()), |c| {
+        let mut s = c.session();
+        run(&mut s)?;
+        if s.state() != RunState::Done {
+            return Ok(());
+        }
+        let minutes = s.stats().unwrap().estimated_seconds / 60.0;
+        let known = warned(&s);
+        let mut job = s.optimize(None).unwrap();
+        while job.next_frame().is_some() {}
+        if job.state() == RunState::Error {
+            prop_assert!(job.error().is_some_and(|e| !e.trim().is_empty()));
+            return Ok(());
+        }
+        prop_assert_eq!(job.state(), RunState::Done);
+        let Some(found) = job.result() else {
+            return Ok(());
+        };
+        prop_assert!(found.trials.len() <= TRIALS);
+        prop_assert_eq!(found.current_minutes, minutes);
+        // The suggestion, applied, plots in the time it reports, within the limit, and with no
+        // warning the current settings' drawing does not have.
+        s.update(&found.stage, &json!({ &found.key: found.value.clone() }))
+            .unwrap();
+        run(&mut s)?;
+        let after = s.stats().unwrap().estimated_seconds / 60.0;
+        prop_assert_eq!(after, found.minutes);
+        prop_assert!(
+            after <= (SLOWER * minutes).max(LONGEST),
+            "{after} min against {minutes}"
+        );
+        let new: Vec<_> = (warned(&s).into_iter())
+            .filter(|w| !known.contains(w))
+            .collect();
+        prop_assert!(new.is_empty(), "{} = {}: {new:?}", found.key, found.value);
+        Ok(())
+    });
+}
+
 #[test]
 fn a_test_chart_is_made_on_the_page_or_refused_with_a_message() {
     check("testchart", 48, (page(), pens()), |(pg, pens)| {
@@ -1203,6 +1254,55 @@ fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero(
         }
         // Nothing is collinear, so a tolerance of 0 drops nothing.
         prop_assert!(!no_collinear || out == line, "{out:?} lost vertices");
+        Ok(())
+    });
+}
+
+/// The `x,y` pairs of the argument list of an HPGL `PU` or `PD`; a lone `PD;` has none.
+fn hpgl_pairs(args: &str) -> Vec<[i64; 2]> {
+    let n: Vec<i64> = (args.split(',').filter(|v| !v.is_empty()))
+        .map(|v| v.parse().unwrap())
+        .collect();
+    n.chunks(2).map(|p| [p[0], p[1]]).collect()
+}
+
+#[test]
+fn hpgl_stays_on_the_page_and_keeps_every_vertex() {
+    let units = prop_oneof![Just(40.0), 0.01..=MAX_UNITS_PER_MM];
+    check("hpgl", 12, (case(all_styles()), units), |(c, units)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let h = s.hpgl(units).unwrap();
+        prop_assert!(h.is_ascii() && !h.contains('\r'), "not ASCII with LF ends");
+        prop_assert!(h.starts_with("IN;\n") && h.ends_with("PU;\nSP0;\n"));
+        // The page scaled by the resolution, and the vertices of PU and PD against the drawing's.
+        let (w, hh) = (
+            (c.page.width * units).round(),
+            (c.page.height * units).round(),
+        );
+        let (mut pens, mut vertices) = (0, 0);
+        for line in h.lines() {
+            prop_assert!(line.ends_with(';'), "{line:?} does not end with ';'");
+            let line = line.trim_end_matches(';');
+            if line.starts_with("SP") {
+                pens += (line != "SP0") as usize;
+            } else if let Some(args) = line.strip_prefix("PU").or(line.strip_prefix("PD")) {
+                for [x, y] in hpgl_pairs(args) {
+                    vertices += 1;
+                    prop_assert!(
+                        (0.0..=w).contains(&(x as f64)) && (0.0..=hh).contains(&(y as f64)),
+                        "({x}, {y}) is off the {w} by {hh} page"
+                    );
+                }
+            }
+        }
+        let layers = d.layers.iter().filter(|l| !l.paths.is_empty()).count();
+        prop_assert_eq!(pens, layers);
+        let expected: usize = d.layers.iter().map(|l| l.paths.coords().len()).sum();
+        prop_assert_eq!(vertices, expected);
         Ok(())
     });
 }
