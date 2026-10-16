@@ -218,9 +218,36 @@ test("the thumbnail grid picks a style", async ({ page }) => {
   await expect(dialog).toBeVisible();
   const choice = dialog.locator("ul.thumbs li").nth(i).getByRole("button");
   await expect(choice.locator("img")).toBeVisible({ timeout: 100_000 });
+  // Pointing at the cell shows its picture over twice as wide, and the click still reaches the cell.
+  await choice.hover();
+  const zoom = dialog.locator(".zoom img");
+  await expect(zoom).toBeVisible();
+  const [small, large] = [await choice.locator("img").boundingBox(), await zoom.boundingBox()];
+  expect(large!.width).toBeGreaterThan(2 * small!.width);
   await choice.click();
   await expect(dialog).toBeHidden();
   await expect(styleSelect(page)).toHaveValue(styles[i]);
+  await ran(page, id);
+});
+
+test("the thumbnail grid survives reopening and a run in progress", async ({ page }) => {
+  test.setTimeout(180_000);
+  const id = await sample(page);
+  const styles = await styleNames(page);
+  const tryAll = page.getByRole("button", { name: "Try all styles" });
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "All styles" }) });
+  // Opened while a run draws, then closed and reopened before its pictures finish.
+  await page.getByRole("button", { name: "Run" }).click();
+  for (let i = 0; i < 3; i++) {
+    await tryAll.click();
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  }
+  await tryAll.click();
+  await expect(dialog.locator("ul.thumbs img")).toHaveCount(styles.length, { timeout: 150_000 });
+  await expect(dialog.locator("ul.thumbs .paper > span")).toHaveCount(0); // no cell left drawing or failed
+  await page.keyboard.press("Escape");
   await ran(page, id);
 });
 

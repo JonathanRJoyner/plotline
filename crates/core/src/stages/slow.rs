@@ -90,6 +90,9 @@ pub struct SlowSettings {
     /// Step, counted from 1, at which the stage fails; 0 never fails.
     #[schemars(range(min = 0, max = 100000))]
     pub fail_after: u32,
+    /// Step, counted from 1, at which the stage panics, for hosts to test a crash; 0 never panics.
+    #[schemars(range(min = 0, max = 100000))]
+    pub panic_after: u32,
 }
 
 impl Default for SlowSettings {
@@ -98,12 +101,14 @@ impl Default for SlowSettings {
             frames: 100,
             delay_ms: 10,
             fail_after: 0,
+            panic_after: 0,
         }
     }
 }
 
 /// Stage `b`: `frames` frames, each after a pause of `delay_ms`, then one path from (1, 1) to
-/// (2, 2). With `fail_after = k > 0` step `k` fails instead.
+/// (2, 2). With `fail_after = k > 0` step `k` fails instead, and with `panic_after = k > 0` it
+/// panics.
 pub struct SlowPaths;
 
 impl Stage for SlowPaths {
@@ -152,6 +157,7 @@ impl StageRun for SlowPathsRun {
         if self.step == s.fail_after {
             return Err(StageError::Failed("slow failed".into()));
         }
+        assert!(self.step != s.panic_after, "slow panicked");
         if self.step > s.frames {
             let mut paths = Paths::new();
             paths.push(&[[1.0, 1.0], [2.0, 2.0]]);

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
-import init, { Session, syntheticGradient } from "../pkg/plotline_wasm.js";
+import init, { listStyles, Session, syntheticGradient } from "../pkg/plotline_wasm.js";
 import { macrotask } from "./driver";
 import type { Finding, Ink, Machine, Pen } from "./events";
 import { History, setupOf } from "./history";
@@ -363,3 +363,45 @@ test("undoing a random run of edits through restore returns the start, and undo 
   while (history.future.length) now = step(history.redo());
   expect(now).toBe(end);
 });
+
+test("a panic ends the run with its message, and the rebuilt session keeps the image and setup", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("setStyle", "_slow");
+  await ended(2);
+  ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+  await ended(3);
+  const end = posted.find((m) => m.type === "end" && m.id === 3);
+  expect(end).toMatchObject({ state: "error", error: expect.stringMatching(/^the engine failed: .*slow panicked/s) });
+  // A poisoned session would refuse every call from here on.
+  expect(ok("preset").state).toMatchObject({ image: true, style: "_slow" });
+  ok("setStyle", "grid");
+  await ended(4);
+  expect(posted.find((m) => m.type === "end" && m.id === 4)).toMatchObject({ state: "done" });
+});
+
+test("a trap in one style's picture shows in its cell, and the grid and drawing carry on", async () => {
+  const session = new Session();
+  const trial = session.trial.bind(session);
+  // A trap as a panic gives one; the session is then replaced, so only this one trial traps.
+  session.trial = (name: string) => {
+    const t = trial(name);
+    if (name === "ink") t.nextFrame = () => { throw new WebAssembly.RuntimeError("unreachable"); };
+    return t;
+  };
+  const posted: Array<Record<string, any>> = [];
+  const p = new Protocol(session, (msg) => posted.push(msg as Record<string, any>));
+  // A small page and tone map, which a style switch carries to every trial, keep the grid quick.
+  p.handle({ id: 1, method: "setCanvas", args: [{ width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" }] });
+  p.handle({ id: 2, method: "update", args: ["tone", { resolution: 64 }] });
+  p.handle({ id: 3, method: "setImage", args: image() });
+  while (!posted.some((m) => m.type === "end")) await macrotask();
+  const styles = JSON.parse(listStyles()) as unknown[];
+  p.handle({ id: 4, method: "thumbs", args: [120] });
+  for (let i = 0; i < 20000 && posted.filter((m) => m.type === "thumb").length < styles.length; i++) await macrotask();
+  const thumbs = posted.filter((m) => m.type === "thumb");
+  expect(thumbs.filter((m) => m.error !== null)).toEqual([expect.objectContaining({ style: "ink", error: "unreachable", png: null })]);
+  expect(thumbs.filter((m) => m.png !== null)).toHaveLength(styles.length - 1);
+  expect(posted.filter((m) => m.type === "run").map((m) => m.id)).toEqual([1, 2]); // the drawing, redrawn on the new session
+}, 30_000);
