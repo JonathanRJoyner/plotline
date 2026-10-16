@@ -140,6 +140,12 @@ impl Session {
         Ok(self.inner.gcode(layer)?)
     }
 
+    /// The last finished drawing as one HPGL program with `unitsPerMm` plotter units to the
+    /// millimetre, above 0 and at most 1000.
+    pub fn hpgl(&self, units_per_mm: f64) -> Result<String, JsError> {
+        Ok(self.inner.hpgl(units_per_mm)?)
+    }
+
     /// Switch to the built-in style `name`; a stage the old style also has keeps the values the
     /// user changed, and everything else takes the new style's defaults.
     #[wasm_bindgen(js_name = setStyle)]

@@ -54,7 +54,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Budgets.** Give a plot time, a path count, metres of pen-down line or a dot count, and plotline finds the value of the style's density setting, such as its line spacing, that meets it in up to eight runs.
 - **Tone match.** Every run scores how closely the drawing's tones follow the image, seen from a metre or two, as a tone error and an SSIM. Optimize searches the style's density setting for the value that brings them closest, within a budget if you give one, and suggests it; nothing changes until you apply it. The tone stage's Response can also be Auto, which measures how much paper the style covers at each grey on a small test wedge and corrects the image for it.
 - **Short pen travel.** Every run orders its paths to keep the pen's travel short, and the line styles lift the pen far less often than `grid`.
-- **Plotter-ready output.** An SVG in millimetres holds one layer per pen that draws, each labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI, the command line and the MCP server write one G-code file per pen.
+- **Plotter-ready output.** An SVG in millimetres holds one layer per pen that draws, each labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI, the command line and the MCP server write one G-code file per pen. For pen plotters that read HPGL, the same front ends write the whole drawing as one HPGL file, with a pen selected for each layer.
 - **Several pens.** Pen use shares a drawing between your pens: light to dark in list order, or each pen by its colour, so cyan, magenta, yellow and black pens can draw a colour image. By default the first pen draws alone.
 - **Real pens.** A bank of common fineliners, technical pens, gel pens, ballpoints and markers gives each pen its maker's line width, and a list of common inks gives it a colour.
 - **Looks.** Most styles offer a few starting points chosen by measuring test images: Balanced is the defaults, Faithful follows the image's tones most closely, Quick plots in about half an hour and Fine draws the densest marks that still plot cleanly. A look changes only the few settings that set it.
@@ -136,6 +136,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Fail when the plot lint finds a warning or an error | `--strict` |
 | Draw for a machine: its drawable area becomes the page | `--machine my-printer.json`, a machine or a preset that has one |
 | Write one G-code file per pen for the machine | `--gcode plots/` |
+| Write the drawing as one HPGL file, with a pen selected for each layer | `--hpgl drawing.hpgl`; `--hpgl-units 40` sets the plotter units per mm, 40 by default and at most 1000 |
 | Write a test chart for a pen, to plot and check spacings, dot sizes, passes and the plot time | `plotline testchart --out chart.svg --pen 'Fine:0.3:blue'`, with `--preview chart.png` for a picture |
 | Open the live preview locally | `plotline gui` |
 

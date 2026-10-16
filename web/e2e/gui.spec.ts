@@ -325,6 +325,18 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await ran(page, id);
 });
 
+test("the toolbar keeps to one row on a wide window and two on a phone, its buttons still named", async ({ page }) => {
+  await open(page);
+  const toolbar = page.locator(".toolbar");
+  for (const [width, rows] of [[1730, 1], [1280, 1], [960, 2], [375, 2]] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    const { height, overflow } = await toolbar.evaluate((e) => ({ height: e.getBoundingClientRect().height, overflow: e.scrollWidth > e.clientWidth }));
+    expect(Math.round((height - 8) / 36), `rows at ${width} px`).toBe(rows); // a row is a 30 px button and a 6 px gap
+    expect(overflow, `overflow at ${width} px`).toBe(false);
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+  }
+});
+
 test("the test chart draws without an image", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Test chart" }).click();
@@ -370,6 +382,47 @@ test("a machine lifted by G-code lines writes them, with long moves cut", async 
   expect(points.length).toBeGreaterThan(10);
   const longer = points.slice(1).filter(([x, y], i) => Math.hypot(x - points[i][0], y - points[i][1]) > 2.002);
   expect(longer).toEqual([]);
+});
+
+test("HPGL exports one file with a pen for the layer, at the resolution in Settings", async ({ page }) => {
+  await sample(page);
+  const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "HPGL", exact: true }).click()]);
+  expect(file.suggestedFilename()).toMatch(/^plotline-[\w-]+\.hpgl$/);
+  const text = readFileSync(await file.path(), "utf8");
+  expect(text.startsWith("IN;\n")).toBe(true);
+  expect(text).toContain("SP1;");
+  expect(text.endsWith("PU;\nSP0;\n")).toBe(true);
+  // A quarter of the units to the mm gives a smaller file, and a value that is no use snaps back.
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("button", { name: "HPGL", exact: true }).click();
+  const units = dialog.getByRole("spinbutton", { name: /^Plotter units per mm/ });
+  await expect(units).toHaveValue("40");
+  await units.fill("0");
+  await units.blur();
+  await expect(units).toHaveValue("40");
+  await units.fill("10");
+  await units.blur();
+  await expect(units).toHaveValue("10");
+  await dialog.getByRole("button", { name: "Close" }).click();
+  const [coarser] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "HPGL", exact: true }).click()]);
+  const small = readFileSync(await coarser.path(), "utf8");
+  expect(small.length).toBeLessThan(text.length);
+  // Kept in the browser, so a reload keeps it.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await dialog.getByRole("button", { name: "HPGL", exact: true }).click();
+  await expect(units).toHaveValue("10");
+  // The engine refuses more than 1000, and the page shows its message instead of a download. The
+  // reload left no image, so the sample is drawn again first.
+  await units.fill("2000");
+  await units.blur();
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Sample image" }).click();
+  await ran(page, 0);
+  await page.getByRole("button", { name: "HPGL", exact: true }).click();
+  await expect(page.getByText("plotter units per mm must be above 0 and at most 1000, not 2000")).toBeVisible();
 });
 
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.
