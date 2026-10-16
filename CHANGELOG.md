@@ -1,9 +1,11 @@
 # Changelog
 
+New entries go under Unreleased until the next release.
+
 ## Unreleased
 
+## 0.1.0 (2026-10-16)
 - **Embedded presets.** An exported SVG or JSON drawing carries the preset of the run that made it, in a `<metadata>` element in the SVG and a `preset` key in the JSON. Load preset in the GUI, `--preset` on the command line, `Session.load_preset` and the MCP `load_preset` tool read such a file as a preset, so a drawing brings its look back.
-
 ## 0.1.0
 
 The first release. One Rust engine runs everything: the Python package, the command line and the MCP server use it as a native extension, and the browser GUI runs it as WebAssembly.
