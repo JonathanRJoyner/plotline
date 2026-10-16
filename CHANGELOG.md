@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.1.0
+New entries go under Unreleased until the next release.
+
+## Unreleased
+
+### Images
+
+- **Pen palette:** for a colour image, the analysis picks two to four of the ten inks that draw its colours best under the colour model Pen use solves. Its colour suggestion, until now a note, sets those pens and Pen use to by colour with one Apply, in the GUI, `plotline analyse` and MCP `analyse_image`.
+
+## 0.1.0 (2026-10-16)
 
 The first release. One Rust engine runs everything: the Python package, the command line and the MCP server use it as a native extension, and the browser GUI runs it as WebAssembly.
 
@@ -31,7 +39,7 @@ A style switch keeps the settings you changed in the stages both styles share, P
 ### Images
 
 - PNG, JPEG and WebP input, colour or greyscale, with 16-bit greyscale for scans.
-- **Image analysis** measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. For a colour image it picks two to four of the ten inks that draw its colours best under the colour model Pen use solves, and its suggestion sets those pens and Pen use to by colour. Each suggestion is a patch that is applied only on request.
+- **Image analysis** measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. Each suggestion is a patch that is applied only on request.
 - **Auto levels:** the tone stage's `levels` setting can be `auto`, which sets black and white from the image's own percentiles.
 
 ### Output
