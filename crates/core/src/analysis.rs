@@ -15,7 +15,10 @@
 //!
 //! It keeps a saliency map, the spectral residual of X. Hou and L. Zhang, "Saliency detection: a
 //! spectral residual approach", *Proc. CVPR*, 2007, pp. 1-8, doi:10.1109/CVPR.2007.383267,
-//! written from the paper's description. [`suggest`] searches it for a crop to the subject after
+//! written from the paper's description, with the picture mirrored at its edges so that the
+//! transform sees no jump between opposite sides (G. Strang, "The discrete cosine transform",
+//! *SIAM Review* 41(1), 1999, pp. 135-147, doi:10.1137/S0036144598336745). [`suggest`]
+//! searches it for a crop to the subject after
 //! R. Suh, H. Ling, B. B. Bederson and D. W. Jacobs, "Automatic thumbnail cropping and its
 //! effectiveness", *Proc. UIST*, 2003, pp. 95-104, doi:10.1145/964696.964707; see [`framing`].
 //!
@@ -396,56 +399,74 @@ fn fit_palette(samples: &[Sample]) -> (Vec<&'static str>, f64) {
     (chosen.iter().map(|&i| INKS[i].0).collect(), error)
 }
 
-/// One pass of a discrete Fourier transform along each of `lines` lines of `len` samples of the
-/// complex grid `(re, im)`, where `at(line, j)` indexes sample `j` of a line: `X_k = sum_j x_j
-/// e^{-2 pi i j k / len}`, or with `inverse` the sum with `e^{+2 pi i j k / len}`. The twiddle
-/// factors are computed once per pass from [`math::cos`] and [`math::sin`], and `j k` is reduced
-/// mod `len` first, so each is the correctly rounded value of a small angle.
-fn dft_pass(
-    (re, im): (&[f64], &[f64]),
+/// One pass of the type 1 discrete cosine transform along each of `lines` lines of `len` samples
+/// (at least 2), where `at(line, j)` indexes sample `j` of a line: `X_k = x_0 + (-1)^k x_{len-1} +
+/// 2 sum_{j=1}^{len-2} x_j cos(pi j k / (len - 1))`. It is the discrete Fourier transform of the
+/// line mirrored about its first and last samples, a line of `2 (len - 1)` samples that is
+/// the same on both sides of each end, whose spectrum is real (G. Strang, "The discrete cosine
+/// transform", *SIAM Review* 41(1), 1999, pp. 135-147, doi:10.1137/S0036144598336745). The
+/// cosines come from [`math::cos`], one table per pass, and `j k` is reduced mod `2 (len - 1)`
+/// first, so each is the correctly rounded value of a small angle. There is no FFT library on
+/// purpose: the common one picks its kernels at run time, which could make the native and
+/// browser builds differ in the last bit.
+fn dct1_pass(
+    src: &[f64],
     lines: usize,
     len: usize,
     at: impl Fn(usize, usize) -> usize,
-    inverse: bool,
-) -> (Vec<f64>, Vec<f64>) {
-    let sign = if inverse { 1.0 } else { -1.0 };
-    let angle = |m: usize| 2.0 * std::f64::consts::PI * m as f64 / len as f64;
-    let cos: Vec<f64> = (0..len).map(|m| math::cos(angle(m))).collect();
-    let sin: Vec<f64> = (0..len).map(|m| sign * math::sin(angle(m))).collect();
-    let (mut out_re, mut out_im) = (vec![0.0; re.len()], vec![0.0; re.len()]);
+) -> Vec<f64> {
+    let period = 2 * (len - 1);
+    let cos: Vec<f64> = (0..period)
+        .map(|m| math::cos(2.0 * std::f64::consts::PI * m as f64 / period as f64))
+        .collect();
+    let mut out = vec![0.0; src.len()];
     for line in 0..lines {
+        let x: Vec<f64> = (0..len).map(|j| src[at(line, j)]).collect();
+        let last = x[len - 1];
         for k in 0..len {
-            let (mut sum_re, mut sum_im) = (0.0, 0.0);
-            for j in 0..len {
-                let (i, m) = (at(line, j), j * k % len);
-                sum_re += re[i] * cos[m] - im[i] * sin[m];
-                sum_im += re[i] * sin[m] + im[i] * cos[m];
+            let mut sum = x[0] + if k % 2 == 0 { last } else { -last };
+            let mut m = 0;
+            for &v in &x[1..len - 1] {
+                // `j k` mod `period`, a step of `k` at a time.
+                m += k;
+                if m >= period {
+                    m -= period;
+                }
+                sum += 2.0 * v * cos[m];
             }
-            out_re[at(line, k)] = sum_re;
-            out_im[at(line, k)] = sum_im;
+            out[at(line, k)] = sum;
         }
     }
-    (out_re, out_im)
+    out
 }
 
-/// The 2D discrete Fourier transform of the row-major `w x h` complex grid `(re, im)`, or with
-/// `inverse` its inverse without the `1 / (w h)` factor: every row, then every column, by the
-/// sums of [`dft_pass`]. There is no FFT library on purpose: the common one picks its kernels at
-/// run time, which could make the native and browser builds differ in the last bit.
-fn dft2(grid: (&[f64], &[f64]), w: usize, h: usize, inverse: bool) -> (Vec<f64>, Vec<f64>) {
-    let rows = dft_pass(grid, h, w, |y, x| y * w + x, inverse);
-    dft_pass((&rows.0, &rows.1), w, h, |x, y| y * w + x, inverse)
+/// The 2D type 1 discrete cosine transform of the row-major `w x h` grid, every row and then
+/// every column, by the sums of [`dct1_pass`]. Applied twice it gives back the grid times
+/// `2 (w - 1) 2 (h - 1)`.
+fn dct1(grid: &[f64], w: usize, h: usize) -> Vec<f64> {
+    let rows = dct1_pass(grid, h, w, |y, x| y * w + x);
+    dct1_pass(&rows, w, h, |x, y| y * w + x)
 }
 
 /// The spectral residual saliency map of a row-major `w x h` luminance grid, after Hou and Zhang
 /// (2007). The grid is first resized to `SALIENCY_PX` pixels on its longer side, as
-/// [`tone::resize`] does. With `F` that grid's Fourier transform, `L = ln |F|` (an amplitude under
-/// `AMPLITUDE_FLOOR` counts as it) and `P` its phase, the spectral residual is `R = L -
-/// mean3x3(L)` with the spectrum's edges wrapped, and the map is `|F^-1[exp(R + iP)]|^2` smoothed
-/// by a Gaussian of `SALIENCY_SIGMA` pixels through [`math::blur`]. `None` for a grid under 8
-/// pixels on a side, before or after the resize, or one whose tones differ by under 1/64: they
-/// have no subject worth finding, and a flat grid's transform is only rounding noise, which the
-/// residual would show.
+/// [`tone::resize`] does. A Fourier transform treats its grid as one period of an endless tiling,
+/// and the plain grid's opposite edges would meet in a jump that reads as salient, pulling the map
+/// to the corners and edges. So the grid is taken as mirrored about its edges, as the cosine
+/// transform does (Strang, 1999), and its Fourier transform is the real [`dct1`]. A mirror across
+/// the edge pixels' own rows and columns is used, which leaves no frequency whose amplitude is
+/// always zero; a mirror across the pixels' outer edges has such a row and column, whose
+/// neighbours the residual would blow up into a map that shows the same blob in every picture.
+///
+/// With `C` that transform, `L = ln |C|` (an amplitude under `AMPLITUDE_FLOOR` counts as it) and
+/// the phase `P` of 0 or pi, the sign of `C`, the spectral residual is `R = L - mean3x3(L)`, with
+/// the spectrum mirrored at its edges as the grid is, and the map is `|F^-1[exp(R + iP)]|^2`
+/// smoothed by a Gaussian of `SALIENCY_SIGMA` pixels through [`math::blur`]. The smoothing is of
+/// the map mirrored out to its `2 (w - 1) x 2 (h - 1)` period, so the edge pixels have the
+/// neighbours they would in the mirrored picture. `None` for a grid under 8 pixels on a side,
+/// before or after the resize, or one whose tones differ by under 1/64: they have no subject
+/// worth finding, and a flat grid's transform is only rounding noise, which the residual would
+/// show.
 fn saliency(grid: &[f32], gw: usize, gh: usize) -> Option<Saliency> {
     if gw.min(gh) < 8 {
         return None;
@@ -455,38 +476,50 @@ fn saliency(grid: &[f32], gw: usize, gh: usize) -> Option<Saliency> {
     if w.min(h) < 8 || hi - lo < 1.0 / 64.0 {
         return None;
     }
-    let re: Vec<f64> = lum.iter().map(|&v| f64::from(v)).collect();
-    let (fre, fim) = dft2((&re, &vec![0.0; re.len()]), w, h, false);
-    let log: Vec<f64> = (fre.iter().zip(&fim))
-        .map(|(&a, &b)| math::ln(math::hypot(a, b).max(AMPLITUDE_FLOOR)))
+    let spectrum = dct1(&lum.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(), w, h);
+    let log: Vec<f64> = (spectrum.iter())
+        .map(|c| math::ln(c.abs().max(AMPLITUDE_FLOOR)))
         .collect();
-    let wrapped = |x: usize, dx: usize, n: usize| (x + n + dx - 1) % n;
-    let (mut ure, mut uim) = (vec![0.0; re.len()], vec![0.0; re.len()]);
+    // Index `i` shifted by `step - 1`, mirrored about the first and last index of `n`.
+    let around = |i: usize, step: usize, n: usize| match (i + step).checked_sub(1) {
+        None => 1,
+        Some(j) if j >= n => n - 2,
+        Some(j) => j,
+    };
+    let mut signed = vec![0.0; spectrum.len()];
     for y in 0..h {
         for x in 0..w {
             let mut sum = 0.0;
             for dy in 0..3 {
                 for dx in 0..3 {
-                    sum += log[wrapped(y, dy, h) * w + wrapped(x, dx, w)];
+                    sum += log[around(y, dy, h) * w + around(x, dx, w)];
                 }
             }
             let i = y * w + x;
             let amplitude = math::exp(log[i] - sum / 9.0);
-            let phase = math::atan2(fim[i], fre[i]);
-            ure[i] = amplitude * math::cos(phase);
-            uim[i] = amplitude * math::sin(phase);
+            signed[i] = if spectrum[i] < 0.0 {
+                -amplitude
+            } else {
+                amplitude
+            };
         }
     }
-    let (sre, sim) = dft2((&ure, &uim), w, h, true);
-    let n = (w * h) as f64;
-    let power: Vec<f32> = (sre.iter().zip(&sim))
-        .map(|(&a, &b)| ((a * a + b * b) / (n * n)) as f32)
+    let field = dct1(&signed, w, h);
+    let n = (2 * (w - 1) * 2 * (h - 1)) as f64;
+    let power: Vec<f32> = field.iter().map(|&g| (g * g / (n * n)) as f32).collect();
+    let (ew, eh) = (2 * (w - 1), 2 * (h - 1));
+    let mirror = |i: usize, n: usize| if i < n { i } else { 2 * (n - 1) - i };
+    let wide: Vec<f32> = (0..ew * eh)
+        .map(|i| power[mirror(i / ew, h) * w + mirror(i % ew, w)])
         .collect();
-    let values = math::blur(&power, w, h, SALIENCY_SIGMA);
+    let smooth = math::blur(&wide, ew, eh, SALIENCY_SIGMA);
+    let values = (0..w * h)
+        .map(|i| f64::from(smooth[i / w * ew + i % w]))
+        .collect();
     Some(Saliency {
         width: w,
         height: h,
-        values: values.into_iter().map(f64::from).collect(),
+        values,
     })
 }
 
@@ -1344,45 +1377,71 @@ mod tests {
 
     #[test]
     fn the_transform_matches_a_slow_reference() {
+        // The grid mirrored about its edge pixels to 14 x 10, and the Fourier transform of that
+        // summed term by term, which is real and is the cosine transform of the grid.
         let (w, h) = (8, 6);
-        let re: Vec<f64> = (0..w * h)
+        let grid: Vec<f64> = (0..w * h)
             .map(|i| ((i * 37 + 11) % 23) as f64 / 7.0 - 1.0)
             .collect();
-        let im: Vec<f64> = (0..w * h)
-            .map(|i| ((i * 13 + 5) % 17) as f64 / 5.0 - 1.5)
-            .collect();
-        for inverse in [false, true] {
-            let sign = if inverse { 1.0 } else { -1.0 };
-            let (fre, fim) = dft2((&re, &im), w, h, inverse);
-            for (v, u) in (0..h).flat_map(|v| (0..w).map(move |u| (v, u))) {
-                let (mut sum_re, mut sum_im) = (0.0, 0.0);
-                for (y, x) in (0..h).flat_map(|y| (0..w).map(move |x| (y, x))) {
-                    let turns = (u * x) as f64 / w as f64 + (v * y) as f64 / h as f64;
-                    let angle = sign * 2.0 * std::f64::consts::PI * turns;
-                    let (c, s) = (math::cos(angle), math::sin(angle));
-                    let i = y * w + x;
-                    sum_re += re[i] * c - im[i] * s;
-                    sum_im += re[i] * s + im[i] * c;
-                }
-                let i = v * w + u;
-                assert!(
-                    (fre[i] - sum_re).abs() < 1e-9,
-                    "re {u},{v}: {} {sum_re}",
-                    fre[i]
-                );
-                assert!(
-                    (fim[i] - sum_im).abs() < 1e-9,
-                    "im {u},{v}: {} {sum_im}",
-                    fim[i]
-                );
+        let got = dct1(&grid, w, h);
+        let (ew, eh) = (2 * (w - 1), 2 * (h - 1));
+        let mirror = |i: usize, n: usize| if i < n { i } else { 2 * (n - 1) - i };
+        for (v, u) in (0..h).flat_map(|v| (0..w).map(move |u| (v, u))) {
+            let (mut sum_re, mut sum_im) = (0.0, 0.0);
+            for (y, x) in (0..eh).flat_map(|y| (0..ew).map(move |x| (y, x))) {
+                let turns = (u * x) as f64 / ew as f64 + (v * y) as f64 / eh as f64;
+                let angle = -2.0 * std::f64::consts::PI * turns;
+                let value = grid[mirror(y, h) * w + mirror(x, w)];
+                sum_re += value * math::cos(angle);
+                sum_im += value * math::sin(angle);
             }
+            let i = v * w + u;
+            assert!(
+                (got[i] - sum_re).abs() < 1e-9,
+                "{u},{v}: {} {sum_re}",
+                got[i]
+            );
+            assert!(sum_im.abs() < 1e-9, "{u},{v}: imaginary part {sum_im}");
         }
-        // The inverse gives the grid back, times its pixel count.
-        let (fre, fim) = dft2((&re, &im), w, h, false);
-        let (bre, bim) = dft2((&fre, &fim), w, h, true);
-        let n = (w * h) as f64;
-        assert!(re.iter().zip(&bre).all(|(a, b)| (a - b / n).abs() < 1e-12));
-        assert!(im.iter().zip(&bim).all(|(a, b)| (a - b / n).abs() < 1e-12));
+        // Applied twice it gives the grid back, times the mirrored grid's pixel count.
+        let back = dct1(&got, w, h);
+        let n = (ew * eh) as f64;
+        assert!(grid
+            .iter()
+            .zip(&back)
+            .all(|(a, b)| (a - b / n).abs() < 1e-12));
+    }
+
+    #[test]
+    fn the_saliency_peaks_on_the_subject_wherever_it_is() {
+        // A picture's saliency must follow its subject: not pile up at the edges, where a transform
+        // of the plain grid reads the jump from one side's tone to the other's, nor sit in the
+        // middle whatever the picture shows, as a transform of the grid mirrored across its outer
+        // edges does. The field here darkens from the left edge to the right.
+        let peak = |image: &Image| {
+            let stats = measure(image);
+            let map = stats.saliency.expect("a saliency map");
+            let (at, _) = (map.values.iter().enumerate())
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .unwrap();
+            [
+                (at % map.width) as f64 / 64.0,
+                (at / map.width) as f64 / 64.0,
+            ]
+        };
+        for [cx, cy] in [[0.7, 0.3], [0.25, 0.75], [0.5, 0.25], [0.7, 0.65]] {
+            let mut image = disc(256, 256, cx, cy, 0.06);
+            for (i, v) in image.rgb.iter_mut().enumerate() {
+                if *v > 0.5 {
+                    *v = 0.9 - 0.6 * ((i / 3) % 256) as f32 / 255.0;
+                }
+            }
+            let [x, y] = peak(&image);
+            assert!(
+                (x - f64::from(cx)).abs() < 0.08 && (y - f64::from(cy)).abs() < 0.08,
+                "the peak is at {x}, {y} for a disc at {cx}, {cy}"
+            );
+        }
     }
 
     #[test]
@@ -1392,7 +1451,7 @@ mod tests {
             (disc(256, 256, 0.7, 0.3, 0.05), page(), [0.7, 0.3, 0.05]),
             (
                 disc(256, 256, 0.25, 0.75, 0.08),
-                landscape(),
+                square(),
                 [0.25, 0.75, 0.08],
             ),
         ] {
@@ -1430,7 +1489,7 @@ mod tests {
     fn the_framing_crop_is_pinned() {
         // The same literals are in crates/wasm/tests/smoke.rs, so CI proves both targets agree.
         let small = disc(256, 256, 0.7, 0.3, 0.05);
-        assert_eq!(crop_of(&small, &page()), Some([0.45, 0.0, 0.04, 0.29]));
+        assert_eq!(crop_of(&small, &page()), Some([0.43, 0.0, 0.01, 0.2]));
         let big = disc(256, 256, 0.3, 0.4, 0.1);
         assert_eq!(crop_of(&big, &square()), Some([0.0, 0.06, 0.29, 0.23]));
     }
@@ -1505,7 +1564,7 @@ mod tests {
 
     #[test]
     fn framing_follows_orientation() {
-        let image = disc(400, 200, 0.7, 0.3, 0.1);
+        let image = disc(400, 200, 0.3, 0.6, 0.08);
         let all = run(&image, "grid", &defaults("grid"));
         let kinds: Vec<_> = all.iter().map(|s| s.kind).collect();
         assert_eq!(kinds, ["line_art", "orientation", "framing"]);

@@ -217,7 +217,7 @@ fn framing_matches_native() {
     let crop: Vec<f64> = (framing["patch"]["page"]["crop"].as_array().unwrap().iter())
         .map(|v| v.as_f64().unwrap())
         .collect();
-    for (got, want) in crop.iter().zip([0.45, 0.0, 0.04, 0.29]) {
+    for (got, want) in crop.iter().zip([0.43, 0.0, 0.01, 0.2]) {
         assert!((got - want).abs() < 1e-12, "{crop:?}");
     }
     // The page takes the crop, the preset carries it, and a bad one is refused.
