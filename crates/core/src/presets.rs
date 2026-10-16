@@ -235,6 +235,8 @@ struct RawCanvas {
     #[serde(default)]
     margin_mm: f64,
     fit: Option<Fit>,
+    #[serde(default)]
+    crop: [f64; 4],
 }
 
 /// A pen as written in a preset.
@@ -290,6 +292,7 @@ pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
         c.margin_mm,
         c.fit.unwrap_or(Fit::Fit),
     )
+    .and_then(|canvas| canvas.with_crop(c.crop))
     .map_err(|e| PresetError::Invalid(e.to_string()))?;
     let pens = pens
         .iter()
@@ -428,6 +431,22 @@ mod tests {
         assert_eq!((p.canvas, p.pens), (a4(), pens.to_vec()));
         let v = to_value("grid", &a4(), &[], None, &json!({}));
         assert_eq!(v["canvas"]["fit"], "fit");
+    }
+
+    #[test]
+    fn a_crop_comes_back_a_bad_one_is_named_and_no_crop_is_left_out() {
+        let canvas = a4().with_crop([0.1, 0.0, 0.25, 0.3]).unwrap();
+        let v = to_value("grid", &canvas, &[black()], None, &json!({}));
+        assert_eq!(v["canvas"]["crop"], json!([0.1, 0.0, 0.25, 0.3]));
+        assert_eq!(parse(&v).unwrap().canvas, canvas);
+        let plain = to_value("grid", &a4(), &[black()], None, &json!({}));
+        assert!(plain["canvas"].get("crop").is_none());
+        let page = |crop: Value| json!({"width_mm": 5, "height_mm": 5, "crop": crop});
+        assert_eq!(
+            error_with("canvas", page(json!([0.5, 0, 0, 0]))),
+            "crop left must be from 0 to 0.45, got 0.5"
+        );
+        assert!(error_with("canvas", page(json!([0.1]))).contains("canvas: invalid length 1"));
     }
 
     #[test]
