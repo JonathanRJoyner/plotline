@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::cache::StageCache;
-use crate::machine::{Area, Machine};
+use crate::machine::{Area, Machine, PenLift};
 use crate::runner::{Run, Shared};
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{
@@ -264,6 +264,23 @@ pub(crate) fn machine() -> Machine {
         settle_ms: 50,
         start_gcode: "M104 S0\nM140 S0".to_string(),
         end_gcode: "G1 Z20 F600\nG1 Y250 F3600".to_string(),
+        pen_lift: PenLift::Z,
+        pen_down_gcode: String::new(),
+        pen_up_gcode: String::new(),
+        max_segment_mm: None,
+    }
+}
+
+/// [`machine`] with its pen lifted by a servo command and a 100 ms dwell, and end lines that stay
+/// in the area, since there is no safe height to leave it at.
+pub(crate) fn servo_machine() -> Machine {
+    Machine {
+        pen_lift: PenLift::Gcode,
+        pen_down_gcode: "M280 P0 S30".to_string(),
+        pen_up_gcode: "M280 P0 S90".to_string(),
+        settle_ms: 100,
+        end_gcode: "M400".to_string(),
+        ..machine()
     }
 }
 

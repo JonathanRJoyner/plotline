@@ -2,15 +2,19 @@
 //!
 //! The dialect is strict so a downstream checker never has to guess: upper case, one command per
 //! line, `;` comments only, `G21` and `G90` before any move, no `G28`, no arcs, no line that moves
-//! X/Y and Z together, and numbers with at most three decimals and no trailing zeros. Each layer
+//! X/Y and Z together, and numbers with at most three decimals and no trailing zeros. These rules
+//! cover the lines plotline writes; the machine's own lines (start, end, and pen down and up when
+//! the pen lifts by G-code lines) are written as they are and are the user's to check. Each layer
 //! is its own file with no pause, because a printer that pauses by reheating makes each pen its own
 //! job. The page is centred in the machine's drawable area by [`Machine::mapping`], which refuses
 //! a page that does not fit, and every vertex is checked to lie on the page, so no move can leave
-//! the area.
+//! the area. A machine with `max_segment_mm` has each move cut into equal pieces no longer than
+//! it, for firmware that would draw a long straight move as a curve, which could leave the area.
 
 use thiserror::Error;
 
-use crate::machine::{Machine, MachineError};
+use crate::machine::{Machine, MachineError, PenLift};
+use crate::math::hypot;
 use crate::types::Drawing;
 
 /// Why a layer could not be written.
@@ -37,6 +41,23 @@ fn num(v: f64) -> String {
     }
 }
 
+/// The points that take a straight move from `from` to `to` in pieces no longer than `max`: `to`
+/// alone without a start or a maximum, else `ceil(length / max)` equal steps, the last exactly
+/// `to`.
+fn pieces(from: Option<[f64; 2]>, to: [f64; 2], max: Option<f64>) -> Vec<[f64; 2]> {
+    let (Some(a), Some(max)) = (from, max) else {
+        return vec![to];
+    };
+    let n = (hypot(to[0] - a[0], to[1] - a[1]) / max).ceil().max(1.0) as usize;
+    (1..n)
+        .map(|k| {
+            let t = k as f64 / n as f64;
+            [a[0] + (to[0] - a[0]) * t, a[1] + (to[1] - a[1]) * t]
+        })
+        .chain([to])
+        .collect()
+}
+
 /// Layer `layer` of `d` as G-code for `m`.
 ///
 /// The program is a header comment naming the pen and counting the paths, a reminder that the
@@ -45,6 +66,11 @@ fn num(v: f64) -> String {
 /// (Z, dwell, draw feed), one `G1` per further vertex, the pen up (Z, dwell, draw feed); then a
 /// lift to the safe height and the machine's end lines. A one-vertex path is a dot: down and up
 /// at one point.
+///
+/// With the pen lifted by G-code lines, the machine's lines take the place of each Z move. There
+/// is no safe height: the file lifts the pen (lines and dwell) before its first move, and has no
+/// lift before the end lines, since every path leaves the pen up. With `max_segment_mm`, each move
+/// whose start the file knows (all but the first travel) is cut by [`pieces`], one line a piece.
 pub fn to_gcode(d: &Drawing, layer: usize, m: &Machine) -> Result<String, GcodeError> {
     let count = d.layers.len();
     let l = d
@@ -54,12 +80,16 @@ pub fn to_gcode(d: &Drawing, layer: usize, m: &Machine) -> Result<String, GcodeE
     let map = m.mapping(d.canvas.width_mm, d.canvas.height_mm)?;
     let name = l.pen.name.replace(['\n', '\r'], " ");
     let z_move = |z: f64| format!("G1 Z{} F{}", num(z), num(m.z_feed));
-    let pen_to = |z: f64| {
-        [
-            z_move(z),
-            format!("G4 P{}", m.settle_ms),
-            format!("G1 F{}", num(m.draw_feed)),
-        ]
+    let dwell = format!("G4 P{}", m.settle_ms);
+    let pen_to = |down: bool| {
+        let mut out: Vec<String> = match (m.pen_lift, down) {
+            (PenLift::Z, true) => vec![z_move(m.z_down_mm)],
+            (PenLift::Z, false) => vec![z_move(m.z_up_mm)],
+            (PenLift::Gcode, true) => m.pen_down_gcode.lines().map(str::to_string).collect(),
+            (PenLift::Gcode, false) => m.pen_up_gcode.lines().map(str::to_string).collect(),
+        };
+        out.extend([dwell.clone(), format!("G1 F{}", num(m.draw_feed))]);
+        out
     };
     let mut out = vec![
         format!(
@@ -72,7 +102,13 @@ pub fn to_gcode(d: &Drawing, layer: usize, m: &Machine) -> Result<String, GcodeE
         "G90".to_string(),
     ];
     out.extend(m.start_gcode.lines().map(str::to_string));
-    out.push(z_move(m.z_safe_mm));
+    match m.pen_lift {
+        PenLift::Z => out.push(z_move(m.z_safe_mm)),
+        PenLift::Gcode => {
+            out.extend(m.pen_up_gcode.lines().map(str::to_string));
+            out.push(dwell.clone());
+        }
+    }
     let mut pen: Option<[f64; 2]> = None;
     let (w, h) = (d.canvas.width_mm, d.canvas.height_mm);
     for (i, path) in l.paths.iter().enumerate() {
@@ -94,22 +130,30 @@ pub fn to_gcode(d: &Drawing, layer: usize, m: &Machine) -> Result<String, GcodeE
         let there =
             pen.is_some_and(|p| (p[0] - first[0]).abs() < 1e-9 && (p[1] - first[1]).abs() < 1e-9);
         if !there {
-            out.push(format!(
-                "G0 X{} Y{} F{}",
-                num(first[0]),
-                num(first[1]),
-                num(m.travel_feed)
-            ));
+            for [x, y] in pieces(pen, first, m.max_segment_mm) {
+                out.push(format!(
+                    "G0 X{} Y{} F{}",
+                    num(x),
+                    num(y),
+                    num(m.travel_feed)
+                ));
+            }
         }
-        out.extend(pen_to(m.z_down_mm));
+        out.extend(pen_to(true));
+        let mut at = first;
         for &p in &path[1..] {
-            let [x, y] = map.to_machine(p);
-            out.push(format!("G1 X{} Y{}", num(x), num(y)));
+            let p = map.to_machine(p);
+            for [x, y] in pieces(Some(at), p, m.max_segment_mm) {
+                out.push(format!("G1 X{} Y{}", num(x), num(y)));
+            }
+            at = p;
         }
-        out.extend(pen_to(m.z_up_mm));
-        pen = Some(map.to_machine(*path.last().unwrap()));
+        out.extend(pen_to(false));
+        pen = Some(at);
     }
-    out.push(z_move(m.z_safe_mm));
+    if m.pen_lift == PenLift::Z {
+        out.push(z_move(m.z_safe_mm));
+    }
     out.extend(m.end_gcode.lines().map(str::to_string));
     Ok(out.join("\n") + "\n")
 }
@@ -117,21 +161,29 @@ pub fn to_gcode(d: &Drawing, layer: usize, m: &Machine) -> Result<String, GcodeE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{drawing_100, drawing_with, machine};
+    use crate::test_util::{drawing_100, drawing_with, machine, servo_machine};
 
     /// Walk `gcode` the way a strict downstream checker does and panic at the first unsafe line:
     /// only the allowed commands, G21 and G90 before any move, no line moving X/Y and Z together,
     /// the first X/Y move only once Z is at the safe height, every X/Y below the safe height
-    /// inside the area, and Z never below the pen-down height.
+    /// inside the area, and Z never below the pen-down height. With the pen lifted by G-code
+    /// lines there is no Z at all and no safe height: the first X/Y move comes after a pen-up
+    /// line, and every X/Y is inside the area.
     fn check(gcode: &str, m: &Machine) {
-        const ALLOWED: [&str; 10] = [
-            "G0", "G1", "G4", "G21", "G90", "M104", "M140", "M400", "M106", "M107",
+        // The last three are the test machines' own lines: start, end and servo.
+        const ALLOWED: [&str; 11] = [
+            "G0", "G1", "G4", "G21", "G90", "M106", "M107", "M104", "M140", "M400", "M280",
         ];
+        let by_lines = m.pen_lift == PenLift::Gcode;
         let (mut g21, mut g90, mut z, mut moved) = (false, false, None::<f64>, false);
+        let mut lifted = false;
         for (n, raw) in gcode.lines().enumerate() {
             let line = raw.split(';').next().unwrap().trim();
             if line.is_empty() {
                 continue;
+            }
+            if by_lines && m.pen_up_gcode.lines().any(|up| up.trim() == line) {
+                lifted = true;
             }
             let mut words = line.split_whitespace();
             let code = words.next().unwrap();
@@ -155,6 +207,7 @@ mod tests {
                         "line {n}: X/Y and Z in one move: {raw}"
                     );
                     if let Some(dz) = dz {
+                        assert!(!by_lines, "line {n}: a Z move with no Z lift: {raw}");
                         assert!(
                             dz >= m.z_down_mm - 1e-9,
                             "line {n}: Z below pen down: {raw}"
@@ -162,9 +215,9 @@ mod tests {
                         z = Some(dz);
                     }
                     if let (Some(x), Some(y)) = (x, y) {
-                        let safe = z.is_some_and(|z| z >= m.z_safe_mm - 1e-9);
+                        let safe = !by_lines && z.is_some_and(|z| z >= m.z_safe_mm - 1e-9);
                         assert!(
-                            moved || safe,
+                            moved || safe || lifted,
                             "line {n}: first X/Y move before the lift: {raw}"
                         );
                         moved = true;
@@ -256,6 +309,81 @@ mod tests {
         );
         assert!(!g.lines().any(|l| l == "G1 Z4 F1200"), "{g}");
         check(&g, &machine());
+    }
+
+    #[test]
+    fn a_pen_lifted_by_gcode_lines_writes_them_in_place_of_z() {
+        let m = servo_machine();
+        let g = to_gcode(
+            &drawing_100(vec![vec![[10.0, 20.0]]], 0.3, "#000000"),
+            0,
+            &m,
+        )
+        .unwrap();
+        let body = "G21\nG90\nM104 S0\nM140 S0\nM280 P0 S90\nG4 P100\nG0 X88 Y159 F6000\n\
+                    M280 P0 S30\nG4 P100\nG1 F3600\nM280 P0 S90\nG4 P100\nG1 F3600\nM400\n";
+        assert!(g.ends_with(body), "{g}");
+        assert!(
+            !g.lines().any(|l| !l.starts_with(';') && l.contains('Z')),
+            "{g}"
+        );
+        check(&g, &m);
+    }
+
+    #[test]
+    fn an_empty_layer_lifted_by_gcode_lines_lifts_once() {
+        let m = servo_machine();
+        let g = to_gcode(&drawing_100(vec![], 0.3, "#000000"), 0, &m).unwrap();
+        assert!(g.ends_with("M140 S0\nM280 P0 S90\nG4 P100\nM400\n"), "{g}");
+        check(&g, &m);
+    }
+
+    #[test]
+    fn long_moves_are_cut_into_equal_pieces_but_the_first_travel_is_not() {
+        let mut m = machine();
+        m.max_segment_mm = Some(4.0);
+        let paths = vec![
+            vec![[0.0, 0.0], [10.0, 0.0], [11.0, 0.0]],
+            vec![[11.0, 10.0]],
+        ];
+        let g = to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &m).unwrap();
+        assert!(
+            g.contains("G1 Z20 F1200\nG0 X78 Y179 F6000\nG1 Z4 F1200\n"),
+            "{g}"
+        );
+        assert!(
+            g.contains("G1 F3600\nG1 X81.333 Y179\nG1 X84.667 Y179\nG1 X88 Y179\nG1 X89 Y179\n"),
+            "{g}"
+        );
+        assert!(
+            g.contains("G0 X89 Y175.667 F6000\nG0 X89 Y172.333 F6000\nG0 X89 Y169 F6000\n"),
+            "{g}"
+        );
+        assert_eq!(g.matches("G0 X").count(), 4, "{g}");
+        check(&g, &m);
+        let mut servo = servo_machine();
+        servo.max_segment_mm = Some(4.0);
+        let paths = vec![vec![[0.0, 0.0], [100.0, 100.0]], vec![[0.0, 100.0]]];
+        check(
+            &to_gcode(&drawing_100(paths, 0.3, "#000000"), 0, &servo).unwrap(),
+            &servo,
+        );
+    }
+
+    #[test]
+    fn pieces_end_on_the_vertex() {
+        assert_eq!(pieces(None, [5.0, 5.0], Some(1.0)), vec![[5.0, 5.0]]);
+        assert_eq!(pieces(Some([0.0, 0.0]), [5.0, 5.0], None), vec![[5.0, 5.0]]);
+        assert_eq!(
+            pieces(Some([1.0, 1.0]), [1.0, 1.0], Some(1.0)),
+            vec![[1.0, 1.0]]
+        );
+        assert_eq!(
+            pieces(Some([0.0, 0.0]), [8.0, 0.0], Some(4.0)),
+            vec![[4.0, 0.0], [8.0, 0.0]]
+        );
+        let p = pieces(Some([0.3, 0.1]), [0.7, 9.9], Some(0.5));
+        assert_eq!((p.len(), *p.last().unwrap()), (20, [0.7, 9.9]));
     }
 
     #[test]
