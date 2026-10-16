@@ -15,6 +15,7 @@ use crate::stages::hilbert::HilbertStage;
 use crate::stages::ink::InkStage;
 use crate::stages::order::OrderStage;
 use crate::stages::poisson::PoissonPlacer;
+use crate::stages::scribble::ScribbleStage;
 use crate::stages::sketch::SketchStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
@@ -153,6 +154,27 @@ pub fn line_style() -> Style {
         Arc::new(VoronoiPlacer),
         Arc::new(TspRenderer),
     )
+}
+
+/// Loops traced along the one line through evenly spread points: tone, split, voronoi, tsp,
+/// scribble, order. The first four stages have the defaults of `line`, so a switch reuses its
+/// points and its tour.
+pub fn scribble_style() -> Style {
+    Style::new(
+        "scribble",
+        "Scribble",
+        "Loops traced along one line through the points, small and close where the image is dark, \
+         wide and loose where it is light.",
+        vec![
+            Arc::new(ToneStage),
+            Arc::new(SplitStage),
+            Arc::new(VoronoiPlacer),
+            Arc::new(TspRenderer),
+            Arc::new(ScribbleStage),
+            Arc::new(OrderStage),
+        ],
+    )
+    .expect("the scribble style is valid")
 }
 
 /// Short strokes that follow the image's edges: tone, split, voronoi, dashes, order.
@@ -314,6 +336,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(contours_style()),
         Arc::new(flow_style()),
         Arc::new(hilbert_style()),
+        Arc::new(scribble_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -372,7 +395,7 @@ mod tests {
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
                 "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
-                "hilbert"
+                "hilbert", "scribble"
             ]
         );
         assert!(get_style("_slow").is_some());
@@ -518,11 +541,14 @@ mod tests {
         // Equal settings give equal cache keys, so switching between these styles at their
         // defaults reuses the points.
         let first = get_style("stipple").unwrap().defaults();
-        for name in ["line", "dashes", "tree", "mesh", "cells"] {
+        for name in ["line", "dashes", "tree", "mesh", "cells", "scribble"] {
             let d = get_style(name).unwrap().defaults();
             assert_eq!(d["tone"], first["tone"], "{name}");
             assert_eq!(d["voronoi"], first["voronoi"], "{name}");
         }
+        // The scribble follows the tour of `line`, so a switch between them reuses that too.
+        let tour = |name: &str| get_style(name).unwrap().defaults()["tsp"].clone();
+        assert_eq!(tour("scribble"), tour("line"));
     }
     /// Prints the time of `stipple` and `line` at their defaults on a 1000 by 750 radial image.
     /// Run with `cargo test --release -p plotline-core --lib default_timings -- --ignored
