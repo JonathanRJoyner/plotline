@@ -24,6 +24,10 @@ fn grid_matches_the_golden_file() {
     assert_eq!(speeds["draw_mm_s"], 10.0);
     let stats: serde_json::Value = serde_json::from_str(&s.stats().unwrap()).unwrap();
     assert!(stats["estimated_seconds"].as_f64().unwrap() > 0.0);
+    // The exact value is pinned through the core below, since serde_json's parser can move a
+    // float's last bit.
+    let lint: serde_json::Value = serde_json::from_str(&s.lint().unwrap()).unwrap();
+    assert!(lint.as_array().unwrap().iter().any(|f| f["code"] == "dark"));
     let d = s.drawing().unwrap();
     let canvas: serde_json::Value = serde_json::from_str(&d.canvas()).unwrap();
     assert_eq!(canvas["width_mm"], 100.0);
@@ -188,4 +192,21 @@ fn a_fit_takes_the_native_steps() {
     let achieved = r["achieved"].as_f64().unwrap();
     assert!((achieved - 9.934812216679127).abs() < 1e-12, "{achieved}");
     assert!(s.start().unwrap().result().is_none());
+}
+#[wasm_bindgen_test]
+fn golden_grid_lint_matches_native() {
+    // The same setup and literal are pinned in crates/core/src/lint.rs on the native target.
+    use serde_json::json;
+    let mut s = plotline_core::Session::new(1 << 24);
+    s.set_image(plotline_core::synthetic::gradient(64, 48));
+    let canvas = plotline_core::Canvas::new(100.0, 75.0, 5.0, plotline_core::Fit::Fit).unwrap();
+    s.set_canvas(canvas);
+    s.update("tone", &json!({"resolution": 64})).unwrap();
+    s.update("points", &json!({"threshold": 0.6, "spacing_mm": 2}))
+        .unwrap();
+    let mut run = s.start().unwrap();
+    while run.next_frame().is_some() {}
+    let all = s.lint().unwrap();
+    let dark = all.iter().find(|f| f.code == "dark").unwrap();
+    assert_eq!(dark.value, 0.015042735042735043);
 }

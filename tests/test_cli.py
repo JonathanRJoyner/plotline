@@ -99,7 +99,7 @@ def test_preset_is_applied_and_style_kept(tmp_path, image):
         str(tmp_path / "p.json"),
         "--quiet",
     )
-    assert r.exit_code == 0 and r.stderr == ""
+    assert r.exit_code == 0 and "tone:" not in r.stderr
     # Compared outside the assert, because pytest would spend minutes diffing two long SVGs.
     same = (tmp_path / "a.svg").read_text() == (tmp_path / "b.svg").read_text()
     assert same
@@ -124,6 +124,20 @@ def test_two_pens_in_one_pen_mode_get_a_note(tmp_path, image):
     assert r.exit_code == 0 and note in r.stderr, r.output
     r = run(*args, "--set", "split.mode=light_to_dark")
     assert r.exit_code == 0 and note not in r.stderr, r.output
+
+
+def test_lint_findings_go_to_stderr_and_strict_fails_on_a_warning(tmp_path, image):
+    # Waves at their defaults find nothing on the gradient; lines closer than the pen are a warning.
+    args = ["run", "waves", image, "--out", str(tmp_path / "o.svg"), "--quiet"]
+    args += ["--set", "tone.resolution=64", "--pen", "Wide:1:black"]
+    args += ["--set", "waves.spacing_mm=0.5"]
+    r = run(*args)
+    assert r.exit_code == 0, r.output
+    assert "warning: Marks 0.5 mm apart are closer than the 1 mm pen" in r.stderr
+    assert "  fix: --set waves.spacing_mm=1" in r.stderr
+    r = run(*args, "--strict")
+    assert r.exit_code == 1 and (tmp_path / "o.svg").exists()
+    assert run(*args[:-2], "--strict").exit_code == 0
 
 
 def test_run_rejects_bad_inputs(tmp_path, image):
