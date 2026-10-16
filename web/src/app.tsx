@@ -256,8 +256,6 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
             <input class="visually-hidden" type="checkbox" checked={focusing} onChange={(e) => setFocusing(e.currentTarget.checked)} />
             <Crosshair /> <span class="label">Focus</span>
           </label>
-        </span>
-        <span class="group shrink">
           <button type="button" title="Show the whole page; 0 does the same with the preview focused" onClick={() => setFits((n) => n + 1)}><Maximize /> <span class="label">Fit page</span></button>
           <span class="zoom" title="The preview's size against the paper's">{zoomPercent(view.scale)}%</span>
         </span>

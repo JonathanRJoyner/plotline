@@ -94,18 +94,19 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
 /* Rather than wrap, the toolbar sheds labels as it narrows: the view and app buttons first, then
    all but Run. A shed label stays the button's accessible name, and its title shows on hover. */
 .app > main { container-type: inline-size; }
-@container (max-width: 1240px) {
+@container (max-width: 1340px) {
   .toolbar .shrink .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .toolbar .shrink :has(> .label) { width: 30px; padding: 0; justify-content: center; }
 }
-@container (max-width: 880px) {
+@container (max-width: 910px) {
   .toolbar .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .toolbar :has(> .label) { width: 30px; padding: 0; justify-content: center; }
 }
 /* Still too narrow: two even rows, the tools above the view and app buttons, not a stray last group. */
-@container (340px <= width < 620px) {
+@container (340px <= width < 660px) {
   .toolbar { display: grid; grid-template-columns: auto auto 1fr; }
   .toolbar .group:nth-child(4) { padding-left: 0; border-left: none; }
+  .toolbar .zoom { min-width: 0; }
 }
 
 .preview { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--backdrop); border: 1px solid var(--border); border-radius: var(--radius); }
