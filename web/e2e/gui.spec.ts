@@ -268,6 +268,56 @@ test("Response auto corrects the tone map for the style", async ({ page }) => {
   await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
 });
 
+test("Focus marks points on the preview, a click on one removes it, and Undo brings it back", async ({ page }) => {
+  let id = await sample(page);
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  const rings = page.locator(".focus-rings .ring");
+  const count = page.locator(".focus-line");
+  await expect(rings).toHaveCount(0);
+  await expect(count).toHaveCount(0);
+  // Focus mode: a click on the drawn image, the middle of the page, marks a point there.
+  await page.locator("label.chip", { hasText: "Focus" }).click();
+  await page.locator(".preview canvas").click();
+  await expect(count).toContainText("1 focus point");
+  await expect(rings).toHaveCount(1);
+  id = await ran(page, id);
+  // A second point, off the first and away from its removal target, and the count says so.
+  const box = (await page.locator(".preview canvas").boundingBox())!;
+  await page.locator(".preview canvas").click({ position: { x: box.width / 2 + 120, y: box.height / 2 - 80 } });
+  await expect(count).toContainText("2 focus points");
+  await expect(rings).toHaveCount(2);
+  id = await ran(page, id);
+  // A click on a point removes it; Clear takes the rest.
+  await page.getByRole("button", { name: "Remove focus point 1" }).click();
+  await expect(count).toContainText("1 focus point");
+  await expect(rings).toHaveCount(1);
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Remove focus point 1" }).click();
+  await expect(rings).toHaveCount(0);
+  await expect(count).toHaveCount(0);
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(rings).toHaveCount(1);
+  await expect(count).toContainText("1 focus point");
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(rings).toHaveCount(0);
+  await ran(page, id);
+});
+
+test("Two quick clicks in Focus mode both land", async ({ page }) => {
+  const id = await sample(page);
+  await page.locator("label.chip", { hasText: "Focus" }).click();
+  const box = (await page.locator(".preview canvas").boundingBox())!;
+  const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+  // Sent together, so the second press arrives before the engine has answered the first.
+  await Promise.all([page.mouse.click(x - 100, y), page.mouse.click(x + 100, y), page.mouse.click(x, y + 150)]);
+  await expect(page.locator(".focus-rings .ring")).toHaveCount(3);
+  await ran(page, id);
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  await expect(page.locator(".focus-line")).toContainText("3 focus points");
+});
+
 test("Flatten paper changes the drawing", async ({ page }) => {
   const id = await pick(page, "ink", await sample(page));
   const stats = await page.locator(".stats").textContent();
@@ -340,12 +390,91 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await ran(page, id);
 });
 
+// A hash of the canvas pixels from `from` to `to` of its width (fractions), once the canvas has
+// painted. Left out: the outer 8 px at the sides, where the divider sits at 0 and 100, and the
+// top 100 px, where its labels sit.
+async function canvasHash(page: Page, from: number, to: number): Promise<number> {
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  return page.evaluate(([a, b]) => {
+    const canvas = document.querySelector<HTMLCanvasElement>(".preview canvas")!;
+    const x0 = Math.max(8, Math.floor(canvas.width * a));
+    const x1 = Math.min(canvas.width - 8, Math.floor(canvas.width * b));
+    const px = canvas.getContext("2d")!.getImageData(x0, 100, x1 - x0, canvas.height - 100).data;
+    let hash = 0;
+    for (let i = 0; i < px.length; i++) hash = (hash * 31 + px[i]) | 0;
+    return hash;
+  }, [from, to]);
+}
+
+test("Compare swipes the previous drawing against the current one", async ({ page }) => {
+  test.setTimeout(120_000);
+  // Narrow enough that the page fills the preview's width, so each third shows the drawing.
+  await page.setViewportSize({ width: 900, height: 1000 });
+  await pick(page, "hatch", await sample(page));
+  const [left, right] = [await canvasHash(page, 0, 1 / 3), await canvasHash(page, 2 / 3, 1)];
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  await expect(page.getByRole("checkbox", { name: "Compare", exact: true })).toBeChecked();
+  // Left of the divider is the first run's drawing now, and right of it the hatch drawing as before.
+  await expect.poll(() => canvasHash(page, 0, 1 / 3)).not.toBe(left);
+  const previous = await canvasHash(page, 0, 1 / 3);
+  expect(await canvasHash(page, 2 / 3, 1)).toBe(right);
+  // The divider at 0 leaves nothing to the comparison.
+  const swipe = page.getByRole("slider", { name: "Swipe position" });
+  await swipe.fill("0");
+  await expect.poll(() => canvasHash(page, 0, 1 / 3)).toBe(left);
+  await swipe.fill("50");
+  await expect.poll(() => canvasHash(page, 0, 1 / 3)).toBe(previous);
+  // The divider drags by its handle, and the slider follows.
+  const preview = (await page.locator(".preview").boundingBox())!;
+  const handle = (await page.locator(".compare-handle").boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, preview.y + preview.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(preview.x + preview.width / 4, preview.y + preview.height / 2, { steps: 5 });
+  await page.mouse.up();
+  expect(Math.abs(Number(await swipe.inputValue()) - 25)).toBeLessThanOrEqual(1.5);
+  await swipe.fill("50");
+  // The source image replaces the first run's drawing.
+  await page.getByRole("combobox", { name: "Compare with" }).selectOption({ label: "source image" });
+  await expect.poll(() => canvasHash(page, 0, 1 / 3)).not.toBe(previous);
+  expect(await canvasHash(page, 0, 1 / 3)).not.toBe(left);
+  expect(await canvasHash(page, 2 / 3, 1)).toBe(right);
+});
+
+test("Compare waits for a drawing, and says when there is nothing to compare with", async ({ page }) => {
+  await open(page);
+  const chip = page.getByRole("checkbox", { name: "Compare", exact: true });
+  await expect(chip).toBeDisabled();
+  // The test chart has no tone map, and nothing came before it.
+  await page.getByRole("button", { name: "Test chart" }).click();
+  const id = await ran(page, 0);
+  await expect(chip).toBeEnabled();
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  await expect(page.getByText("Run again to compare with the previous drawing.")).toBeVisible();
+  await expect(page.getByRole("slider", { name: "Swipe position" })).toHaveCount(0);
+  // The next drawing has a tone map and the chart before it.
+  await page.getByRole("button", { name: "Sample image" }).click();
+  await ran(page, id);
+  const menu = page.getByRole("combobox", { name: "Compare with" });
+  await expect(menu).toHaveValue("previous");
+  await expect(menu.getByRole("option", { name: "source image" })).toBeEnabled();
+  await expect(page.getByRole("slider", { name: "Swipe position" })).toBeVisible();
+});
+
+test("Compare offers only the source image on a first run", async ({ page }) => {
+  await sample(page);
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  const menu = page.getByRole("combobox", { name: "Compare with" });
+  await expect(menu).toHaveValue("source");
+  await expect(menu.getByRole("option", { name: "previous run" })).toBeDisabled();
+  await expect(menu.getByRole("option", { name: "source image" })).toBeEnabled();
+});
+
 test("the toolbar keeps to one row on a wide window and two on a phone, its buttons still named", async ({ page }) => {
   await open(page);
   const toolbar = page.locator(".toolbar");
   for (const [width, rows] of [[1730, 1], [1280, 1], [960, 2], [375, 2]] as const) {
     await page.setViewportSize({ width, height: 800 });
-    const { height, overflow } = await toolbar.evaluate((e) => ({ height: e.getBoundingClientRect().height, overflow: e.scrollWidth > e.clientWidth }));
+    const { height, overflow } = await toolbar.evaluate((e) => ({ height: e.getBoundingClientRect().height, overflow: e.scrollWidth > e.clientWidth || document.documentElement.scrollWidth > innerWidth }));
     expect(Math.round((height - 8) / 36), `rows at ${width} px`).toBe(rows); // a row is a 30 px button and a 6 px gap
     expect(overflow, `overflow at ${width} px`).toBe(false);
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
