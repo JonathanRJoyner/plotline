@@ -400,6 +400,27 @@ def test_gcode_is_the_text_of_one_layer():
         s.gcode(1)
 
 
+def test_a_pen_lifted_by_gcode_lines_and_split_moves_reach_the_file():
+    s = drawn()
+    servo = {
+        **MACHINE,
+        "end_gcode": "M400",
+        "pen_lift": "gcode",
+        "pen_down_gcode": "M280 P0 S30",
+        "pen_up_gcode": "M280 P0 S90",
+        "max_segment_mm": 1,
+    }
+    s.set_machine(servo)
+    assert s.machine == servo
+    # The lift is the two 50 ms dwells alone.
+    assert s.speeds.pen_lift_s == pytest.approx(0.1)
+    text = s.gcode(0)
+    assert "M280 P0 S30\nG4 P50\nG1 F3600\n" in text and text.endswith("G4 P50\nG1 F3600\nM400\n")
+    assert not any("Z" in line for line in text.splitlines() if not line.startswith(";"))
+    with pytest.raises(ValueError, match="pen_up_gcode must have a line"):
+        s.set_machine({**servo, "pen_up_gcode": ""})
+
+
 def test_export_gcode_writes_a_file_for_each_pen_layer(tmp_path):
     pens = (Pen("Light 0.3", 0.3, "#808080"), Pen("Stift é/2", 0.3, "#000000"))
     s = drawn(*pens, mode="light_to_dark")

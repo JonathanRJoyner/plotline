@@ -26,7 +26,7 @@ export const STEPS: Step[] = [
   { target: "pens", title: "Choose pens", text: "Edit pens opens the pens dialog: pick a maker's pen from the bank at its published line width, or set a width yourself, and choose an ink colour. The tick hides a pen in the preview. Pen use shares the drawing between the pens: light to dark in list order, or each pen by its colour; pens plot in list order, so list light inks first." },
   { target: "export", title: "Export", text: "SVG writes the drawing in millimetres, one layer per pen that draws, for your plotter's own software. JSON writes the paths for other programs." },
   { target: "presets", title: "Keep a look", text: "A preset is a small file with the style, page, pens and settings, so you can come back to a look or share it. The page also remembers your last setup." },
-  { target: "machine", title: "Plot from G-code", text: "Settings holds a pen-fitted 3D printer: its drawable area, pen heights and feeds. Once one is set, Export writes a G-code file per pen." },
+  { target: "machine", title: "Plot from G-code", text: "Settings holds your machine: its drawable area, its feeds, and how it lifts the pen, by Z moves or by its own lines for a servo or a solenoid. Once one is set, Export writes a G-code file per pen." },
   { target: "help", title: "Help on every setting", text: "Hover over a setting's name to read its help, or turn on Show help to see it under every control." },
 ];
 

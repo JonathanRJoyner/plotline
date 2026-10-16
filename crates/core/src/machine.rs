@@ -37,14 +37,32 @@ impl Area {
     }
 }
 
-/// A machine that draws with a pen: its drawable area, pen heights, feeds and the G-code written
-/// around a plot.
+/// How the pen goes up and down.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PenLift {
+    /// Z moves between the machine's pen heights.
+    #[default]
+    Z,
+    /// The machine's own lines, such as a servo or solenoid command.
+    Gcode,
+}
+
+impl PenLift {
+    fn is_z(&self) -> bool {
+        *self == PenLift::Z
+    }
+}
+
+/// A machine that draws with a pen: its drawable area, pen lift, feeds and the G-code written
+/// around a plot. The fields after `end_gcode` are left out of the JSON while they hold their
+/// defaults, so a machine that does not use them reads and writes as it did before they existed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Machine {
     /// The machine's name, shown to users.
     pub name: String,
-    /// Where the pen may be below `z_safe_mm`.
+    /// Where the pen may be below `z_safe_mm`, or anywhere with a pen lifted by G-code lines.
     pub area: Area,
     /// The Z the pen draws at.
     pub z_down_mm: f64,
@@ -58,13 +76,29 @@ pub struct Machine {
     pub travel_feed: f64,
     /// Feed of Z moves, in mm per minute.
     pub z_feed: f64,
-    /// The dwell after each Z move, in ms.
+    /// The dwell after each pen move, in ms.
     pub settle_ms: u32,
     /// Lines written after `G21` and `G90`, as they are.
     pub start_gcode: String,
     /// Lines written after the final lift, as they are.
     pub end_gcode: String,
+    /// How the pen goes up and down; with [`PenLift::Gcode`] the Z heights and `z_feed` are unused.
+    #[serde(default, skip_serializing_if = "PenLift::is_z")]
+    pub pen_lift: PenLift,
+    /// Lines that put the pen down, as they are, with [`PenLift::Gcode`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pen_down_gcode: String,
+    /// Lines that lift the pen, as they are, with [`PenLift::Gcode`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pen_up_gcode: String,
+    /// The longest straight move, in mm, for firmware that would draw a long one as a curve; none
+    /// keeps every move whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_segment_mm: Option<f64>,
 }
+
+/// The shortest `max_segment_mm`, which bounds the number of lines a file can have.
+pub const MIN_SEGMENT_MM: f64 = 0.5;
 
 impl Machine {
     /// Check every field; the message names the first one that is wrong.
@@ -84,41 +118,67 @@ impl Machine {
                 return bad(format!("{name} must be positive, got {v}"));
             }
         }
-        if !(0.0 <= self.z_down_mm && self.z_down_mm < self.z_up_mm) {
-            return bad(format!(
-                "z_up_mm must be above z_down_mm ({}), got {}",
-                self.z_down_mm, self.z_up_mm
-            ));
+        match self.pen_lift {
+            PenLift::Z => {
+                if !(0.0 <= self.z_down_mm && self.z_down_mm < self.z_up_mm) {
+                    return bad(format!(
+                        "z_up_mm must be above z_down_mm ({}), got {}",
+                        self.z_down_mm, self.z_up_mm
+                    ));
+                }
+                let safe_above_up = self.z_up_mm < self.z_safe_mm;
+                if !safe_above_up {
+                    return bad(format!(
+                        "z_safe_mm must be above z_up_mm ({}), got {}",
+                        self.z_up_mm, self.z_safe_mm
+                    ));
+                }
+            }
+            PenLift::Gcode => {
+                for (name, lines) in [
+                    ("pen_down_gcode", &self.pen_down_gcode),
+                    ("pen_up_gcode", &self.pen_up_gcode),
+                ] {
+                    if lines.trim().is_empty() {
+                        return bad(format!("{name} must have a line when pen_lift is gcode"));
+                    }
+                }
+            }
         }
-        let safe_above_up = self.z_up_mm < self.z_safe_mm;
-        if !safe_above_up {
-            return bad(format!(
-                "z_safe_mm must be above z_up_mm ({}), got {}",
-                self.z_up_mm, self.z_safe_mm
-            ));
-        }
-        let feeds = [
+        let mut feeds = vec![
             ("draw_feed", self.draw_feed),
             ("travel_feed", self.travel_feed),
-            ("z_feed", self.z_feed),
         ];
+        if self.pen_lift == PenLift::Z {
+            feeds.push(("z_feed", self.z_feed));
+        }
         for (name, feed) in feeds {
             let positive = feed > 0.0;
             if !positive {
                 return bad(format!("{name} must be positive, got {feed}"));
             }
         }
+        if let Some(v) = self.max_segment_mm {
+            if !(v >= MIN_SEGMENT_MM && v.is_finite()) {
+                return bad(format!(
+                    "max_segment_mm must be at least {MIN_SEGMENT_MM}, or null to keep moves whole, got {v}"
+                ));
+            }
+        }
         Ok(())
     }
 
-    /// The plot speeds the machine implies: the feeds in mm per second, and a pen lift as the
-    /// down and up Z moves at `z_feed` plus two dwells.
+    /// The plot speeds the machine implies: the feeds in mm per second, and a pen lift as two
+    /// dwells, plus the down and up Z moves at `z_feed` when the pen lifts by Z.
     pub fn speeds(&self) -> Speeds {
+        let dwells = 2.0 * f64::from(self.settle_ms) / 1000.0;
         Speeds {
             draw_mm_s: self.draw_feed / 60.0,
             travel_mm_s: self.travel_feed / 60.0,
-            pen_lift_s: 2.0 * (self.z_up_mm - self.z_down_mm) / (self.z_feed / 60.0)
-                + 2.0 * f64::from(self.settle_ms) / 1000.0,
+            pen_lift_s: match self.pen_lift {
+                PenLift::Z => 2.0 * (self.z_up_mm - self.z_down_mm) / (self.z_feed / 60.0) + dwells,
+                PenLift::Gcode => dwells,
+            },
         }
     }
 
@@ -154,13 +214,70 @@ impl Mapping {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_util::machine;
+    use super::Machine;
+    use crate::test_util::{machine, servo_machine};
 
     #[test]
     fn speeds_follow_the_feeds_and_the_lift() {
         let s = machine().speeds();
         assert_eq!((s.draw_mm_s, s.travel_mm_s), (60.0, 100.0));
         assert!((s.pen_lift_s - 0.6).abs() < 1e-9);
+        // Lifted by G-code lines, the lift is the two 100 ms dwells alone.
+        assert!((servo_machine().speeds().pen_lift_s - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_new_fields_are_left_out_at_their_defaults() {
+        let v = serde_json::to_value(machine()).unwrap();
+        for key in [
+            "pen_lift",
+            "pen_down_gcode",
+            "pen_up_gcode",
+            "max_segment_mm",
+        ] {
+            assert!(v.get(key).is_none(), "{key} in {v}");
+        }
+        assert_eq!(serde_json::from_value::<Machine>(v).unwrap(), machine());
+        let mut m = servo_machine();
+        m.max_segment_mm = Some(2.0);
+        let v = serde_json::to_value(&m).unwrap();
+        assert_eq!(
+            (&v["pen_lift"], &v["max_segment_mm"]),
+            (&serde_json::json!("gcode"), &serde_json::json!(2.0))
+        );
+        assert_eq!(serde_json::from_value::<Machine>(v).unwrap(), m);
+    }
+
+    #[test]
+    fn a_pen_lifted_by_gcode_lines_needs_both_lines_and_no_z() {
+        let mut m = servo_machine();
+        (m.z_down_mm, m.z_up_mm, m.z_safe_mm, m.z_feed) = (0.0, 0.0, 0.0, 0.0);
+        m.validate().unwrap();
+        m.pen_up_gcode = " \n".to_string();
+        let err = m.validate().unwrap_err().to_string();
+        assert_eq!(err, "pen_up_gcode must have a line when pen_lift is gcode");
+        let mut m = servo_machine();
+        m.pen_down_gcode = String::new();
+        assert!(m
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("pen_down_gcode"));
+    }
+
+    #[test]
+    fn the_longest_move_has_a_floor() {
+        let mut m = machine();
+        m.max_segment_mm = Some(0.5);
+        m.validate().unwrap();
+        for bad in [0.4, 0.0, -1.0, f64::NAN, f64::INFINITY] {
+            m.max_segment_mm = Some(bad);
+            let err = m.validate().unwrap_err().to_string();
+            assert!(
+                err.starts_with("max_segment_mm must be at least 0.5"),
+                "{err}"
+            );
+        }
     }
 
     #[test]
