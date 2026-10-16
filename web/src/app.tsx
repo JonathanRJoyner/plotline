@@ -6,7 +6,7 @@ import { CircleHelp, Crosshair, Download, Image as ImageIcon, ImageUp, LayoutGri
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, ResultEvent } from "./events";
-import { ACCEPT, imageFile } from "./files";
+import { ACCEPT, download, imageFile } from "./files";
 import { History, setupOf } from "./history";
 import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, StylesDialog, SuggestionsPanel, type Thumb } from "./panels";
 import { Preview } from "./preview";
@@ -37,16 +37,6 @@ const THUMB_PX = 600;
 const FIRST_STYLE = "waves";
 // Where Ctrl+Z belongs to the browser's own undo of typing.
 const TYPING = "textarea, [contenteditable], input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=button])";
-
-// Saves text as a file through a link to an object URL.
-function download(name: string, text: string, type: string) {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url));
-}
 
 // The last preset, kept in the browser so a reload keeps the setup. Storage can be missing or
 // full, and the setup is a convenience, so both are ignored.
