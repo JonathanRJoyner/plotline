@@ -276,8 +276,8 @@ pub fn check(
             "No marks at these settings.".to_string()
         } else {
             format!(
-                "The drawing inks only {:.2} % of the drawing area.",
-                m.inked_share * 100.0
+                "The drawing inks under {} % of the drawing area.",
+                NEARLY_EMPTY * 100.0
             )
         };
         let message =
@@ -544,7 +544,7 @@ mod tests {
         assert!(find(&all, "empty")
             .unwrap()
             .message
-            .starts_with("The drawing inks only"));
+            .starts_with("The drawing inks under 0.1 % of"));
         assert!(!finds(&page(lines(1.0)), "hatch", "empty"));
     }
 
@@ -780,5 +780,21 @@ mod tests {
             ..Speeds::default()
         });
         assert!(find(&s.lint().unwrap(), "lifts").is_some());
+    }
+
+    #[test]
+    fn the_golden_grid_lints_the_same_on_every_target() {
+        // The same setup and literal are in crates/wasm/tests/smoke.rs, so CI proves both
+        // targets agree on the raster.
+        let mut s = Session::new(1 << 24);
+        s.set_image(crate::synthetic::gradient(64, 48));
+        s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        s.update("points", &json!({"threshold": 0.6, "spacing_mm": 2}))
+            .unwrap();
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+        let all = s.lint().unwrap();
+        assert_eq!(find(&all, "dark").unwrap().value, 0.015042735042735043);
     }
 }

@@ -175,6 +175,12 @@ impl Session {
         self.inner.stats().map(|s| json!(s).to_string())
     }
 
+    /// The plot lint findings for the last finished drawing as a JSON list of `{"code",
+    /// "severity", "message", "value", "patch"}`.
+    pub fn lint(&self) -> Option<String> {
+        self.inner.lint().map(|f| json!(f).to_string())
+    }
+
     /// The image's statistics and the suggested changes as `{"stats", "suggestions"}` JSON, or
     /// `undefined` without an image.
     pub fn analysis(&self) -> Option<String> {

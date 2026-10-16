@@ -145,6 +145,19 @@ def test_analysis():
     assert isinstance(a["suggestions"], list)
 
 
+def test_lint_follows_the_speeds():
+    s = Session()
+    with pytest.raises(RuntimeError, match="no result"):
+        s.lint()
+    s.set_image(_core.synthetic_gradient(64, 48))
+    s.update("tone", resolution=64)
+    s.run_blocking()
+    for f in s.lint():
+        assert set(f) == {"code", "severity", "message", "value", "patch"}
+    s.speeds.pen_lift_s = 1000.0
+    assert "lifts" in [f["code"] for f in s.lint()]
+
+
 def test_run_blocking_grid_and_exports(tmp_path):
     s = Session()
     s.set_image(_core.synthetic_gradient(64, 48))

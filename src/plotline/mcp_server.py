@@ -39,7 +39,8 @@ INSTRUCTIONS = (
     "then set_page and set_pens if the defaults do not fit, then list_styles and describe_style "
     "to choose a style and see its settings. Call analyse_image to see the image's statistics and "
     "suggested changes; apply a suggestion with run(style=..., settings=...) or set_page. run "
-    "draws the image and returns its stats and a preview at true pen width. Look at the preview, "
+    "draws the image and returns its stats, the plot lint's findings and a preview at true pen "
+    "width; apply a finding's patch the same way as a suggestion's. Look at the preview, "
     "change settings with run(settings=...), and repeat; only the stages after a changed setting "
     "run again. Use preview with region_mm to inspect detail. export writes the result. All "
     "lengths are millimetres, the page origin is its top-left corner and y grows down. Paths must "
@@ -201,11 +202,13 @@ def build_server(session: Session | None = None) -> MCPServer:
         reset: bool = False,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
-        px wide. A style that differs from the current one replaces it; a stage the two styles
-        share keeps the values changed from the old style's defaults, and the rest take the new
-        style's defaults. reset puts every setting back to the style's defaults first. settings
-        is {stage: {setting: value}} and changes only the values given; only the stages after a
-        changed setting run again. When a change is refused, nothing changes and nothing runs."""
+        px wide. The JSON's lint key lists physical problems with the drawing as {code, severity,
+        message, value, patch}; a patch applies like an analyse_image suggestion's. A style that
+        differs from the current one replaces it; a stage the two styles share keeps the values
+        changed from the old style's defaults, and the rest take the new style's defaults. reset
+        puts every setting back to the style's defaults first. settings is {stage: {setting:
+        value}} and changes only the values given; only the stages after a changed setting run
+        again. When a change is refused, nothing changes and nothing runs."""
         with _errors(), ExitStack() as stack:
             old_style, old_settings = session.style.name, session.settings
             try:
@@ -239,7 +242,8 @@ def build_server(session: Session | None = None) -> MCPServer:
             if session.state is RunState.running or session.result is not handle.result:
                 raise Cancelled("the run was cancelled")
             png = session.preview_png(_page_px(session))
-            return [json.dumps(asdict(session.stats())), Image(data=png, format="png")]
+            result = {**asdict(session.stats()), "lint": session.lint()}
+            return [json.dumps(result), Image(data=png, format="png")]
 
     @server.tool()
     async def preview(

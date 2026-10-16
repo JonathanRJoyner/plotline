@@ -24,6 +24,14 @@ fn grid_matches_the_golden_file() {
     assert_eq!(speeds["draw_mm_s"], 10.0);
     let stats: serde_json::Value = serde_json::from_str(&s.stats().unwrap()).unwrap();
     assert!(stats["estimated_seconds"].as_f64().unwrap() > 0.0);
+    // The same literal is pinned in crates/core/src/lint.rs on the native target.
+    let lint: serde_json::Value = serde_json::from_str(&s.lint().unwrap()).unwrap();
+    let dark = lint
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["code"] == "dark");
+    assert_eq!(dark.unwrap()["value"], 0.015042735042735043);
     let d = s.drawing().unwrap();
     let canvas: serde_json::Value = serde_json::from_str(&d.canvas()).unwrap();
     assert_eq!(canvas["width_mm"], 100.0);

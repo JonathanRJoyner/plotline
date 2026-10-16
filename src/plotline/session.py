@@ -384,6 +384,16 @@ class Session:
         self._core.set_speeds(asdict(self.speeds))
         return Stats(**_have(self._core.stats()))
 
+    def lint(self) -> list[dict[str, Any]]:
+        """Physical problems with the result, as ``{"code", "severity", "message", "value",
+        "patch"}``: ``severity`` is ``"error"``, ``"warning"`` or ``"info"``, ``value`` the number
+        the check tested, and ``patch`` ``None`` or any of ``style``, ``settings`` and ``page``, as
+        in :meth:`analysis`. The result was measured when its run ended; the findings follow the
+        current style, settings, pens, ``speeds`` and machine. Raises ``RuntimeError`` when there
+        is no result."""
+        self._core.set_speeds(asdict(self.speeds))
+        return _have(self._core.lint())
+
     def preview_png(
         self,
         width_px: int = 1000,
