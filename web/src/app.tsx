@@ -219,8 +219,8 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
       {/* Grouped, so a narrow window wraps whole groups. */}
       <div class="toolbar" id="toolbar" tabIndex={-1}>
         <span class="group" data-tour="image">
-          <label class="button">
-            <ImageUp /> Open image
+          <label class="button" title="Open image">
+            <ImageUp /> <span class="label">Open image</span>
             <input
               class="visually-hidden" type="file" accept={ACCEPT}
               onChange={(e) => {
@@ -230,34 +230,34 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
               }}
             />
           </label>
-          <button type="button" onClick={onSample}><Sparkles /> Sample image</button>
+          <button type="button" title="Sample image" onClick={onSample}><Sparkles /> <span class="label">Sample image</span></button>
         </span>
         <span class="group" data-tour="run">
           <button type="button" class="primary" disabled={!preview.hasImage} onClick={onRun}><Play /> Run</button>
-          <button type="button" disabled={run.state !== "running" || stopping} onClick={() => { setStopFor(run.id); onStop(); }}><Square /> Stop</button>
+          <button type="button" title="Stop" disabled={run.state !== "running" || stopping} onClick={() => { setStopFor(run.id); onStop(); }}><Square /> <span class="label">Stop</span></button>
         </span>
         <span class="group" data-tour="undo">
           <button type="button" class="icon" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!onUndo} onClick={onUndo}><Undo2 /></button>
           <button type="button" class="icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!onRedo} onClick={onRedo}><Redo2 /></button>
         </span>
-        <span class="group" data-tour="view">
-          <label class="chip">
+        <span class="group shrink" data-tour="view">
+          <label class="chip" title="Source">
             <input class="visually-hidden" type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} />
-            <ImageIcon /> Source
+            <ImageIcon /> <span class="label">Source</span>
           </label>
-          <label class="chip">
+          <label class="chip" title="Travel">
             <input class="visually-hidden" type="checkbox" checked={showTravel} onChange={(e) => setShowTravel(e.currentTarget.checked)} />
-            <Route /> Travel
+            <Route /> <span class="label">Travel</span>
           </label>
         </span>
-        <span class="group">
-          <button type="button" title="Show the whole page; 0 does the same with the preview focused" onClick={() => setFits((n) => n + 1)}><Maximize /> Fit page</button>
+        <span class="group shrink">
+          <button type="button" title="Show the whole page; 0 does the same with the preview focused" onClick={() => setFits((n) => n + 1)}><Maximize /> <span class="label">Fit page</span></button>
           <span class="zoom" title="The preview's size against the paper's">{zoomPercent(view.scale)}%</span>
         </span>
-        <span class="group end">
-          <button type="button" disabled={stats === null} onClick={onSvg}><Download /> Export SVG</button>
-          <button type="button" data-tour="machine" onClick={onSettings}><Gear /> Settings</button>
-          <button type="button" onClick={onTour}><CircleHelp /> Tour</button>
+        <span class="group end shrink">
+          <button type="button" title="Export SVG" disabled={stats === null} onClick={onSvg}><Download /> <span class="label">Export SVG</span></button>
+          <button type="button" title="Settings" data-tour="machine" onClick={onSettings}><Gear /> <span class="label">Settings</span></button>
+          <button type="button" title="Tour" onClick={onTour}><CircleHelp /> <span class="label">Tour</span></button>
           <ThemeButton />
         </span>
       </div>

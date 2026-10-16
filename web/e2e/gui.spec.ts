@@ -288,6 +288,18 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await ran(page, id);
 });
 
+test("the toolbar keeps to one row on a wide window and two on a phone, its buttons still named", async ({ page }) => {
+  await open(page);
+  const toolbar = page.locator(".toolbar");
+  for (const [width, rows] of [[1730, 1], [1280, 1], [960, 2], [375, 2]] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    const { height, overflow } = await toolbar.evaluate((e) => ({ height: e.getBoundingClientRect().height, overflow: e.scrollWidth > e.clientWidth }));
+    expect(Math.round((height - 8) / 36), `rows at ${width} px`).toBe(rows); // a row is a 30 px button and a 6 px gap
+    expect(overflow, `overflow at ${width} px`).toBe(false);
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
+  }
+});
+
 test("the test chart draws without an image", async ({ page }) => {
   await open(page);
   await page.getByRole("button", { name: "Test chart" }).click();
