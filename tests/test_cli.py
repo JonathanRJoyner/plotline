@@ -12,6 +12,7 @@ import click
 import numpy as np
 import pytest
 from click.testing import CliRunner
+from machines import MACHINE
 from pngs import write_png
 
 from plotline import Pen, _core, inks
@@ -273,8 +274,75 @@ def test_unknown_names_and_files_are_reported(tmp_path, image):
         (("grid", image, "--preset", str(tmp_path / "gone.json")), gone),
         (("grid", image, "--preset", str(bad_preset)), "canvas: unknown field `bogus`"),
         (("grid", image, "--preset", str(no_canvas)), "preset field 'canvas' must be an object"),
+        (("grid", image, "--machine", str(tmp_path / "gone.json")), gone),
     ]
     for args, message in cases:
         r = run("run", *args, "--out", str(tmp_path / "o.svg"))
         # "Error: " is what click prints for a ClickException; any other exception would not show.
         assert r.exit_code == 1 and r.stderr.startswith(f"Error: {message}"), r.output
+
+
+def coarse(tmp_path, image, *args):
+    """A run of a coarse grid that writes its SVG into ``tmp_path``."""
+    args += ("--set", "tone.resolution=64", "--set", "points.spacing_mm=5", "--quiet")
+    return run("run", "grid", image, "--out", str(tmp_path / "o.svg"), *args)
+
+
+def test_a_machine_file_sets_the_page_and_gcode_is_written(tmp_path, image):
+    machine, saved, out = tmp_path / "m.json", tmp_path / "p.json", tmp_path / "g"
+    machine.write_text(json.dumps(MACHINE))
+    args = ["--machine", str(machine), "--save-preset", str(saved)]
+    r = coarse(tmp_path, image, *args, "--gcode", str(out))
+    assert r.exit_code == 0, r.output
+    assert f"gcode: 1 file in {out}" in r.stdout
+    # The page is the machine's drawable area, and the margin and fit mode stay as they were.
+    preset = json.loads(saved.read_text())
+    assert preset["canvas"] == {"width_mm": 200, "height_mm": 174, "margin_mm": 10, "fit": "fit"}
+    assert preset["machine"] == MACHINE
+    [file] = out.iterdir()
+    assert file.name == "plot_1_Black_0.3.gcode" and "G1 Z4 F1200" in file.read_text()
+    # --width and --height come after the machine and win.
+    r = coarse(tmp_path, image, *args, "--width", "100", "--height", "80", "--gcode", str(out))
+    assert r.exit_code == 0, r.output
+    assert json.loads(saved.read_text())["canvas"]["width_mm"] == 100
+    assert json.loads(saved.read_text())["canvas"]["height_mm"] == 80
+
+
+def test_a_preset_file_gives_its_machine_and_two_pens_give_two_files(tmp_path, image):
+    machine, saved, out = tmp_path / "m.json", tmp_path / "p.json", tmp_path / "g"
+    machine.write_text(json.dumps(MACHINE))
+    r = coarse(tmp_path, image, "--machine", str(machine), "--save-preset", str(saved))
+    assert r.exit_code == 0, r.output
+    # A preset that has a machine works as the machine file, and also needs no --machine.
+    for option in ("--machine", "--preset"):
+        r = coarse(tmp_path, image, option, str(saved), "--gcode", str(out))
+        assert r.exit_code == 0 and f"gcode: 1 file in {out}" in r.stdout, r.output
+    pens = ["--pen", "A:0.3:#808080", "--pen", "B:0.3:black", "--set", "split.mode=light_to_dark"]
+    r = coarse(tmp_path, image, "--preset", str(saved), "--gcode", str(out / "two"), *pens)
+    assert r.exit_code == 0 and f"gcode: 2 files in {out / 'two'}" in r.stdout, r.output
+    assert sorted(f.name for f in (out / "two").iterdir()) == ["plot_1_A.gcode", "plot_2_B.gcode"]
+
+
+def test_a_gcode_run_needs_a_machine_that_works(tmp_path, image):
+    out = tmp_path / "g"
+    r = coarse(tmp_path, image, "--gcode", str(out))
+    message = "--gcode needs a machine: give --machine or a --preset that has one"
+    assert r.exit_code == 2 and message in r.output
+    assert not (tmp_path / "o.svg").exists() and not out.exists()  # refused before the run
+    # A preset saved without a machine has none to give.
+    none = str(tmp_path / "none.json")
+    assert coarse(tmp_path, image, "--save-preset", none).exit_code == 0
+    r = coarse(tmp_path, image, "--machine", none)
+    assert r.exit_code == 2 and "is a preset with no machine" in r.output
+    r = coarse(tmp_path, image, "--preset", none, "--gcode", str(out))
+    assert r.exit_code == 2 and message in r.output
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({**MACHINE, "z_up_mm": 3}))
+    r = coarse(tmp_path, image, "--machine", str(bad))
+    assert r.exit_code == 1 and "z_up_mm must be above z_down_mm" in r.stderr, r.output
+    # A page larger than the machine's area is refused when the G-code is written.
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(MACHINE))
+    r = coarse(tmp_path, image, "--machine", str(good), "--width", "300", "--gcode", str(out))
+    assert r.exit_code == 1 and "larger than the machine's" in r.stderr, r.output
+    assert not out.exists()

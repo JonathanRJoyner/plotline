@@ -270,8 +270,8 @@ pub fn flow_style() -> Style {
     )
 }
 
-/// A space-filling curve that folds tighter where it is darker, broken where it leaves the image:
-/// tone, split, hilbert, order.
+/// One space-filling curve over the whole page that folds tighter where it is darker: tone, split,
+/// hilbert, order.
 pub fn hilbert_style() -> Style {
     tone_style(
         "hilbert",
