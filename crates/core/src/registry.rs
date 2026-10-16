@@ -13,6 +13,7 @@ use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
 use crate::stages::hilbert::HilbertStage;
 use crate::stages::ink::InkStage;
+use crate::stages::mosaic::MosaicStage;
 use crate::stages::order::OrderStage;
 use crate::stages::poisson::PoissonPlacer;
 use crate::stages::sketch::SketchStage;
@@ -281,6 +282,18 @@ pub fn hilbert_style() -> Style {
     )
 }
 
+/// The image cut into patches, each filled with lines at its own angle: tone, split, mosaic, order.
+pub fn mosaic_style() -> Style {
+    tone_style(
+        "mosaic",
+        "Mosaic",
+        "The image cut into patches that follow its shapes, each filled with parallel lines at its \
+         own angle, closer together where it is darker.",
+        Arc::new(MosaicStage),
+    )
+    .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -314,6 +327,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(contours_style()),
         Arc::new(flow_style()),
         Arc::new(hilbert_style()),
+        Arc::new(mosaic_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -372,7 +386,7 @@ mod tests {
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
                 "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
-                "hilbert"
+                "hilbert", "mosaic"
             ]
         );
         assert!(get_style("_slow").is_some());
@@ -447,6 +461,7 @@ mod tests {
         let gamma = |name: &str| get_style(name).unwrap().defaults()["tone"]["gamma"].clone();
         assert_eq!(gamma("waves"), json!(1.9));
         assert_eq!(gamma("spiral"), json!(1.9));
+        assert_eq!(gamma("mosaic"), json!(1.9));
         assert_eq!(gamma("hatch"), json!(1.0));
         assert_eq!(gamma("grid"), json!(1.0));
     }
