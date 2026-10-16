@@ -98,6 +98,7 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
   position: absolute;
   top: 10px;
   left: 50%;
+  width: max-content; /* else left: 50% caps its width at half the preview */
   max-width: calc(100% - 20px);
   margin: 0;
   padding: 6px 12px;

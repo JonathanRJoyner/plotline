@@ -225,7 +225,7 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
           </label>
         </span>
         <span class="group">
-          <button type="button" onClick={() => setFits((n) => n + 1)}><Maximize /> Fit</button>
+          <button type="button" title="Show the whole page; 0 does the same with the preview focused" onClick={() => setFits((n) => n + 1)}><Maximize /> Fit page</button>
           <span class="zoom" title="The preview's size against the paper's">{zoomPercent(view.scale)}%</span>
         </span>
         <span class="group end">
@@ -241,7 +241,7 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
           {...preview} frames={frames} result={result} running={run.state === "running"} showSource={showSource}
           showTravel={showTravel} view={view} onView={setView} fits={fits}
         />
-        {thin && <p class="hint">The pen is under a pixel wide at this zoom, so its marks barely show: zoom in to see them.</p>}
+        {thin && <p class="hint">At this zoom the pen is under a pixel wide: zoom in to see its marks.</p>}
       </div>
       <footer data-tour="status">
         <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
@@ -409,7 +409,7 @@ export function App() {
 
   async function savePreset() {
     const preset = await call("preset");
-    if (preset) download("preset.json", JSON.stringify(preset, null, 2), "application/json");
+    if (preset) download(`plotline-${state?.style ?? "drawing"}-preset.json`, JSON.stringify(preset, null, 2), "application/json");
   }
 
   async function loadPreset(file: File) {
@@ -420,12 +420,15 @@ export function App() {
       setErrors((es) => ({ ...es, preset: `${file.name} is not a preset: it is not valid JSON.` }));
       return;
     }
-    setWarnings((await call<string[]>("loadPreset", [preset], "preset")) ?? []);
+    const warned = await call<string[]>("loadPreset", [preset], "preset");
+    // The engine's message names no file, and a refusal is the only way `warned` is undefined.
+    if (!warned) setErrors((es) => ({ ...es, preset: es.preset && `Could not load ${file.name} (${es.preset}).` }));
+    setWarnings(warned ?? []);
   }
 
   async function exportAs(format: "svg" | "json") {
     const text = await call<string>(format);
-    if (text !== undefined) download(`drawing.${format}`, text, format === "svg" ? "image/svg+xml" : "application/json");
+    if (text !== undefined) download(`plotline-${state?.style ?? "drawing"}.${format}`, text, format === "svg" ? "image/svg+xml" : "application/json");
   }
 
   async function exportGcode(layer: number) {
