@@ -331,8 +331,8 @@ impl Run {
     }
 
     /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}`, or what a
-    /// search found, as `{stage, key, value, error, current, current_error, budget, trials,
-    /// reason, patch}`, once it is done; `None` for a plain run.
+    /// search found, as `{stage, key, value, error, minutes, current, current_error,
+    /// current_minutes, budget, trials, reason, patch}`, once it is done; `None` for a plain run.
     fn result<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         let found = self.peek(None, |run| run.result());
         found.map(|r| value_to_py(py, &r)).transpose()

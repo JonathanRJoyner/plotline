@@ -111,9 +111,10 @@ class RunHandle:
 
     @property
     def optimum(self) -> dict[str, Any] | None:
-        """``{stage, key, value, error, current, current_error, budget, trials, reason, patch}``:
-        the best value found and its tone error, the current value and its own, ``trials`` as
-        ``{value, error, metric, over}`` in order, a sentence, and ``patch``, which
+        """``{stage, key, value, error, minutes, current, current_error, current_minutes, budget,
+        trials, reason, patch}``: the best value found with its tone error and plot time, the
+        current value with its own, ``trials`` as ``{value, error, minutes, metric, over, slow,
+        warnings, failed}`` in order, a sentence, and ``patch``, which
         ``{"settings": {stage: {key: value}}}`` applies, or ``None`` when the current value is
         best. Nothing is applied."""
         return self._optimum
@@ -356,13 +357,16 @@ class Session:
         """Search the style's density setting for the value whose drawing follows the tone map
         most closely, on a worker thread as ``run`` does, and return its handle at once.
 
-        It runs the style eight times: at the current value, then by golden-section search from a
-        quarter to four times it. Given ``metric`` and ``target``, as for ``fit``, a trial whose
-        drawing goes over the target does not count. The settings are left alone: when the handle
-        is ``done``, ``result`` is the drawing of the current settings and the handle's
-        ``optimum`` the suggestion, which ``update`` applies. Raises ``RuntimeError`` when no
-        image is loaded and ``ValueError`` as ``fit`` does, or for only one of ``metric`` and
-        ``target``.
+        It runs the style up to nine times: at the current value, then at half-octave steps from
+        a quarter to four times it. A trial does not count when its run fails, or when its drawing
+        plots for over twice the current value's time, or an hour if that is more, or has a plot
+        lint warning or error the current value's drawing does not. Given ``metric`` and
+        ``target``, as for ``fit``, a trial whose drawing goes over the target does not count
+        either, and a ``minutes`` target replaces the time limit. The settings are left alone:
+        when the handle is ``done``, ``result`` is the drawing of the current settings and the
+        handle's ``optimum`` the suggestion, which ``update`` applies. Raises ``RuntimeError``
+        when no image is loaded and ``ValueError`` as ``fit`` does, or for only one of ``metric``
+        and ``target``.
         """
         self._core.set_speeds(asdict(self.speeds))
         return self._spawn(self._start(lambda: self._core.optimize(metric, target)))

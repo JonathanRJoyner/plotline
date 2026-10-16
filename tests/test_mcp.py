@@ -277,7 +277,7 @@ async def test_optimize_suggests_a_density_and_changes_nothing():
         assert not r.is_error, text(r)
         found = json.loads(r.content[0].text)
         assert (found["stage"], found["key"], found["current"]) == ("hatch", "spacing_mm", 1.0)
-        assert len(found["trials"]) == 8 and "tone" in json.loads(r.content[1].text)
+        assert len(found["trials"]) == 9 and "tone" in json.loads(r.content[1].text)
         assert data(await call(c, "get_session"))["settings"]["hatch"]["spacing_mm"] == 1.0
         r = await call(c, "optimize", metric="minutes")
         assert r.is_error and "both a metric and a target" in text(r)
