@@ -17,6 +17,15 @@
 //! its trails ([`trails`]) are the curves, each drawn as one path, so the pen lifts once per curve
 //! rather than once per arc.
 //!
+//! A tile can hold only an odd number of arcs a corner, or none, so a tone between two counts is
+//! rounded, and the rounding error is passed on to the tiles after it in row-major order with the
+//! weights of R. W. Floyd and L. Steinberg, "An adaptive algorithm for spatial greyscale",
+//! *Proc. SID* 17(2), 1976, pp. 75-77: 7/16 to the next tile in the row, and 3/16, 5/16 and 1/16
+//! to the tiles below to the left, below and below to the right. The counts then average to the
+//! tone over a stretch of tiles, as the dots of an error-diffused picture do, where plain
+//! rounding would give a tone near a rounding point one count over a whole area. Every count
+//! stays odd, or none, so the joins stay whole.
+//!
 //! When the drawing is split between pens, lane `i` of `n` turns its tile grid by `90 i / n`
 //! degrees about the tone map's centre, so that the lanes' grids are spread evenly over the
 //! quarter turn after which a square grid repeats, and draws its turns from its own random stream.
@@ -59,7 +68,7 @@ pub struct TruchetSettings {
 impl Default for TruchetSettings {
     fn default() -> Self {
         TruchetSettings {
-            tile_mm: 8.0,
+            tile_mm: 6.0,
             spacing_mm: 0.4,
             seed: 0,
         }
@@ -89,10 +98,11 @@ fn rotate(centre: [f64; 2], turn: [f64; 2], p: [f64; 2]) -> [f64; 2] {
 /// The tiles cover the tone map's rect from its top-left corner, so the last column and row may
 /// overhang it. Each tile takes its turn from the seeded generator, ink or not, so a change of
 /// tone never reshuffles the turns; its ink is the mean of the tone at the centres of a 4 by 4
-/// grid of sub-squares. With `t` that ink and `m_max` from [`nest_limit`], `n = t (2 m_max + 1)`
-/// decides the tile's arcs: none when `n` is under a half, else about each of its two corners the
-/// odd number of arcs nearest `n`, at most `2 m_max + 1`. A tile whose 16 samples all fall off the
-/// map holds none. The curves are cut to the rect.
+/// grid of sub-squares. With `t` that ink and `m_max` from [`nest_limit`], the tile wants
+/// `n = t (2 m_max + 1)` arcs about each corner, plus the rounding error the tiles before it
+/// passed on. It holds none when `n` is under a half, else the odd number nearest `n`, at most
+/// `2 m_max + 1`, and passes `n` less that number on. A tile whose 16 samples all fall off the
+/// map holds none, and neither takes nor passes on error. The curves are cut to the rect.
 ///
 /// A step makes a chunk of rows of tiles, for about 30 frames that show the arcs so far, one path
 /// each. The last step joins the arcs, and its frame and the artifact hold the curves.
@@ -178,6 +188,7 @@ impl Stage for TruchetStage {
             arcs: Paths::new(),
             ends: Vec::new(),
             joined: None,
+            error: vec![0.0; (rows + 1) * (cols + 2)],
         }))
     }
 }
@@ -209,6 +220,9 @@ struct TruchetRun {
     ends: Vec<(usize, usize)>,
     /// The finished curves, once joined.
     joined: Option<Arc<Paths>>,
+    /// The rounding error passed on to each tile, row by row, with a spare column either side of
+    /// each row and one spare row.
+    error: Vec<f64>,
 }
 
 impl TruchetRun {
@@ -256,12 +270,23 @@ impl TruchetRun {
                 ink += f64::from(self.tone.sample(p));
             }
         }
-        let n = ink / 16.0 * (2 * self.reach + 1) as f64;
-        if !on_map || n < 0.5 {
+        if !on_map {
             return;
         }
-        // The odd number of arcs nearest n is 2 m + 1.
-        let m = ((n / 2.0).floor() as usize).min(self.reach) as i64;
+        let stride = self.cols + 2;
+        let here = r * stride + c + 1;
+        let n = ink / 16.0 * (2 * self.reach + 1) as f64 + self.error[here];
+        // The odd number of arcs nearest n is 2 m + 1, and none is nearer when n is under a half.
+        let nests = (n >= 0.5).then(|| ((n / 2.0).floor() as usize).min(self.reach));
+        let rounding = n - nests.map_or(0.0, |m| (2 * m + 1) as f64);
+        self.error[here + 1] += rounding * 7.0 / 16.0;
+        self.error[here + stride - 1] += rounding * 3.0 / 16.0;
+        self.error[here + stride] += rounding * 5.0 / 16.0;
+        self.error[here + stride + 1] += rounding / 16.0;
+        let Some(m) = nests else {
+            return;
+        };
+        let m = m as i64;
         let corners: [[usize; 2]; 2] = if flip {
             [[1, 0], [0, 1]]
         } else {
@@ -366,17 +391,36 @@ impl StageRun for TruchetRun {
 mod tests {
     use super::*;
     use crate::stage::Lane;
-    use crate::test_util::{
-        assert_inside, bounds, run_tone_stage, run_tone_stage_in_lane, tone_map,
-    };
+    use crate::test_util::{assert_inside, bounds, run_tone_stage_in_lane, tone_map};
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
 
     /// The rect of `tone_map(16, 8, ..)`: four by two tiles of 8 mm.
     const RECT: [f64; 4] = [10.0, 10.0, 32.0, 16.0];
 
+    /// The stage's run over `tone` with `patch` over tiles of 8 mm, where the default is 6, so
+    /// that the tests' tile counts and arc numbers stay round.
     fn run(tone: ToneMap, patch: Value) -> (Vec<Frame>, Arc<Paths>) {
-        run_tone_stage(&TruchetStage, tone, patch)
+        run_in_lane(tone, patch, Lane::SINGLE)
+    }
+
+    fn run_in_lane(tone: ToneMap, patch: Value, lane: Lane) -> (Vec<Frame>, Arc<Paths>) {
+        let patch = crate::settings::merge(&json!({"tile_mm": 8.0}), &patch);
+        run_tone_stage_in_lane(&TruchetStage, tone, patch, lane)
+    }
+
+    /// How many arcs each 8 mm tile of `tone_map`'s rect holds, by column and row, among the tiles
+    /// that hold any, taking an arc for the tile its middle vertex lies in.
+    fn per_tile(frames: &[Frame]) -> BTreeMap<(i64, i64), usize> {
+        let mut counts = BTreeMap::new();
+        for a in arcs(frames).iter() {
+            let tile = (
+                (a[8][0] - 10.0).div_euclid(8.0),
+                (a[8][1] - 10.0).div_euclid(8.0),
+            );
+            *counts.entry((tile.0 as i64, tile.1 as i64)).or_insert(0) += 1;
+        }
+        counts
     }
 
     /// The arcs before joining: the paths of the last frame of the tile pass, which comes just
@@ -410,7 +454,7 @@ mod tests {
     #[test]
     fn settings_schema() {
         let s = TruchetStage.schema();
-        assert_eq!(bounds(&s, "tile_mm"), (2.0, 40.0, 8.0));
+        assert_eq!(bounds(&s, "tile_mm"), (2.0, 40.0, 6.0));
         assert_eq!(bounds(&s, "spacing_mm"), (0.1, 5.0, 0.4));
         assert_eq!(bounds(&s, "seed"), (0.0, 9999.0, 0.0));
         assert_eq!(s["properties"]["spacing_mm"]["x-density"], "inverse");
@@ -471,6 +515,30 @@ mod tests {
             let (frames, _) = run(tone_map(4, 4, |_, _| ink), json!({}));
             assert_eq!(arcs(&frames).len(), 2 * per_corner, "ink {ink}");
         }
+    }
+
+    #[test]
+    fn a_tile_passes_its_rounding_error_on_to_the_tiles_after_it() {
+        // Ink 0.3 wants 2.1 arcs a corner. Alone each tile would hold 3, the odd number nearest,
+        // and 3 is 0.9 too many, which takes 7/16 of that from the next tile in the row and 5/16
+        // from the one below. Rounding goes 3, 1, then the tile below wants 1.95 and holds 1, and
+        // the last, owed what the three before it passed on, wants 2.68 and holds 3.
+        let (frames, _) = run(tone_map(8, 8, |_, _| 0.3), json!({}));
+        let want = [((0, 0), 6), ((1, 0), 2), ((0, 1), 2), ((1, 1), 6)];
+        assert_eq!(per_tile(&frames), BTreeMap::from(want));
+    }
+
+    #[test]
+    fn rounding_error_keeps_the_mean_and_every_count_odd() {
+        // Ink 0.5 wants 3.5 arcs a corner, where plain rounding gives every tile 3.
+        let (frames, _) = run(tone_map(160, 80, |_, _| 0.5), json!({}));
+        let counts = per_tile(&frames);
+        // Two corners hold an odd number of arcs each, so a tile holds 2 mod 4.
+        assert!(counts.values().all(|n| n % 4 == 2), "{counts:?}");
+        assert!(counts.values().any(|&n| n == 6) && counts.values().any(|&n| n == 10));
+        // 40 by 20 tiles, with none left empty.
+        let mean = counts.values().sum::<usize>() as f64 / 2.0 / (40 * 20) as f64;
+        assert!((mean - 3.5).abs() < 0.02, "{mean}");
     }
 
     #[test]
@@ -558,7 +626,7 @@ mod tests {
         let (frames, _) = run(tone(), json!({}));
         assert!(arcs(&frames).iter().all(|a| on_grid(centre(a))));
         let lane = Lane { index: 1, count: 2 };
-        let (frames, paths) = run_tone_stage_in_lane(&TruchetStage, tone(), json!({}), lane);
+        let (frames, paths) = run_in_lane(tone(), json!({}), lane);
         let all = arcs(&frames);
         // Only the pivot of the turn, the map's centre, is a corner of both grids.
         let pivot = [26.0, 18.0];
@@ -589,8 +657,7 @@ mod tests {
             Lane { index: 1, count: 2 },
             Lane { index: 2, count: 3 },
         ] {
-            let (_, paths) = run_tone_stage_in_lane(
-                &TruchetStage,
+            let (_, paths) = run_in_lane(
                 tone_map(10, 5, ink),
                 json!({"tile_mm": 6.0, "spacing_mm": 0.5}),
                 lane,

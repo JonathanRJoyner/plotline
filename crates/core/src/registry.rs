@@ -292,7 +292,6 @@ pub fn truchet_style() -> Style {
          more nested arcs where the image is darker.",
         Arc::new(TruchetStage),
     )
-    .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
 }
 
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
@@ -462,7 +461,6 @@ mod tests {
         let gamma = |name: &str| get_style(name).unwrap().defaults()["tone"]["gamma"].clone();
         assert_eq!(gamma("waves"), json!(1.9));
         assert_eq!(gamma("spiral"), json!(1.9));
-        assert_eq!(gamma("truchet"), json!(1.9));
         assert_eq!(gamma("hatch"), json!(1.0));
         assert_eq!(gamma("grid"), json!(1.0));
     }
