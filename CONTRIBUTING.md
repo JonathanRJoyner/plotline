@@ -46,6 +46,13 @@ npm run check
 npm run build
 ```
 
+The browser tests in `web/e2e` run in Chromium against the bundle `npm run build` wrote, one flow per GUI feature. `npx playwright install chromium` fetches the browser once:
+
+```sh
+npx playwright install chromium
+npm run e2e
+```
+
 ## Regression gallery
 
 When a change can move a drawing (a stage, a style's defaults, the tone map, the pens or the preview), compare the gallery before and after:
@@ -59,6 +66,12 @@ cargo run --release -p plotline-core --example gallery -- target/gallery --basel
 
 Open `target/gallery/index.html`. The engine is deterministic, so every outlined cell is a real change. Say in the pull request which cells changed and why. If a README picture changed too, redraw them with `cargo run --release -p plotline-core --example readme_images`.
 
+`tests/snapshots/gallery-stats.json` keeps the gallery's numbers: path count, pen-down and pen-up length, plot time and plot lint findings for each cell. CI draws the gallery again and fails when the numbers moved but the file did not, and it uploads the gallery page, compared with the base branch, as an artifact. When the change is meant, regenerate the file and commit it, so the review shows the moved numbers:
+
+```sh
+cargo run --release -p plotline-core --example gallery -- target/gallery --snapshot tests/snapshots/gallery-stats.json
+```
+
 ## Rules
 
 The repository is public, so every commit is public.
@@ -70,3 +83,4 @@ The repository is public, so every commit is public.
 - **No personal details.** No personal paths, credentials or private notes.
 - **Layers.** Algorithm code lives in the core crate. The CLI, GUI and MCP only call the session layer.
 - **Tour.** A user-visible GUI feature adds or updates its step in the tour (`STEPS` in `web/src/tour.tsx`).
+- **Browser flows.** A user-visible GUI feature also adds its flow in `web/e2e/gui.spec.ts`, which runs it in a real browser.
