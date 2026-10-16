@@ -18,6 +18,34 @@ use plotline_core::{
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 
+thread_local! {
+    /// The message of the last panic, kept for [`take_panic`].
+    static PANIC: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(message: &str);
+}
+
+/// Runs when the module loads. A panic aborts the module with a bare `unreachable` trap, so the
+/// hook logs the panic's message and keeps it for [`take_panic`].
+#[wasm_bindgen(start)]
+pub fn start() {
+    std::panic::set_hook(Box::new(|info| {
+        let message = format!("the engine failed: {info}");
+        console_error(&message);
+        PANIC.with(|p| *p.borrow_mut() = Some(message));
+    }));
+}
+
+/// The message of the last panic, once, or `undefined` when none happened since the last call.
+#[wasm_bindgen(js_name = takePanic)]
+pub fn take_panic() -> Option<String> {
+    PANIC.with(|p| p.borrow_mut().take())
+}
+
 fn state_name(s: RunState) -> String {
     match s {
         RunState::Idle => "idle",

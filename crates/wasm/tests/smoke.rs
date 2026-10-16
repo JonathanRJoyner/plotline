@@ -252,3 +252,17 @@ fn a_look_is_applied_and_read_back() {
     s.update("waves", r#"{"spacing_mm":1.7}"#).unwrap();
     assert_eq!(s.look(), None);
 }
+#[wasm_bindgen_test]
+fn iso_lines_keep_their_levels_apart_past_u32() {
+    // 256 x 256 cells have 2^17 edges, so on wasm32 `level * edges` wrapped to 0 at level 2^15
+    // and that level's ring took level 0's keys. One cell at 40,000 gives one ring per level.
+    let n = 256;
+    let mut field = vec![0.0f32; n * n];
+    field[128 * n + 128] = 40_000.0;
+    let lines = plotline_core::raster::iso_lines(&field, n, n, 0.5, 1.0, 39_999.5);
+    assert_eq!(lines.len(), 40_000);
+    assert!(
+        lines.iter().all(|l| l.len() == 5),
+        "every ring is a closed diamond"
+    );
+}

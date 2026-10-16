@@ -1,8 +1,8 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
-import { describe, listInks, listPens, listStyles, presetFromText, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
-import { drive, macrotask } from "./driver";
+import { describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
+import { drive, free, macrotask } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `settings` apply after `style`. */
@@ -32,6 +32,9 @@ export type Reply = { id: number; ok: true; state: State; value?: unknown } | { 
 const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
+// A trap: a panic or memory running out aborts the call with a `RuntimeError`, and a stack
+// overflow with a `RangeError`. Either leaves the objects the call was using borrowed for good.
+const trapped = (e: unknown): boolean => e instanceof WebAssembly.RuntimeError || e instanceof RangeError;
 
 export class Protocol {
   private image = false;
@@ -39,47 +42,52 @@ export class Protocol {
   private current: Run | null = null;
   private go: (() => void) | null = null;
   private thumbsId = 0;
+  // What a rebuilt session needs: how to set the image again, and the last preset and speeds a
+  // reply carried.
+  private source: ((s: Session) => void) | null = null;
+  private saved: { preset: string; speeds: string } | null = null;
   private readonly methods: Record<string, (...args: any[]) => unknown>;
 
-  constructor(private readonly session: Session, private readonly post: (msg: Reply | Event | ThumbEvent, transfer?: Transferable[]) => void) {
-    const s = session;
+  constructor(private session: Session, private readonly post: (msg: Reply | Event | ThumbEvent, transfer?: Transferable[]) => void) {
+    // Every call reads `this.session`, which `recover` replaces.
+    const s = (): Session => this.session;
     this.methods = {
       listStyles: () => JSON.parse(listStyles()),
       listPens: () => JSON.parse(listPens()),
       listInks: () => JSON.parse(listInks()),
-      setMachine: (machine: Machine | null) => s.setMachine(JSON.stringify(machine)),
-      gcode: (layer: number) => s.gcode(layer),
+      setMachine: (machine: Machine | null) => s().setMachine(JSON.stringify(machine)),
+      gcode: (layer: number) => s().gcode(layer),
       describe: (name: string) => JSON.parse(describe(name)),
-      setImageBytes: (bytes: Uint8Array) => { s.setImageBytes(bytes); this.image = true; },
-      setImage: (width: number, height: number, rgb: Float32Array) => { s.setImage(width, height, rgb); this.image = true; },
+      setImageBytes: (bytes: Uint8Array) => this.setSource((t) => t.setImageBytes(bytes)),
+      setImage: (width: number, height: number, rgb: Float32Array) => this.setSource((t) => t.setImage(width, height, rgb)),
       // The default A4 drawing area's shape, 190 x 277 mm, so the sample fills it.
       sample: () => this.methods.setImage(600, 875, syntheticStillLife(600, 875)),
-      setCanvas: (canvas: Canvas) => s.setCanvas(JSON.stringify(canvas)),
-      setPens: (pens: Pen[]) => s.setPens(JSON.stringify(pens)),
-      setStyle: (name: string) => s.setStyle(name),
-      applyLook: (name: string) => s.applyLook(name),
-      resetSettings: () => s.resetSettings(),
-      update: (stage: string, values: Record<string, unknown>) => s.update(stage, JSON.stringify(values)),
+      setCanvas: (canvas: Canvas) => s().setCanvas(JSON.stringify(canvas)),
+      setPens: (pens: Pen[]) => s().setPens(JSON.stringify(pens)),
+      setStyle: (name: string) => s().setStyle(name),
+      applyLook: (name: string) => s().applyLook(name),
+      resetSettings: () => s().resetSettings(),
+      update: (stage: string, values: Record<string, unknown>) => s().update(stage, JSON.stringify(values)),
       // The session calls, not `methods`, so the whole patch redraws once. A refusal partway leaves
       // the earlier parts applied; only a stale suggestion can cause one.
       apply: ({ style, settings, page }: Patch) => {
-        if (style) s.setStyle(style);
-        for (const [stage, values] of Object.entries(settings ?? {})) s.update(stage, JSON.stringify(values));
-        if (page) s.setCanvas(JSON.stringify({ ...JSON.parse(s.preset()).canvas, ...page }));
+        if (style) s().setStyle(style);
+        for (const [stage, values] of Object.entries(settings ?? {})) s().update(stage, JSON.stringify(values));
+        if (page) s().setCanvas(JSON.stringify({ ...JSON.parse(s().preset()).canvas, ...page }));
       },
-      setSpeeds: (speeds: Speeds) => s.setSpeeds(JSON.stringify(speeds)),
+      setSpeeds: (speeds: Speeds) => s().setSpeeds(JSON.stringify(speeds)),
       run: () => this.start(),
       // The settings stay as they are: the page applies the value the run's end carries.
-      fit: (metric: string, target: number) => this.start(() => s.fit(metric, target), "fit"),
+      fit: (metric: string, target: number) => this.start(() => s().fit(metric, target), "fit"),
       // The settings stay as they are, and the page only offers what the search found.
-      optimize: (metric?: string, target?: number) => this.start(() => s.optimize(metric ?? null, target ?? null), "optimize"),
+      optimize: (metric?: string, target?: number) => this.start(() => s().optimize(metric ?? null, target ?? null), "optimize"),
       cancel: () => this.current?.cancel(),
-      preset: () => JSON.parse(s.preset()),
-      loadPreset: (preset: unknown) => s.loadPreset(JSON.stringify(preset)),
+      preset: () => JSON.parse(s().preset()),
+      loadPreset: (preset: unknown) => s().loadPreset(JSON.stringify(preset)),
       // The text of a preset file, an exported SVG or an exported JSON drawing.
-      loadPresetText: (text: string) => s.loadPreset(presetFromText(text)),
+      loadPresetText: (text: string) => s().loadPreset(presetFromText(text)),
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
-      restore: (setup: Record<string, unknown>) => s.loadPreset(JSON.stringify({ ...JSON.parse(s.preset()), ...setup })),
+      restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
       // Draws every style after the reply, which carries the id its `thumb` events will have.
       thumbs: (width: number) => {
         const id = ++this.thumbsId;
@@ -87,8 +95,8 @@ export class Protocol {
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
-      svg: () => s.svg(),
-      json: () => s.json(),
+      svg: () => s().svg(),
+      json: () => s().json(),
     };
   }
 
@@ -99,11 +107,50 @@ export class Protocol {
       if (REDRAWS.has(method) && this.image) this.start();
       this.post({ id, ok: true, state: this.state(), value });
     } catch (e) {
-      this.post({ id, ok: false, error: message(e) });
+      this.post({ id, ok: false, error: trapped(e) ? this.recover(e, true) : message(e) });
     }
+    this.release();
+  }
+
+  // Lets a run that `start` set up go.
+  private release(): void {
     const go = this.go;
     this.go = null;
     go?.();
+  }
+
+  private setSource(set: (s: Session) => void): void {
+    set(this.session);
+    this.source = set;
+    this.image = true;
+  }
+
+  // Rebuilds the session after a trap, which leaves its objects borrowed so that every later call
+  // on them fails. A new session gets the image again and the last preset and speeds a reply
+  // carried, and redraws unless the run that trapped was the latest. Returns the panic's message,
+  // which the trap itself does not carry.
+  private recover(e: unknown, redraw: boolean): string {
+    const error = takePanic() ?? message(e);
+    const old = this.session;
+    try {
+      this.current?.cancel(); // the old session's run would otherwise draw on
+    } catch {
+      // the run that trapped is borrowed, and its loop has already ended
+    }
+    this.current = null;
+    this.session = new Session();
+    try {
+      this.source?.(this.session);
+      if (this.saved) {
+        this.session.loadPreset(this.saved.preset);
+        this.session.setSpeeds(this.saved.speeds);
+      }
+      if (redraw && this.image) this.start();
+    } catch {
+      // the new session keeps what was set before this failed
+    }
+    free(old);
+    return error;
   }
 
   // Starts a run; `handle` lets it go after the reply, which reports it running. `drive` would
@@ -115,7 +162,11 @@ export class Protocol {
     this.current = run;
     this.go = () => {
       drive(this.session, run, id, this.post, { kind })
-        .catch((e) => this.post({ type: "end", id, state: "error", error: message(e), stats: null, tone: null, lint: [] }, []))
+        .catch((e) => {
+          const error = trapped(e) ? this.recover(e, this.current !== run) : message(e);
+          this.post({ type: "end", id, state: "error", error, stats: null, tone: null, lint: [] }, []);
+          this.release(); // the redraw, when an older run trapped
+        })
         .finally(() => { if (this.current === run) this.current = null; }); // `drive` freed it
     };
   }
@@ -133,7 +184,7 @@ export class Protocol {
         const trial = this.session.trial(name);
         try {
           for (let frame = trial.nextFrame(); frame; frame = trial.nextFrame()) {
-            frame.free();
+            free(frame);
             if (performance.now() - lastYield >= 50) {
               await macrotask();
               lastYield = performance.now();
@@ -143,10 +194,15 @@ export class Protocol {
           error = trial.error() ?? null;
           png = trial.previewPng(width) ?? null;
         } finally {
-          trial.free();
+          free(trial);
         }
       } catch (e) {
-        error = message(e);
+        if (trapped(e)) {
+          error = this.recover(e, true);
+          this.release();
+        } else {
+          error = message(e);
+        }
       }
       this.post({ type: "thumb", id, style: name, png, error }, png ? [png.buffer as ArrayBuffer] : []);
     }
@@ -154,7 +210,9 @@ export class Protocol {
 
   private state(): State {
     const s = this.session;
-    const { style, canvas, pens, machine, settings } = JSON.parse(s.preset());
+    const preset = s.preset();
+    this.saved = { preset, speeds: s.speeds() };
+    const { style, canvas, pens, machine, settings } = JSON.parse(preset);
     const stats = s.stats();
     const layers: Pen[] = [];
     const drawing = s.drawing();
@@ -162,14 +220,14 @@ export class Protocol {
       try {
         for (let i = 0; i < drawing.layerCount(); i++) layers.push(JSON.parse(drawing.layerPen(i)));
       } finally {
-        drawing.free();
+        free(drawing);
       }
     }
     const analysis = s.analysis();
     const lint = s.lint();
     const tone = s.toneMatch();
     return {
-      image: this.image, style, look: s.look() ?? null, canvas, pens, machine, settings, speeds: JSON.parse(s.speeds()), layers,
+      image: this.image, style, look: s.look() ?? null, canvas, pens, machine, settings, speeds: JSON.parse(this.saved.speeds), layers,
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
       tone: tone ? JSON.parse(tone) : null,
