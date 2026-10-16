@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
 import init, { Session, syntheticGradient } from "../pkg/plotline_wasm.js";
 import { macrotask } from "./driver";
-import type { Ink, Machine, Pen } from "./events";
+import type { Finding, Ink, Machine, Pen } from "./events";
 import { History, setupOf } from "./history";
 import { Protocol, type Reply, type State } from "./protocol";
 import { controlsFor } from "./schema";
@@ -136,7 +136,7 @@ test("a run that fails to post still ends once", async () => {
   ok("setImage", ...image());
   await ended(1);
   const ends = posted.filter((m) => m.type === "end");
-  expect(ends).toEqual([{ type: "end", id: 1, state: "error", error: "boom", stats: null }]);
+  expect(ends).toEqual([{ type: "end", id: 1, state: "error", error: "boom", stats: null, lint: [] }]);
 });
 
 test("cancel stops the current run", async () => {
@@ -189,6 +189,23 @@ test("gcode needs a drawing, whose layers the state lists", async () => {
   await ended(1);
   expect(ok("preset").state.layers.map((p) => p.name)).toEqual(["Black 0.3"]);
   expect(ok("gcode", 0).value as string).toContain("G1 Z4 F1200");
+});
+
+test("the lint findings come with the end event and the state, and their patches apply", async () => {
+  const { posted, ok, ended } = setup();
+  expect(ok("preset").state.lint).toEqual([]);
+  ok("update", "tone", { resolution: 64 });
+  ok("setImage", ...image());
+  await ended(1);
+  const end = posted.find((m) => m.type === "end") as { lint: Finding[] };
+  const { lint } = ok("preset").state;
+  expect(end.lint).toEqual(lint);
+  // Grid dots on the gradient are too sparse to reach dark, and a closer spacing fixes it.
+  const dark = lint.find((f) => f.code === "dark");
+  expect(dark?.patch).toEqual({ settings: { points: { spacing_mm: 0.3 } } });
+  const { state } = ok("apply", dark!.patch);
+  expect((state.settings.points as { spacing_mm: number }).spacing_mm).toBe(0.3);
+  await ended(2);
 });
 
 test("suggestions come with the state", () => {

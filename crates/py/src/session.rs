@@ -177,6 +177,10 @@ impl Session {
         self.inner.stats().map(|s| serde_to_py(py, &s)).transpose()
     }
 
+    fn lint<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.inner.lint().map(|f| serde_to_py(py, &f)).transpose()
+    }
+
     fn analysis<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         self.inner
             .analysis()
