@@ -6,13 +6,14 @@
 //! the worker can transfer, and every error as a `JsError` carrying the engine's message. No
 //! algorithm lives here.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::machine::Machine;
+use plotline_core::runner::Shared;
 use plotline_core::{
-    image, pens, registry, synthetic, Canvas, Drawing, Frame, Layer, Pen, RunState, SessionError,
-    DEFAULT_CACHE_BYTES,
+    image, pens, preview, registry, synthetic, Canvas, Drawing, Frame, Layer, Pen, RunState,
+    SessionError, DEFAULT_CACHE_BYTES,
 };
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -134,6 +135,14 @@ impl Session {
         })
     }
 
+    /// A run of the style `name` at the settings a switch to it would give, which shares the
+    /// cache but leaves the session's style, settings, latest run and drawing alone. Fails for an
+    /// unknown style or when no image is set.
+    pub fn trial(&mut self, name: &str) -> Result<Trial, JsError> {
+        let (run, slot) = self.inner.trial(name)?;
+        Ok(Trial { run, slot })
+    }
+
     /// `idle`, `running`, `done`, `cancelled` or `error`, for the latest run.
     pub fn state(&self) -> String {
         state_name(self.inner.state())
@@ -228,6 +237,36 @@ impl Run {
     /// The failing stage's message, once the run has ended in error.
     pub fn error(&self) -> Option<String> {
         self.inner.error()
+    }
+}
+
+/// A run from [`Session::trial`] with the slot it writes, driven like a [`Run`].
+#[wasm_bindgen]
+pub struct Trial {
+    run: plotline_core::Run,
+    slot: Arc<Mutex<Shared>>,
+}
+
+#[wasm_bindgen]
+impl Trial {
+    /// The next frame, or `undefined` once the run has ended.
+    #[wasm_bindgen(js_name = nextFrame)]
+    pub fn next_frame(&mut self) -> Option<FrameHandle> {
+        self.run.next_frame().map(|frame| FrameHandle { frame })
+    }
+
+    /// The failing stage's message, once the run has ended in error.
+    pub fn error(&self) -> Option<String> {
+        self.run.error()
+    }
+
+    /// The drawing as PNG bytes `width` pixels wide, once the run is done.
+    #[wasm_bindgen(js_name = previewPng)]
+    pub fn preview_png(&self, width: u32) -> Result<Option<Vec<u8>>, JsError> {
+        let drawing = self.slot.lock().unwrap().drawing.clone();
+        Ok(drawing
+            .map(|d| preview::render_png(&d, width, false, false, None))
+            .transpose()?)
     }
 }
 

@@ -200,3 +200,46 @@ test("a refused patch redraws nothing", async () => {
   expect(call("apply", { style: "no such style" }).ok).toBe(false);
   expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
 });
+
+test("thumbs draws styles without touching the drawing, and cancelThumbs stops it", async () => {
+  let thumbs = 0;
+  const { posted, ok, ended } = setup((m, call) => { if (m.type === "thumb" && ++thumbs === 2) expect(call("cancelThumbs").ok).toBe(true); });
+  ok("setCanvas", { width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" });
+  ok("setImage", ...image());
+  await ended(1);
+  const before = ok("preset").state;
+  const id = ok("thumbs", 120).value as number;
+  for (let i = 0; i < 5000 && thumbs < 2; i++) await macrotask();
+  for (let i = 0; i < 50; i++) await macrotask(); // time for a cancelled loop to post by mistake
+  const events = posted.filter((m) => m.type === "thumb");
+  expect(events.map((m) => [m.id, m.style, m.error])).toEqual([[id, "grid", null], [id, "hatch", null]]);
+  expect([...(events[0].png as Uint8Array).slice(1, 4)]).toEqual([80, 78, 71]); // "PNG"
+  expect(ok("preset").state).toEqual(before);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+});
+
+test("thumbs without an image posts each style's error", async () => {
+  const { posted, ok } = setup();
+  ok("thumbs", 120);
+  for (let i = 0; i < 50; i++) await macrotask();
+  const events = posted.filter((m) => m.type === "thumb");
+  expect(events).toHaveLength(18);
+  expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
+});
+
+test("restore applies a setup over the preset and redraws", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const before = ok("preset").state;
+  ok("setStyle", "hatch");
+  ok("setPens", [{ name: "Red", width_mm: 0.5, color: "#ff0000" }]);
+  await ended(3);
+  const { style, canvas, pens, machine, settings } = before;
+  const { state } = ok("restore", { style, canvas, pens, machine, settings });
+  expect(state.style).toBe("grid");
+  expect(state.pens).toEqual(pens);
+  expect(state.settings).toEqual(settings);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(4);
+  await ended(4);
+});
