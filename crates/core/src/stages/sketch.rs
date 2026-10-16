@@ -49,7 +49,7 @@ pub struct SketchSettings {
     #[schemars(range(min = 0.0, max = 1.0), extend("x-step" = 0.01))]
     pub stop: f64,
     /// Most segments to draw.
-    #[schemars(range(min = 100, max = 50000))]
+    #[schemars(range(min = 100, max = 50000), extend("x-density" = "direct"))]
     pub max_lines: u32,
     /// Directions tried.
     #[schemars(range(min = 0, max = 9999))]

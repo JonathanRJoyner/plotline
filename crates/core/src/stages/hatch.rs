@@ -27,7 +27,7 @@ use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
 #[serde(default, deny_unknown_fields)]
 pub struct HatchSettings {
     /// Distance between neighbouring lines.
-    #[schemars(range(min = 0.2, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.2, max = 10.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
     /// Direction of the lines, counter-clockwise from horizontal.
     #[schemars(range(min = 0.0, max = 180.0), extend("x-step" = 1.0, "x-unit" = "deg"))]

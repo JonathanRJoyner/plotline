@@ -49,7 +49,7 @@ const NONE: usize = usize::MAX;
 #[serde(default, deny_unknown_fields)]
 pub struct FlowSettings {
     /// Line spacing over full ink.
-    #[schemars(range(min = 0.3, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.3, max = 10.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
     pub min_spacing_mm: f64,
     /// Line spacing over white.
     #[schemars(range(min = 1.0, max = 30.0), extend("x-step" = 0.1, "x-unit" = "mm"))]

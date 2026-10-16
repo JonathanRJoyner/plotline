@@ -27,7 +27,7 @@ use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
 #[serde(default, deny_unknown_fields)]
 pub struct SpiralSettings {
     /// Distance between neighbouring turns.
-    #[schemars(range(min = 0.5, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.5, max = 10.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
     /// Length of one ripple along the spiral; shorter ripples look darker but take longer to draw.
     #[schemars(range(min = 0.2, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]

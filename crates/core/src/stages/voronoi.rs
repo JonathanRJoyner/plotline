@@ -31,7 +31,7 @@ const PIXELS_PER_STEP: usize = 200_000;
 #[serde(default, deny_unknown_fields)]
 pub struct VoronoiSettings {
     /// Points to place; more points give finer detail and a longer plot.
-    #[schemars(range(min = 100, max = 50000))]
+    #[schemars(range(min = 100, max = 50000), extend("x-density" = "direct"))]
     pub count: u32,
     /// Relaxation passes; more passes spread the points more evenly.
     #[schemars(range(min = 0, max = 200))]
