@@ -1,7 +1,7 @@
 // The run loop of spec 2026-10-12-gui-design section 5: pulls frames from one engine run and
 // posts them as events, throttled, yielding so commands such as a new `start` get their turn.
 import type { Run, Session } from "../pkg/plotline_wasm.js";
-import type { EndEvent, Event, FitResult, FrameEvent, Layer, ResultEvent } from "./events";
+import type { EndEvent, Event, FitResult, FrameEvent, Layer, Optimum, ResultEvent } from "./events";
 
 export type Post = (event: Event, transfer: Transferable[]) => void;
 
@@ -48,13 +48,13 @@ export function postResult(session: Session, id: number, post: Post): void {
 }
 
 // Posts `run`, every throttled `frame`, the `result` when the run is done, and one `end`, which
-// carries what a fit chose.
+// carries the tone match and what a fit chose or a search found, as `kind` says the run is.
 // Frees the run on every path. A later `session.start()` ends this loop with `cancelled`.
 export async function drive(
   session: Session, run: Run, id: number, post: Post,
-  opts: { frameMs?: number; yieldMs?: number; now?: () => number; yieldFn?: () => Promise<void> } = {},
+  opts: { frameMs?: number; yieldMs?: number; now?: () => number; yieldFn?: () => Promise<void>; kind?: "run" | "fit" | "optimize" } = {},
 ): Promise<void> {
-  const { frameMs = 33, yieldMs = 50, now = () => performance.now(), yieldFn = macrotask } = opts;
+  const { frameMs = 33, yieldMs = 50, now = () => performance.now(), yieldFn = macrotask, kind = "run" } = opts;
   try {
     post({ type: "run", id }, []);
     let lastPost = -Infinity;
@@ -79,22 +79,29 @@ export async function drive(
     }
     const state = run.state() as EndEvent["state"];
     if (state === "done") postResult(session, id, post);
-    const fit = run.result();
-    postEnd(session, id, post, state, run.error() ?? null, fit ? JSON.parse(fit) : null);
+    const found = run.result();
+    const parsed = found ? JSON.parse(found) : null;
+    postEnd(session, id, post, state, run.error() ?? null, kind === "fit" ? parsed : null, kind === "optimize" ? parsed : null);
   } finally {
     run.free();
   }
 }
 
-function postEnd(session: Session, id: number, post: Post, state: EndEvent["state"], error: string | null, fit: FitResult | null): void {
+function postEnd(
+  session: Session, id: number, post: Post, state: EndEvent["state"], error: string | null, fit: FitResult | null, optimum: Optimum | null,
+): void {
   const stats = session.stats();
+  const tone = session.toneMatch();
   const lint = session.lint();
-  post({ type: "end", id, state, error, stats: stats ? JSON.parse(stats) : null, fit, lint: lint ? JSON.parse(lint) : [] }, []);
+  post({
+    type: "end", id, state, error, stats: stats ? JSON.parse(stats) : null, tone: tone ? JSON.parse(tone) : null,
+    fit, optimum, lint: lint ? JSON.parse(lint) : [],
+  }, []);
 }
 
 // Posts the events of a run that is already done, such as the test chart's: `run`, `result` and `end`.
 export function postDone(session: Session, id: number, post: Post): void {
   post({ type: "run", id }, []);
   postResult(session, id, post);
-  postEnd(session, id, post, "done", null, null);
+  postEnd(session, id, post, "done", null, null, null);
 }

@@ -10,6 +10,10 @@
 //! C. Sbert, *Image Processing On Line* 1, 2011, doi:10.5201/ipol.2011.llmps-scb), written from
 //! the paper's description. See [`crate::analysis::levels`].
 //!
+//! With `response` auto, the run measures the style's own tone response on a step wedge and gives
+//! the later stages the tone map through the inverse lookup; see [`crate::response`]. The stage
+//! itself makes the same map either way, which is the one the drawing keeps.
+//!
 //! Every step runs in f32 in the Python engine's order, with each setting rounded to f32 where
 //! numpy rounds it, so both engines give the same values.
 
@@ -32,6 +36,16 @@ pub enum Levels {
     /// The Black and White settings.
     Manual,
     /// The tones of the image itself.
+    Auto,
+}
+
+/// Whether the tone map is corrected for the style's own tone response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Response {
+    /// The tone map as the other settings make it.
+    Off,
+    /// Corrected so the drawing's tones follow the tone map.
     Auto,
 }
 
@@ -68,6 +82,8 @@ pub struct ToneSettings {
         extend("x-step" = 0.1, "x-unit" = "mm", "x-advanced" = true)
     )]
     pub blur_mm: f64,
+    /// Auto draws a small test wedge with the style's settings and the first pen, measures how much of the paper each tone covers, and corrects the tone map the style draws from so the drawing's tones follow the image; off leaves it as it is.
+    pub response: Response,
 }
 
 impl Default for ToneSettings {
@@ -82,6 +98,7 @@ impl Default for ToneSettings {
             gamma: 1.0,
             contrast: 0.0,
             blur_mm: 0.0,
+            response: Response::Off,
         }
     }
 }
@@ -219,16 +236,35 @@ fn tone_map(image: &Image, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
     }
 }
 
-/// Centre-crop a row-major `w x h` grid to a width over height of `aspect`, to the nearest pixel
-/// with halves to even as Python's `round` does. Returns the crop and its width and height.
+/// The width and height of the tone map the stage makes from a `w x h` image on `canvas` at
+/// `resolution`, without making it.
+pub(crate) fn map_size(w: usize, h: usize, canvas: &Canvas, resolution: u32) -> (usize, usize) {
+    let (w, h) = if canvas.fit == Fit::Fill {
+        let [_, _, dw, dh] = canvas.drawing_rect();
+        crop_size(w, h, dw / dh)
+    } else {
+        (w, h)
+    };
+    resize_size(w, h, resolution as usize)
+}
+
+/// The width and height of a centre crop of a `w x h` grid to a width over height of `aspect`, to
+/// the nearest pixel with halves to even as Python's `round` does.
+fn crop_size(w: usize, h: usize, aspect: f64) -> (usize, usize) {
+    let ch = h.min(((w as f64 / aspect).round_ties_even() as usize).max(1));
+    let cw = w.min(((h as f64 * aspect).round_ties_even() as usize).max(1));
+    (cw, ch)
+}
+
+/// Centre-crop a row-major `w x h` grid to a width over height of `aspect`, see [`crop_size`].
+/// Returns the crop and its width and height.
 pub(crate) fn crop_to_aspect(
     lum: &[f32],
     w: usize,
     h: usize,
     aspect: f64,
 ) -> (Vec<f32>, usize, usize) {
-    let ch = h.min(((w as f64 / aspect).round_ties_even() as usize).max(1));
-    let cw = w.min(((h as f64 * aspect).round_ties_even() as usize).max(1));
+    let (cw, ch) = crop_size(w, h, aspect);
     let (y0, x0) = ((h - ch) / 2, (w - cw) / 2);
     let rows = lum[y0 * w..(y0 + ch) * w].chunks_exact(w);
     let crop = rows.flat_map(|row| &row[x0..x0 + cw]).copied().collect();
@@ -245,21 +281,26 @@ pub(crate) fn resize(
     h: usize,
     long_edge: usize,
 ) -> (Vec<f32>, usize, usize) {
-    let short = |other: usize, long: usize| {
-        let exact = (other * long_edge) as f64 / long as f64;
-        (exact.round_ties_even() as usize).max(1)
-    };
-    let (tw, th) = if h >= w {
-        (short(w, h), long_edge)
-    } else {
-        (long_edge, short(h, w))
-    };
+    let (tw, th) = resize_size(w, h, long_edge);
     let k = w.max(h) / long_edge;
     if k >= 2 {
         let (blocks, bw, bh) = math::block_average(lum, w, h, k);
         return (math::resample(&blocks, bw, bh, tw, th), tw, th);
     }
     (math::resample(lum, w, h, tw, th), tw, th)
+}
+
+/// The width and height [`resize`] gives a `w x h` grid.
+fn resize_size(w: usize, h: usize, long_edge: usize) -> (usize, usize) {
+    let short = |other: usize, long: usize| {
+        let exact = (other * long_edge) as f64 / long as f64;
+        (exact.round_ties_even() as usize).max(1)
+    };
+    if h >= w {
+        (short(w, h), long_edge)
+    } else {
+        (long_edge, short(h, w))
+    }
 }
 
 #[cfg(test)]
@@ -479,6 +520,21 @@ mod tests {
             },
             (100, 1)
         );
+    }
+    #[test]
+    fn map_size_is_the_size_the_stage_makes() {
+        let fill = Canvas::new(100.0, 50.0, 0.0, Fit::Fill).unwrap();
+        for (canvas, (w, h), resolution) in [
+            (SQUARE, (300, 200), 100),
+            (SQUARE, (200, 300), 64),
+            (fill.clone(), (64, 64), 64),
+            (fill, (1000, 333), 128),
+        ] {
+            let patch = json!({"resolution": resolution});
+            let (_, t) = run_tone(flat(w, h, 0.5), canvas.clone(), patch);
+            let size = map_size(w as usize, h as usize, &canvas, resolution);
+            assert_eq!(size, (t.width as usize, t.height as usize));
+        }
     }
     #[test]
     fn downscaling_averages_rather_than_skips() {

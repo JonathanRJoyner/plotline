@@ -69,24 +69,27 @@ def _have(value: T | None) -> T:
 
 
 class RunHandle:
-    """One run of a style, as ``Session.run``, ``Session.run_blocking`` or ``Session.fit`` makes
-    it.
+    """One run of a style, as ``Session.run``, ``Session.run_blocking``, ``Session.fit`` or
+    ``Session.optimize`` makes it.
 
     ``state`` starts as ``running`` and ends as ``done``, ``cancelled`` or ``error``. ``result``
     is set when the run is ``done`` and ``error`` holds the exception when it ended in ``error``:
     a ``RuntimeError`` with the engine's message for a failed stage, or what a subscriber raised.
-    ``fit`` holds what a fit chose once it is ``done``, and is ``None`` for a plain run. All of
-    them can be read from any thread. A handle from ``run_blocking`` has no thread, so it is
-    finished by the time the caller has it.
+    ``fit`` holds what a fit chose once it is ``done``, and ``optimum`` what a search found; both
+    are ``None`` for a plain run. All of them can be read from any thread. A handle from
+    ``run_blocking`` has no thread, so it is finished by the time the caller has it.
     """
 
-    def __init__(self, run: _core.Run) -> None:
+    def __init__(self, run: _core.Run, applies: bool = False) -> None:
         self._run = run
+        # A fit's value goes into the settings when it ends; a search's suggestion never does.
+        self._applies = applies
         self._thread: threading.Thread | None = None
         self._state = RunState.running
         self._result: Drawing | None = None
         self._error: BaseException | None = None
         self._fit: dict[str, Any] | None = None
+        self._optimum: dict[str, Any] | None = None
 
     @property
     def state(self) -> RunState:
@@ -105,6 +108,15 @@ class RunHandle:
         """``{stage, key, metric, target, value, achieved, samples}``, where ``samples`` lists
         every trial as ``{value, metric}`` in order."""
         return self._fit
+
+    @property
+    def optimum(self) -> dict[str, Any] | None:
+        """``{stage, key, value, error, current, current_error, budget, trials, reason, patch}``:
+        the best value found and its tone error, the current value and its own, ``trials`` as
+        ``{value, error, metric, over}`` in order, a sentence, and ``patch``, which
+        ``{"settings": {stage: {key: value}}}`` applies, or ``None`` when the current value is
+        best. Nothing is applied."""
+        return self._optimum
 
     def cancel(self) -> None:
         """Ask the run to stop; the stage under way sees it at its next check. A run that has
@@ -270,12 +282,13 @@ class Session:
         Path(path).write_text(text, encoding="utf-8", newline="\n")
 
     def load_preset(self, path: str | os.PathLike[str]) -> None:
-        """Read the preset file at ``path`` and apply it, so its style, canvas, pens, machine and
-        settings replace the current ones. A key the file leaves out keeps its default, and each
-        stage or setting the style does not have is dropped with a ``UserWarning``. A preset with
-        a machine also sets ``speeds`` to the machine's. Raises ``ValueError`` for a file that is
-        not a preset or that the engine refuses."""
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        """Read the file at ``path`` and apply the preset it holds, so its style, canvas, pens,
+        machine and settings replace the current ones. The file is a preset, an SVG exported with
+        its preset embedded or a JSON drawing exported with one. A key the file leaves out keeps
+        its default, and each stage or setting the style does not have is dropped with a
+        ``UserWarning``. A preset with a machine also sets ``speeds`` to the machine's. Raises
+        ``ValueError`` for a file that holds no preset or that the engine refuses."""
+        data = _core.preset_from_text(Path(path).read_text(encoding="utf-8"))
         for message in self._core.load_preset(data):
             warnings.warn(message, UserWarning, stacklevel=2)
         if self._core.machine() is not None:
@@ -320,7 +333,22 @@ class Session:
         a style that places none.
         """
         self._core.set_speeds(asdict(self.speeds))
-        return self._spawn(self._start(lambda: self._core.fit(metric, target)))
+        return self._spawn(self._start(lambda: self._core.fit(metric, target), applies=True))
+
+    def optimize(self, metric: str | None = None, target: float | None = None) -> RunHandle:
+        """Search the style's density setting for the value whose drawing follows the tone map
+        most closely, on a worker thread as ``run`` does, and return its handle at once.
+
+        It runs the style eight times: at the current value, then by golden-section search from a
+        quarter to four times it. Given ``metric`` and ``target``, as for ``fit``, a trial whose
+        drawing goes over the target does not count. The settings are left alone: when the handle
+        is ``done``, ``result`` is the drawing of the current settings and the handle's
+        ``optimum`` the suggestion, which ``update`` applies. Raises ``RuntimeError`` when no
+        image is loaded and ``ValueError`` as ``fit`` does, or for only one of ``metric`` and
+        ``target``.
+        """
+        self._core.set_speeds(asdict(self.speeds))
+        return self._spawn(self._start(lambda: self._core.optimize(metric, target)))
 
     def testchart(self) -> Drawing:
         """Make the test chart for the canvas and the first pen and return it; it is also kept in
@@ -361,13 +389,14 @@ class Session:
 
         return unsubscribe
 
-    def _start(self, begin: Callable[[], _core.Run]) -> RunHandle:
+    def _start(self, begin: Callable[[], _core.Run], applies: bool = False) -> RunHandle:
         """Stop the latest run, wait for it, and start the next one in the engine with ``begin``,
-        which takes a snapshot of the session."""
+        which takes a snapshot of the session. ``applies`` is for a fit, whose value goes into
+        the settings when it ends."""
         if self._handle is not None:
             self._handle.cancel()
             self._handle.wait()
-        self._handle = handle = RunHandle(begin())
+        self._handle = handle = RunHandle(begin(), applies)
         return handle
 
     def _spawn(self, handle: RunHandle) -> RunHandle:
@@ -396,9 +425,12 @@ class Session:
             state = RunState(run.state())
             if state is RunState.done:
                 # Applied before the handle ends, so a reader that sees done sees the new value.
-                if (fit := run.result()) is not None:
-                    self._core.update(fit["stage"], {fit["key"]: fit["value"]})
-                    handle._fit = fit
+                found = run.result()
+                if found is not None and handle._applies:
+                    self._core.update(found["stage"], {found["key"]: found["value"]})
+                    handle._fit = found
+                elif found is not None:
+                    handle._optimum = found
                 # No newer run has started, so the engine's latest drawing is this run's.
                 self.result = result = _drawing(_have(self._core.drawing()))
                 handle._end(state, result)
@@ -494,6 +526,17 @@ class Session:
         is no result."""
         self._core.set_speeds(asdict(self.speeds))
         return _have(self._core.lint())
+
+    def tone_match(self) -> dict[str, float] | None:
+        """How the result's tones follow its tone map, seen through a 1.5 mm eye filter, as
+        ``{"error", "ssim", "floor", "reach"}``: ``error`` is the RMS difference in tone-map ink
+        after the coverage is put on the tone map's scale by the line that fits them best (0 is a
+        perfect match), ``ssim`` their structural similarity (1 is identical), and ``floor`` and
+        ``reach`` the coverage that line puts at white and at full ink. ``None`` when there is
+        nothing to compare, as with an empty drawing. Raises ``RuntimeError`` when there is no
+        result."""
+        _have(self._core.stats())
+        return self._core.tone_match()
 
     def preview_png(
         self,

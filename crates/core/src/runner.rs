@@ -10,6 +10,11 @@
 //! map is keyed by its content and its pen by its own, and the keys of its stages carry
 //! `"{index}/{count}"`, since a stage may read its lane. Each lane gives one layer.
 //!
+//! A run whose tone stage has `response` auto first drives a run of its style over a step wedge,
+//! whose frames pass through as the tone stage's. The later stages then read the tone map through
+//! the lookup the wedge gave, keyed by the tone stage's key and the lookup's content, and the
+//! drawing keeps the map as the tone stage made it; see [`crate::response`].
+//!
 //! [`Run`] is driven by its host one [`Run::next_frame`] call at a time, so a host can cancel or
 //! drop it between frames. The cache lock is held only while reading or storing one artifact.
 
@@ -20,6 +25,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::cache::StageCache;
+use crate::presets;
+use crate::response::{self, Prelude};
 use crate::settings::merge;
 use crate::stage::{
     Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
@@ -134,6 +141,12 @@ pub struct Run {
     lanes: Vec<LaneState>,
     /// The stage in progress and its key.
     active: Option<(Box<dyn StageRun>, String)>,
+    /// The wedge run to drive before the first stage, while it has not ended.
+    prelude: Option<Prelude>,
+    /// The tone response lookup the wedge gave, and its key.
+    response: Option<(Arc<Vec<f32>>, String)>,
+    /// The tone map as the tone stage made it, when the later stages read it through the lookup.
+    source: Option<Arc<ToneMap>>,
     state: RunState,
     error: Option<String>,
 }
@@ -168,6 +181,13 @@ impl Run {
             Kind::ROOTS.iter().all(|k| roots.contains_key(k)),
             "a run needs one image, one canvas and one pens root"
         );
+        let prelude = Prelude::new(
+            &style,
+            &settings,
+            Kind::ROOTS.map(|k| &roots[&k].0),
+            &cache,
+            &cancel,
+        );
         Run {
             style,
             settings,
@@ -179,6 +199,9 @@ impl Run {
             done: Vec::new(),
             lanes: Vec::new(),
             active: None,
+            prelude,
+            response: None,
+            source: None,
             state: RunState::Idle,
             error: None,
         }
@@ -198,6 +221,46 @@ impl Run {
             if self.cancel.load(Ordering::Relaxed) {
                 self.write(RunState::Cancelled, None, None);
                 return None;
+            }
+            if let Some(prelude) = &mut self.prelude {
+                if let Some(frame) = prelude.run.next_frame() {
+                    // The wedge's geometry is in its own coordinates, so only the progress shows.
+                    let tone = self
+                        .style
+                        .stages
+                        .iter()
+                        .find(|s| s.provides() == Kind::Tone);
+                    return Some(Frame {
+                        stage: tone.map_or("", |s| s.name()).to_string(),
+                        progress: frame.progress,
+                        label: format!("response: {} {}", frame.stage, frame.label),
+                        points: None,
+                        paths: None,
+                        pen: 0,
+                    });
+                }
+                let prelude = self.prelude.take().expect("the prelude is there");
+                match prelude.run.state() {
+                    RunState::Done => {}
+                    RunState::Cancelled => {
+                        self.write(RunState::Cancelled, None, None);
+                        return None;
+                    }
+                    _ => {
+                        let error = prelude.run.error().unwrap_or_default();
+                        self.write(
+                            RunState::Error,
+                            Some(format!("tone response: {error}")),
+                            None,
+                        );
+                        return None;
+                    }
+                }
+                self.response = prelude.lookup().map(|l| {
+                    let key = response::key(&l);
+                    (Arc::new(l), key)
+                });
+                continue;
             }
             let Some((index, lane)) = self.next_stage() else {
                 match self.drawing() {
@@ -365,6 +428,26 @@ impl Run {
             self.lanes[l.index].done.push((artifact, key));
             return Ok(());
         }
+        // A tone map with a response lookup goes on through it, under a key of its own.
+        let (artifact, key) = match (&artifact, &self.response) {
+            (Artifact::Tone(map), Some((lookup, lookup_key))) => {
+                self.source = Some(map.clone());
+                let ink = map
+                    .ink
+                    .iter()
+                    .map(|&v| response::apply(lookup, v))
+                    .collect();
+                let corrected = ToneMap {
+                    ink,
+                    ..ToneMap::clone(map)
+                };
+                (
+                    Artifact::Tone(Arc::new(corrected)),
+                    response::corrected_key(&key, lookup_key),
+                )
+            }
+            _ => (artifact, key),
+        };
         if self.style.split() == Some(index) {
             let Artifact::Tones(maps) = &artifact else {
                 panic!("the split stage gave {}, not tones", artifact.kind().name());
@@ -431,13 +514,17 @@ impl Run {
             .rev()
             .find(|(s, _)| s.provides() == Kind::Tone)
             .and_then(|(_, (artifact, _))| match artifact {
-                Artifact::Tone(t) => Some(t.clone()),
+                Artifact::Tone(t) => Some(self.source.clone().unwrap_or_else(|| t.clone())),
                 _ => None,
             });
+        // The run's own snapshot, not the session's state, which may have moved on; it holds no
+        // machine, so the session fills that in when it exports.
+        let preset = presets::to_value(&self.style.name, canvas, pens, None, &self.settings);
         Ok(Drawing {
             canvas: Canvas::clone(canvas),
             layers,
             tone,
+            preset: Some(preset),
         })
     }
 

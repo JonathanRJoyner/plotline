@@ -13,6 +13,9 @@
 //! `MIGRATIONS[PRESET_VERSION - 1]`. Entry 0 stays `None`: there was no version 0. The settings are not checked here: the session validates
 //! them stage by stage, drops a stage or key the style does not have with a warning, and lets a
 //! key the preset leaves out keep its default.
+//!
+//! The SVG and JSON exports embed the preset of the run that made the drawing, and [`from_text`]
+//! reads a preset back out of a preset file, an exported SVG or an exported JSON drawing.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -76,9 +79,19 @@ pub enum PresetError {
     /// A section is missing or has the wrong shape: its name, then what it must be.
     #[error("preset field '{0}' must be {1}")]
     BadField(&'static str, &'static str),
-    /// The canvas or a pen is not well formed or is not accepted by its constructor.
+    /// The canvas or a pen is not well formed or is not accepted by its constructor, or the preset
+    /// element of an SVG does not hold JSON.
     #[error("{0}")]
     Invalid(String),
+    /// The text is neither JSON nor an SVG.
+    #[error("not a preset: it is neither JSON nor an SVG")]
+    NeitherJsonNorSvg,
+    /// An SVG without the preset element.
+    #[error("this SVG carries no plotline preset")]
+    NoPresetInSvg,
+    /// A `plotline-paths` drawing without a `preset` key.
+    #[error("this drawing carries no preset")]
+    NoPresetInDrawing,
 }
 
 /// The content of a preset, migrated, shape-checked and with the canvas and pens validated.
@@ -113,6 +126,86 @@ pub fn to_value(
         "machine": machine,
         "settings": settings,
     })
+}
+
+/// The preset a file holds, ready for [`parse`]: a preset itself, an SVG exported with its preset
+/// embedded, or a `plotline-paths` JSON drawing exported with one. Text that starts with `<` is an
+/// SVG; anything else must be JSON. A JSON value that is not a drawing is returned as it is, so
+/// `parse` names what is wrong with it.
+pub fn from_text(text: &str) -> Result<Value, PresetError> {
+    // A byte order mark is what some Windows tools put at the start of a UTF-8 file.
+    let text = text.trim_start_matches('\u{feff}');
+    if text.trim_start().starts_with('<') {
+        return from_svg(text);
+    }
+    let value: Value = serde_json::from_str(text).map_err(|_| PresetError::NeitherJsonNorSvg)?;
+    if value.get("format") != Some(&json!("plotline-paths")) {
+        return Ok(value);
+    }
+    value
+        .get("preset")
+        .cloned()
+        .ok_or(PresetError::NoPresetInDrawing)
+}
+
+/// The JSON in the `<metadata id="plotline-preset">` element of `svg`, with an editor's CDATA
+/// wrapper removed and the entities unescaped.
+fn from_svg(svg: &str) -> Result<Value, PresetError> {
+    let none = || PresetError::NoPresetInSvg;
+    let (_, tag) = svg.split_once(r#"id="plotline-preset""#).ok_or_else(none)?;
+    let (_, content) = tag.split_once('>').ok_or_else(none)?;
+    let (content, _) = content.split_once("</metadata>").ok_or_else(none)?;
+    let content = content.trim();
+    let cdata = content
+        .strip_prefix("<![CDATA[")
+        .and_then(|c| c.strip_suffix("]]>"));
+    serde_json::from_str(&unescape(cdata.unwrap_or(content)))
+        .map_err(|e| PresetError::Invalid(format!("the preset in this SVG is not JSON: {e}")))
+}
+
+/// `s` with the predefined XML entities and the decimal and hex character references replaced. One
+/// left-to-right pass, so `&amp;lt;` gives `&lt;` and not `<`; a reference it does not know stays.
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        // The longest reference, `&#x10FFFF;`, is ten bytes; looking further would make a run of
+        // bare ampersands quadratic.
+        let end = rest.bytes().take(12).position(|b| b == b';');
+        match end.and_then(|end| Some((reference(&rest[1..end])?, end + 1))) {
+            Some((c, len)) => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out + rest
+}
+
+/// The character a reference names, without its `&` and `;`: `lt`, `gt`, `quot`, `apos`, `amp`,
+/// `#65` or `#x41`.
+fn reference(name: &str) -> Option<char> {
+    let code = match name {
+        "lt" => '<' as u32,
+        "gt" => '>' as u32,
+        "quot" => '"' as u32,
+        "apos" => '\'' as u32,
+        "amp" => '&' as u32,
+        _ => {
+            let digits = name.strip_prefix('#')?;
+            match digits.strip_prefix(['x', 'X']) {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => digits.parse().ok()?,
+            }
+        }
+    };
+    char::from_u32(code)
 }
 
 /// Apply `chain[from]` for each `from` from `version` up to `target`.
@@ -229,7 +322,7 @@ pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
 mod tests {
     use super::*;
     use crate::machine::Machine;
-    use crate::test_util::{a4, black, machine};
+    use crate::test_util::{a4, black, drawing_with, machine};
     use serde_json::json;
 
     #[test]
@@ -451,6 +544,82 @@ mod tests {
         v["machine"]["area"] = json!({"x_min": 28, "x_max": 228, "y_min": 42});
         let err = parse(&v).unwrap_err().to_string();
         assert!(err.starts_with("machine: unknown field"), "{err}");
+    }
+
+    /// A preset whose pen name needs every escape.
+    fn awkward_preset() -> Value {
+        let pen = Pen::new("A & <B> \"c\"", 0.3, "#000000").unwrap();
+        to_value(
+            "grid",
+            &a4(),
+            &[pen],
+            None,
+            &json!({"tone": {"resolution": 500}}),
+        )
+    }
+
+    #[test]
+    fn from_text_reads_a_preset_an_svg_and_a_paths_drawing() {
+        let (preset, drawing) = (awkward_preset(), drawing_with(vec![]));
+        assert_eq!(from_text(&preset.to_string()).unwrap(), preset);
+        let svg = crate::export::svg::to_svg(&drawing, Some(&preset));
+        assert_eq!(from_text(&svg).unwrap(), preset);
+        let paths = crate::export::json::to_value(&drawing, Some(&preset));
+        assert_eq!(from_text(&paths.to_string()).unwrap(), preset);
+        // A byte order mark and blank space before the text do not matter.
+        assert_eq!(from_text(&format!("\u{feff}\n {svg}")).unwrap(), preset);
+        assert_eq!(from_text(&format!("\u{feff}{preset}")).unwrap(), preset);
+    }
+
+    #[test]
+    fn from_text_strips_a_cdata_wrapper() {
+        let preset = awkward_preset();
+        let svg = format!(
+            "<svg>\n<metadata id=\"plotline-preset\">\n<![CDATA[{preset}]]>\n</metadata>\n</svg>"
+        );
+        assert_eq!(from_text(&svg).unwrap(), preset);
+    }
+
+    #[test]
+    fn from_text_refuses_files_without_a_preset() {
+        let drawing = drawing_with(vec![]);
+        let refusal = |text: &str| from_text(text).unwrap_err().to_string();
+        assert_eq!(
+            refusal("<svg></svg>"),
+            "this SVG carries no plotline preset"
+        );
+        assert_eq!(
+            refusal(r#"<svg><metadata id="plotline-preset">{}"#),
+            "this SVG carries no plotline preset"
+        );
+        assert_eq!(
+            refusal(&crate::export::json::to_value(&drawing, None).to_string()),
+            "this drawing carries no preset"
+        );
+        assert_eq!(
+            refusal("plain words"),
+            "not a preset: it is neither JSON nor an SVG"
+        );
+        assert!(
+            refusal(r#"<svg><metadata id="plotline-preset">{</metadata>"#)
+                .starts_with("the preset in this SVG is not JSON: ")
+        );
+        // Other JSON is returned as it is; `parse` refuses it.
+        let other = from_text("[1]").unwrap();
+        assert_eq!(parse(&other), Err(PresetError::NotAPreset));
+    }
+
+    #[test]
+    fn unescape_reads_one_pass_and_leaves_unknown_references() {
+        assert_eq!(
+            unescape("&lt;&gt;&quot;&apos;&#65;&#x42;&#X43;&amp;lt;"),
+            "<>\"'ABC&lt;"
+        );
+        assert_eq!(
+            unescape("a & b &bogus; &#; &#xZ; &#1114112; &"),
+            "a & b &bogus; &#; &#xZ; &#1114112; &"
+        );
+        assert_eq!(unescape(&"&".repeat(1000)), "&".repeat(1000));
     }
 
     #[test]

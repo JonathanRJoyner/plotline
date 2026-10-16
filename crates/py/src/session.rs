@@ -176,6 +176,22 @@ impl Session {
         self.inner.testchart().map_err(session_error)
     }
 
+    /// Cancel the latest run and start a search of the style's density setting for the value
+    /// whose drawing follows the tone map most closely, every trial within `target` of `metric`
+    /// when both are given. The settings are left as they are; once the run is done, `result()`
+    /// holds the suggestion. Raises `RuntimeError` when no image is set and `ValueError` for a
+    /// search the engine refuses or only one of `metric` and `target`.
+    #[pyo3(signature = (metric = None, target = None))]
+    fn optimize(&mut self, metric: Option<&str>, target: Option<f64>) -> PyResult<Run> {
+        let budget = match (metric, target) {
+            (Some(m), Some(t)) => Some((m, t)),
+            (None, None) => None,
+            _ => return Err(value_error("give both a metric and a target, or neither")),
+        };
+        let search = self.inner.optimize(budget).map_err(session_error)?;
+        Ok(Run::new(Box::new(search)))
+    }
+
     fn state(&self) -> &'static str {
         state_name(self.inner.state())
     }
@@ -205,6 +221,13 @@ impl Session {
 
     fn lint<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         self.inner.lint().map(|f| serde_to_py(py, &f)).transpose()
+    }
+
+    fn tone_match<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.inner
+            .tone_match()
+            .map(|m| serde_to_py(py, &m))
+            .transpose()
     }
 
     fn analysis<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
@@ -247,7 +270,7 @@ impl Session {
     }
 }
 
-/// One run or fit, driven a frame at a time. The engine job is not `Sync`, so it sits behind a
+/// One run, fit or optimize search, driven a frame at a time. The engine job is not `Sync`, so it sits behind a
 /// lock that `next_frame` holds, with the interpreter lock released, for the whole engine call.
 /// The other methods never wait for that lock: `cancel` sets the job's cancel flag directly, and
 /// `state`, `error` and `result` report a job that is busy in `next_frame` as running with no
@@ -302,10 +325,11 @@ impl Run {
         self.peek(None, |run| run.error())
     }
 
-    /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}`, once it is
-    /// done; `None` for a plain run.
+    /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}`, or what a
+    /// search found, as `{stage, key, value, error, current, current_error, budget, trials,
+    /// reason, patch}`, once it is done; `None` for a plain run.
     fn result<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
-        let fit = self.peek(None, |run| run.fit());
-        fit.map(|r| serde_to_py(py, &r)).transpose()
+        let found = self.peek(None, |run| run.result());
+        found.map(|r| value_to_py(py, &r)).transpose()
     }
 }

@@ -49,7 +49,7 @@ fn produce(style: &str, image: Image, patch: Value) -> Value {
     while run.next_frame().is_some() {}
     assert_eq!(run.state(), RunState::Done, "run failed: {:?}", run.error());
     let drawing = shared.lock().unwrap().drawing.clone();
-    to_value(&drawing.expect("a finished run leaves a drawing"))
+    to_value(&drawing.expect("a finished run leaves a drawing"), None)
 }
 
 /// Every top-level entry of `v` except the layers.

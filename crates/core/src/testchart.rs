@@ -80,6 +80,8 @@ pub fn chart(canvas: &Canvas, pen: &Pen) -> Result<Drawing, String> {
             paths: page.paths,
         }],
         tone: None,
+        // No run made the chart, so it carries no preset.
+        preset: None,
     })
 }
 

@@ -1,10 +1,13 @@
 # Changelog
 
+New entries go under Unreleased until the next release.
+
 ## Unreleased
 
-- **Test chart:** a page of small labelled patches for the first pen, to plot and compare by eye: lines at 0.5 to 4 pen widths apart, dots 1 to 6 pen widths wide, and a solid fill drawn 1 to 8 times over. It shows where lines merge, how big a dot comes out, how many passes the paper takes, and whether the plot takes the time the stats say. `plotline testchart`, the MCP `testchart` tool, `Session.testchart()` and the GUI's Test chart button make it, with no image needed.
+- **Embedded presets.** An exported SVG or JSON drawing carries the preset of the run that made it, in a `<metadata>` element in the SVG and a `preset` key in the JSON. Load preset in the GUI, `--preset` on the command line, `Session.load_preset` and the MCP `load_preset` tool read such a file as a preset, so a drawing brings its look back.
+- **Test chart.** A page of small labelled patches for the first pen, to plot and compare by eye: lines at 0.5 to 4 pen widths apart, dots 1 to 6 pen widths wide, and a solid fill drawn 1 to 8 times over. It shows where lines merge, how big a dot comes out, how many passes the paper takes, and whether the plot takes the time the stats say. `plotline testchart`, the MCP `testchart` tool, `Session.testchart()` and the GUI's Test chart button make it, with no image needed.
 
-## 0.1.0
+## 0.1.0 (2026-10-16)
 
 The first release. One Rust engine runs everything: the Python package, the command line and the MCP server use it as a native extension, and the browser GUI runs it as WebAssembly.
 
@@ -23,6 +26,8 @@ Every run ends with path ordering, which cuts pen-up travel, joins paths whose e
 A style switch keeps the settings you changed in the stages both styles share, Pen use included, and gives the rest the new style's defaults, so a tuned placement of points carries from one Voronoi style to the next, and a value you set comes back when you switch away and back. **Reset to defaults** in the GUI, `reset` on the MCP `run` tool and `Session.reset_settings()` put every setting of the style back.
 
 **Plot lint** checks every finished drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, needless vertices, unused pens, and vertices off the page, the margin or the machine. Each finding comes with the setting change that fixes it where one does. The GUI lists the findings under the stats with Apply buttons, `plotline run` prints them on stderr and fails on a warning with `--strict`, and the MCP `run` result carries them.
+
+**Tone match** scores every drawing on how closely its tones follow the image through a 1.5 mm eye filter, as a tone error and an SSIM, shown with the stats in the GUI and the CLI and returned by the MCP `run` tool. **Optimize** searches the style's density setting for the value with the lowest tone error, within a budget if one is given, in eight runs, and suggests it without applying it: an Optimize button beside Fit to target, `plotline run --optimize` and the MCP `optimize` tool. The tone stage's **Response** setting can be `auto`, which runs the style on a small step wedge first and corrects the tone map for the coverage it measures; it is off by default, and helps most the joined-point styles `line`, `tree` and `mesh`.
 
 ### Pens
 

@@ -12,8 +12,8 @@ use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::machine::Machine;
 use plotline_core::runner::Shared;
 use plotline_core::{
-    image, pens, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen, RunState,
-    SessionError, DEFAULT_CACHE_BYTES,
+    image, pens, presets, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen,
+    RunState, SessionError, DEFAULT_CACHE_BYTES,
 };
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -157,6 +157,25 @@ impl Session {
         Ok(self.inner.testchart()?)
     }
 
+    /// Cancel the latest run and start a search of the style's density setting for the value
+    /// whose drawing follows the tone map most closely, every trial within `target` of `metric`
+    /// when both are given. The settings are left as they are; once the run is done, `result()`
+    /// holds the suggestion.
+    pub fn optimize(
+        &mut self,
+        metric: Option<String>,
+        target: Option<f64>,
+    ) -> Result<Run, JsError> {
+        let budget = match (metric.as_deref(), target) {
+            (Some(m), Some(t)) => Some((m, t)),
+            (None, None) => None,
+            _ => return Err(JsError::new("give both a metric and a target, or neither")),
+        };
+        Ok(Run {
+            inner: Box::new(self.inner.optimize(budget)?),
+        })
+    }
+
     /// A run of the style `name` at the settings a switch to it would give, which shares the
     /// cache but leaves the session's style, settings, latest run and drawing alone. Fails for an
     /// unknown style or when no image is set.
@@ -194,6 +213,13 @@ impl Session {
     /// "severity", "message", "value", "patch"}`.
     pub fn lint(&self) -> Option<String> {
         self.inner.lint().map(|f| json!(f).to_string())
+    }
+
+    /// How the last finished drawing's tones follow its tone map, as `{"error", "ssim", "floor",
+    /// "reach"}` JSON, or `undefined` without a drawing or with nothing to compare.
+    #[wasm_bindgen(js_name = toneMatch)]
+    pub fn tone_match(&self) -> Option<String> {
+        self.inner.tone_match().map(|m| json!(m).to_string())
     }
 
     /// The image's statistics and the suggested changes as `{"stats", "suggestions"}` JSON, or
@@ -238,7 +264,7 @@ impl Session {
     }
 }
 
-/// One run or fit, driven a frame at a time by [`Run::next_frame`].
+/// One run, fit or optimize search, driven a frame at a time by [`Run::next_frame`].
 #[wasm_bindgen]
 pub struct Run {
     inner: Box<dyn Job>,
@@ -269,10 +295,11 @@ impl Run {
         self.inner.error()
     }
 
-    /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}` JSON, once
-    /// it is done; `undefined` for a plain run.
+    /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}` JSON, or what
+    /// a search found, as `{stage, key, value, error, current, current_error, budget, trials,
+    /// reason, patch}` JSON, once it is done; `undefined` for a plain run.
     pub fn result(&self) -> Option<String> {
-        self.inner.fit().map(|r| json!(r).to_string())
+        self.inner.result().map(|r| r.to_string())
     }
 }
 
@@ -442,6 +469,13 @@ pub fn describe(name: &str) -> Result<String, JsError> {
     let style =
         registry::get_style(name).ok_or_else(|| SessionError::UnknownStyle(name.to_string()))?;
     Ok(style.schema().to_string())
+}
+
+/// The preset in `text`, as JSON: a preset file, an exported SVG or an exported JSON drawing; see
+/// [`presets::from_text`].
+#[wasm_bindgen(js_name = presetFromText)]
+pub fn preset_from_text(text: &str) -> Result<String, JsError> {
+    Ok(presets::from_text(text)?.to_string())
 }
 
 /// A `w` by `h` left-to-right gradient as RGB floats; see [`synthetic::gradient`].

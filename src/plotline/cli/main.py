@@ -272,7 +272,11 @@ def echo_stats(session: Session) -> None:
     metavar="STAGE.KEY=VALUE",
     help="Change a setting, such as tone.resolution=500. Repeat for more. See 'describe'.",
 )
-@click.option("--preset", type=click.Path(), help="Start from a saved preset.")
+@click.option(
+    "--preset",
+    type=click.Path(),
+    help="Start from a saved preset, or from an exported SVG or JSON drawing.",
+)
 @click.option(
     "--save-preset",
     type=click.Path(),
@@ -288,6 +292,16 @@ def echo_stats(session: Session) -> None:
     ),
 )
 @fit_options
+@click.option(
+    "--optimize",
+    is_flag=True,
+    help=(
+        "Also search the style's density setting for the value whose drawing follows the "
+        "image's tones best, in eight runs, and print it with the --set option that applies it. "
+        "With a --fit option, every trial stays within its target instead of fitting it. "
+        "The drawing written is the one the given settings make."
+    ),
+)
 @click.option("--quiet", is_flag=True, help="Do not print progress.")
 @click.option(
     "--strict",
@@ -314,11 +328,13 @@ def run(
     fit_paths: float | None,
     fit_metres: float | None,
     fit_dots: float | None,
+    optimize: bool,
     quiet: bool,
     strict: bool,
 ) -> None:
-    """Run STYLE on IMAGE and write the drawing as an SVG. The plot lint's findings follow the
-    stats on stderr, each with the --set options that fix it where a setting does."""
+    """Run STYLE on IMAGE and write the drawing as an SVG. The tone match follows the stats,
+    and the plot lint's findings follow on stderr, each with the --set options that fix it where
+    a setting does."""
     given = zip(FITS, (fit_minutes, fit_paths, fit_metres, fit_dots), strict=True)
     fits = [(metric, target) for metric, target in given if target is not None]
     if len(fits) > 1:
@@ -343,7 +359,19 @@ def run(
             raise click.UsageError(
                 "--gcode needs a machine: give --machine or a --preset that has one"
             )
-        if fits:
+        if optimize:
+            handle = session.optimize(*(fits[0] if fits else (None, None)))
+            handle.wait()
+            if handle.error is not None:
+                raise handle.error
+            found = handle.optimum
+            if found is None:
+                click.echo("optimize: no trial stayed within the target", err=True)
+            else:
+                click.echo(f"optimize: {found['reason']}")
+                if fix := _options(found["patch"]):
+                    click.echo(f"  apply: {fix}")
+        elif fits:
             [(metric, target)] = fits
             handle = session.fit(metric, target)
             handle.wait()
@@ -370,6 +398,8 @@ def run(
             files = session.export_gcode(gcode)
             click.echo(f"gcode: {len(files)} {'file' if len(files) == 1 else 'files'} in {gcode}")
     echo_stats(session)
+    if (match := session.tone_match()) is not None:
+        click.echo(f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}")
     findings = session.lint()
     for finding in findings:
         click.echo(f"{finding['severity']}: {finding['message']}", err=True)
@@ -417,8 +447,8 @@ def testchart(
 
 
 def _options(patch: dict[str, Any] | None) -> str:
-    """The ``run`` options that apply a lint patch: ``--set`` for each setting, then ``--width``
-    and ``--height`` for a page."""
+    """The ``run`` options that apply a lint or optimize patch: ``--set`` for each setting,
+    then ``--width`` and ``--height`` for a page."""
     if patch is None:
         return ""
     sets = [

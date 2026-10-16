@@ -68,7 +68,8 @@ def test_run_writes_all_outputs(tmp_path, image):
         "fill",
     )
     assert r.exit_code == 0, r.output
-    assert ET.parse(tmp_path / "o.svg").getroot()[0].get("stroke") == "#ff0000"
+    first_layer = ET.parse(tmp_path / "o.svg").getroot().find("{http://www.w3.org/2000/svg}g")
+    assert first_layer is not None and first_layer.get("stroke") == "#ff0000"
     assert (tmp_path / "o.json").exists() and (tmp_path / "o.png").read_bytes()[:4] == b"\x89PNG"
     preset = json.loads((tmp_path / "p.json").read_text())
     assert preset["canvas"]["width_mm"] == 100 and preset["canvas"]["fit"] == "fill"
@@ -134,6 +135,16 @@ def test_preset_is_applied_and_style_kept(tmp_path, image):
     assert same
 
 
+def test_an_exported_svg_is_a_preset(tmp_path, image):
+    a, b = tmp_path / "a.svg", tmp_path / "b.svg"
+    args = ["run", "grid", image, "--quiet", "--set", "tone.resolution=64"]
+    run(*args, "--out", str(a), "--set", "points.spacing_mm=4")
+    r = run(*args, "--out", str(b), "--preset", str(a))
+    assert r.exit_code == 0, r.output
+    same = a.read_text() == b.read_text()
+    assert same
+
+
 def test_a_preset_of_another_style_carries_its_changes(tmp_path, image):
     base = ["--out", str(tmp_path / "o.svg"), "--quiet"]
     p, q = str(tmp_path / "p.json"), str(tmp_path / "q.json")
@@ -167,6 +178,21 @@ def test_lint_findings_go_to_stderr_and_strict_fails_on_a_warning(tmp_path, imag
     r = run(*args, "--strict")
     assert r.exit_code == 1 and (tmp_path / "o.svg").exists()
     assert run(*args[:-2], "--strict").exit_code == 0
+
+
+def test_run_prints_the_tone_match_and_an_optimize_suggestion(tmp_path, image):
+    args = ["run", "hatch", image, "--out", str(tmp_path / "o.svg"), "--quiet"]
+    args += ["--width", "100", "--height", "75", "--set", "tone.resolution=64"]
+    r = run(*args)
+    assert r.exit_code == 0, r.output
+    assert any(x.startswith("tone error: ") and "ssim: " in x for x in r.stdout.splitlines())
+    r = run(*args, "--optimize")
+    assert r.exit_code == 0, r.output
+    line = next(x for x in r.stdout.splitlines() if x.startswith("optimize: "))
+    assert "spacing_mm" in line
+    lines = r.stdout.splitlines()
+    apply = [x for x in lines if x.startswith("  apply: --set hatch.spacing_mm=")]
+    assert len(apply) == ("already follows" not in line)
 
 
 def test_run_rejects_bad_inputs(tmp_path, image):

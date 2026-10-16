@@ -9,11 +9,13 @@ pub mod image;
 pub mod lint;
 pub mod machine;
 pub mod math;
+pub mod optimize;
 pub mod pens;
 pub mod presets;
 pub mod preview;
 pub mod raster;
 pub mod registry;
+pub mod response;
 pub mod runner;
 pub mod session;
 pub mod settings;
@@ -25,11 +27,13 @@ pub mod style;
 pub mod synthetic;
 pub mod testchart;
 pub mod text;
+pub mod tone_match;
 pub mod types;
 
 pub use cache::{CacheStats, DEFAULT_CACHE_BYTES};
 pub use fit::{FitResult, FitRun, Job, Metric};
 pub use image::ImageError;
+pub use optimize::{OptimizeRun, Optimum};
 pub use preview::PreviewError;
 pub use runner::{Run, RunState};
 pub use session::{Session, SessionError};
@@ -47,6 +51,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod tests {
     #[test]
     fn version_is_the_release() {
-        assert_eq!(super::VERSION, "0.1.0");
+        assert_eq!(super::VERSION, "0.2.0-dev0");
     }
 }

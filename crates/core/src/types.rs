@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 /// A value that failed validation; the message is shown to users.
@@ -368,7 +369,8 @@ pub struct Layer {
     pub paths: Paths,
 }
 
-/// A finished drawing: the canvas, the layers in drawing order, and the tone map if any.
+/// A finished drawing: the canvas, the layers in drawing order, the tone map if any and the preset
+/// of the run that made it.
 #[derive(Debug, Clone)]
 pub struct Drawing {
     /// The page.
@@ -377,6 +379,8 @@ pub struct Drawing {
     pub layers: Vec<Layer>,
     /// The tone map the drawing was made from, if any.
     pub tone: Option<Arc<ToneMap>>,
+    /// The preset of the run's own snapshot, with a null machine; `None` for a drawing no run made.
+    pub preset: Option<Value>,
 }
 
 #[cfg(test)]
