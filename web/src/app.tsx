@@ -2,12 +2,13 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
-import { CircleHelp, Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Square, Sun } from "lucide-preact";
+import { CircleHelp, Download, Image as ImageIcon, ImageUp, LayoutGrid, Maximize, Monitor, Moon, Play, Redo2, Route, Settings as Gear, Sparkles, Square, Sun, Undo2 } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { BankPen, FitResult, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
-import { ExportPanel, FitPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
+import { History, setupOf } from "./history";
+import { ExportPanel, FitPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, StylesDialog, SuggestionsPanel, type Thumb } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
@@ -27,6 +28,11 @@ const Mark = () => (
 );
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+// The styles dialog's pictures are this many pixels wide, about twice their size on screen.
+const THUMB_PX = 300;
+// Where Ctrl+Z belongs to the browser's own undo of typing.
+const TYPING = "textarea, [contenteditable], input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=button])";
 
 // Saves text as a file through a link to an object URL.
 function download(name: string, text: string, type: string) {
@@ -128,12 +134,13 @@ function Export({ status, machine, onExport, onGcode }: ExportProps) {
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string; fitError?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
-  onSettings: () => void; onTour: () => void; onFit: (metric: string, target: number) => void; onFitted: (fit: FitResult) => void;
+  onSettings: () => void; onTour: () => void; onUndo?: () => void; onRedo?: () => void;
+  onFit: (metric: string, target: number) => void; onFitted: (fit: FitResult) => void;
 };
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onFit, onFitted, ...preview }: RunViewProps) {
+function RunView({ engine, status, stages, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, ...preview }: RunViewProps) {
   const { run, stats } = useStatus(status);
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
@@ -200,6 +207,10 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
           <button type="button" class="primary" disabled={!preview.hasImage} onClick={onRun}><Play /> Run</button>
           <button type="button" disabled={run.state !== "running" || stopping} onClick={() => { setStopFor(run.id); onStop(); }}><Square /> Stop</button>
         </span>
+        <span class="group" data-tour="undo">
+          <button type="button" class="icon" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!onUndo} onClick={onUndo}><Undo2 /></button>
+          <button type="button" class="icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!onRedo} onClick={onRedo}><Redo2 /></button>
+        </span>
         <span class="group" data-tour="view">
           <label class="chip">
             <input class="visually-hidden" type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} />
@@ -261,10 +272,16 @@ export function App() {
   const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [history] = useState(() => new History());
+  const restoring = useRef(false);
+  const [stylesOpens, setStylesOpens] = useState(0);
+  const [thumbs, setThumbs] = useState<Record<string, Thumb>>({});
+  const thumbsFor = useRef(0); // the id of the pictures the styles dialog shows; 0 for none
 
   const save = useRef<ReturnType<typeof setTimeout>>();
   const take = (s: State) => {
     setState(s);
+    history.see(setupOf(s), restoring.current);
     status.set({ run: s.run, stats: s.stats, layers: s.layers });
     clearTimeout(save.current);
     save.current = setTimeout(() => engine.call("preset").then((r) => remember(JSON.stringify(r.value)), () => {}), 500);
@@ -301,8 +318,45 @@ export function App() {
     }, (e) => setFatal(message(e)));
     const paste = (e: ClipboardEvent) => openImage(imageFile(e.clipboardData));
     document.addEventListener("paste", paste);
-    return () => document.removeEventListener("paste", paste);
+    // Ctrl+Z undoes and Ctrl+Shift+Z redoes, except while typing or with a dialog open.
+    const keys = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== "z") return;
+      if ((e.target as Element).closest?.(TYPING) || document.querySelector("dialog.modal[open]")) return;
+      e.preventDefault();
+      restore(e.shiftKey ? history.redo() : history.undo());
+    };
+    document.addEventListener("keydown", keys);
+    engine.onThumb = (e) => {
+      if (e.id !== thumbsFor.current) return;
+      const url = e.png && URL.createObjectURL(new Blob([e.png as Uint8Array<ArrayBuffer>], { type: "image/png" }));
+      setThumbs((t) => ({ ...t, [e.style]: { url, error: e.error } }));
+    };
+    return () => {
+      document.removeEventListener("paste", paste);
+      document.removeEventListener("keydown", keys);
+    };
   }, []);
+
+  // Puts back a setup from the history; its reply is no new step.
+  async function restore(setup: string | undefined) {
+    if (setup === undefined) return;
+    restoring.current = true;
+    try {
+      await call("restore", [JSON.parse(setup)]);
+    } finally {
+      restoring.current = false;
+    }
+  }
+
+  async function tryStyles() {
+    setThumbs((old) => {
+      for (const t of Object.values(old)) if (t.url) URL.revokeObjectURL(t.url);
+      return {};
+    });
+    thumbsFor.current = 0;
+    setStylesOpens((n) => n + 1);
+    thumbsFor.current = (await call<number>("thumbs", [THUMB_PX])) ?? 0;
+  }
 
   const style = state?.style;
   useEffect(() => {
@@ -404,6 +458,7 @@ export function App() {
             </select>
           </label>
           <p class="help">{styles.find((s) => s.name === state.style)?.description}</p>
+          <button type="button" data-tour="styles" disabled={!state.image} onClick={tryStyles}><LayoutGrid /> Try all styles</button>
         </fieldset>
         <div class="stages" data-tour="settings">
           <Settings stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
@@ -420,6 +475,8 @@ export function App() {
             setSettingsOpens((n) => n + 1);
           }}
           onTour={() => setTourOpens((n) => n + 1)}
+          onUndo={history.past.length > 0 ? () => restore(history.undo()) : undefined}
+          onRedo={history.future.length > 0 ? () => restore(history.redo()) : undefined}
           fitError={errors.fit} onFit={(metric, target) => call("fit", [metric, target], "fit")} onFitted={applyFit}
         />
       </main>
@@ -449,6 +506,10 @@ export function App() {
       />
       <PensDialog
         opens={pensOpens} pens={state.pens} bank={bank} inks={inks} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
+      />
+      <StylesDialog
+        opens={stylesOpens} styles={styles} style={state.style} canvas={state.canvas} thumbs={thumbs}
+        onPick={(name) => call("setStyle", [name])} onClose={() => call("cancelThumbs")}
       />
       <Tour opens={tourOpens} />
     </div>

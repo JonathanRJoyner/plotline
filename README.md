@@ -80,7 +80,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 Open **[jonathanrjoyner.github.io/plotline](https://jonathanrjoyner.github.io/plotline/)**. There is nothing to install.
 
 1. Drop or paste a PNG, JPEG or WebP image, or click Sample image.
-2. Pick a style, change its settings and click Run to watch it draw.
+2. Pick a style, change its settings and click Run to watch it draw. Try all styles, under the style menu, draws every style small on your image so you can choose by eye, and Undo in the toolbar (Ctrl+Z) steps back through changes to the style, settings, page and pens.
 3. Set up your pens in the Pens dialog, and choose how they share the drawing under Pen use. The page remembers your setup between visits.
 4. Click Export SVG in the toolbar, ready for a pen plotter's own software.
 

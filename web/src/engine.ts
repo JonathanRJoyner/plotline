@@ -1,17 +1,19 @@
-// The page's side of the worker: commands out as promises, run events out to `onEvent`.
-import type { Event } from "./events";
+// The page's side of the worker: commands out as promises, run events out to `onEvent` and the
+// styles dialog's pictures to `onThumb`.
+import type { Event, ThumbEvent } from "./events";
 import type { Reply, State } from "./protocol";
 
 export class Engine {
   onEvent: (event: Event) => void = () => {};
+  onThumb: (event: ThumbEvent) => void = () => {};
   private nextId = 0;
   private failed: string | null = null;
   private pending = new Map<number, (reply: Reply) => void>();
 
   constructor(private readonly worker: Worker) {
-    worker.onmessage = (e: MessageEvent<Reply | Event>) => {
+    worker.onmessage = (e: MessageEvent<Reply | Event | ThumbEvent>) => {
       const msg = e.data;
-      if ("type" in msg) return this.onEvent(msg);
+      if ("type" in msg) return msg.type === "thumb" ? this.onThumb(msg) : this.onEvent(msg);
       this.pending.get(msg.id)?.(msg);
       this.pending.delete(msg.id);
     };

@@ -3,6 +3,7 @@ import { beforeAll, expect, test } from "vitest";
 import init, { Session, syntheticGradient } from "../pkg/plotline_wasm.js";
 import { macrotask } from "./driver";
 import type { Ink, Machine, Pen } from "./events";
+import { History, setupOf } from "./history";
 import { Protocol, type Reply, type State } from "./protocol";
 import { controlsFor } from "./schema";
 
@@ -220,4 +221,82 @@ test("a refused patch redraws nothing", async () => {
   await ended(1);
   expect(call("apply", { style: "no such style" }).ok).toBe(false);
   expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+});
+
+test("thumbs draws styles without touching the drawing, and cancelThumbs stops it", async () => {
+  let thumbs = 0;
+  const { posted, ok, ended } = setup((m, call) => { if (m.type === "thumb" && ++thumbs === 2) expect(call("cancelThumbs").ok).toBe(true); });
+  ok("setCanvas", { width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" });
+  ok("setImage", ...image());
+  await ended(1);
+  const before = ok("preset").state;
+  const svg = ok("svg").value;
+  const id = ok("thumbs", 120).value as number;
+  for (let i = 0; i < 5000 && thumbs < 2; i++) await macrotask();
+  for (let i = 0; i < 50; i++) await macrotask(); // time for a cancelled loop to post by mistake
+  const events = posted.filter((m) => m.type === "thumb");
+  expect(events.map((m) => [m.id, m.style, m.error])).toEqual([[id, "grid", null], [id, "hatch", null]]);
+  expect([...(events[0].png as Uint8Array).slice(1, 4)]).toEqual([80, 78, 71]); // "PNG"
+  expect(ok("preset").state).toEqual(before); // style, settings, page, pens, run and stats
+  expect(ok("svg").value).toBe(svg); // and the drawing itself
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+});
+
+test("thumbs without an image posts each style's error", async () => {
+  const { posted, ok } = setup();
+  ok("thumbs", 120);
+  for (let i = 0; i < 50; i++) await macrotask();
+  const events = posted.filter((m) => m.type === "thumb");
+  expect(events).toHaveLength(18);
+  expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
+});
+
+test("restore applies a setup over the preset and redraws", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const before = ok("preset").state;
+  ok("setStyle", "hatch");
+  ok("setPens", [{ name: "Red", width_mm: 0.5, color: "#ff0000" }]);
+  await ended(3);
+  const { style, canvas, pens, machine, settings } = before;
+  const { state } = ok("restore", { style, canvas, pens, machine, settings });
+  expect(state.style).toBe("grid");
+  expect(state.pens).toEqual(pens);
+  expect(state.settings).toEqual(settings);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(4);
+  await ended(4);
+});
+
+test("undoing a random run of edits through restore returns the start, and undo then redo changes nothing", () => {
+  const { ok } = setup();
+  const history = new History(1000);
+  const see = (state: State, restored = false) => { history.see(setupOf(state), restored); return setupOf(state); };
+  const start = see(ok("preset").state);
+  const styles = (ok("listStyles").value as Array<{ name: string }>).map((s) => s.name);
+  let seed = 7; // a fixed linear congruential sequence, so a failure repeats
+  const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+  const pick = <T,>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
+  const edits = [
+    () => ok("setStyle", pick(styles)),
+    () => ok("update", "tone", { gamma: 0.5 + rand() * 1.5, invert: rand() < 0.5 }),
+    () => ok("update", "split", { mode: pick(["one_pen", "light_to_dark", "by_colour"]) }),
+    () => ok("setCanvas", { width_mm: pick([148, 210, 297]), height_mm: 297, margin_mm: Math.round(rand() * 20), fit: pick(["fit", "fill"]) }),
+    () => ok("setPens", [{ name: "P", width_mm: 0.1 + Math.round(rand() * 8) / 10, color: pick(["#000000", "#d0202e"]) }]),
+  ];
+  for (let i = 0; i < 40; i++) see(pick(edits)().state);
+  const end = see(ok("preset").state);
+  expect(history.past.length).toBeGreaterThan(20);
+  const step = (setup: string | undefined) => {
+    const restored = see(ok("restore", JSON.parse(setup!)).state, true);
+    expect(restored).toBe(setup); // a restore puts back exactly that setup
+    return restored;
+  };
+  step(history.undo());
+  expect(step(history.redo())).toBe(end);
+  let now = end;
+  while (history.past.length) now = step(history.undo());
+  expect(now).toBe(start);
+  while (history.future.length) now = step(history.redo());
+  expect(now).toBe(end);
 });

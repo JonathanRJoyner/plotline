@@ -247,12 +247,12 @@ impl Session {
     /// [`RunState::Running`] with no error until the new run ends, and keeps the last drawing.
     /// Later changes to the session do not reach the run. Fails when no image is set.
     pub fn start(&mut self) -> Result<Run, SessionError> {
-        let roots = self.roots()?;
+        let image = self.image.clone().ok_or(SessionError::NoImage)?;
         let generation = self.claim();
         Ok(Run::new(
             self.style.clone(),
             self.settings.clone(),
-            roots,
+            self.roots(image),
             self.cache.clone(),
             self.shared.clone(),
             self.cancel.clone(),
@@ -270,7 +270,7 @@ impl Session {
     /// a number above 0, a style with no density setting, and `dots` for a style that places no
     /// points.
     pub fn fit(&mut self, metric: &str, target: f64) -> Result<FitRun, SessionError> {
-        let roots = self.roots()?;
+        let image = self.image.clone().ok_or(SessionError::NoImage)?;
         let name = &self.style.name;
         let refuse = |message: String| Err(SessionError::Fit(message));
         let Some(metric) = Metric::parse(metric) else {
@@ -295,7 +295,7 @@ impl Session {
         Ok(FitRun::new(
             self.style.clone(),
             self.settings.clone(),
-            roots,
+            self.roots(image),
             self.cache.clone(),
             self.shared.clone(),
             self.cancel.clone(),
@@ -305,16 +305,6 @@ impl Session {
             metric,
             target,
         ))
-    }
-
-    /// The image, canvas and pens a run starts from. Fails when no image is set.
-    fn roots(&self) -> Result<[Artifact; 3], SessionError> {
-        let image = self.image.clone().ok_or(SessionError::NoImage)?;
-        Ok([
-            Artifact::Image(image),
-            Artifact::Canvas(Arc::new(self.canvas.clone())),
-            Artifact::Pens(Arc::new(self.pens.clone())),
-        ])
     }
 
     /// Cancel the latest run, give the next one a fresh cancel flag, and show the slot as running
@@ -327,6 +317,41 @@ impl Session {
         shared.state = RunState::Running;
         shared.error = None;
         shared.generation
+    }
+
+    /// A run of the style called `name` at the settings [`Session::set_style`] would give it, over
+    /// the image, the canvas and the pens, and the slot that run writes. The run shares the stage
+    /// cache, so it reuses what earlier runs left there and leaves its own stages for later ones,
+    /// but it has its own slot and cancel flag: it does not cancel the latest run, and the
+    /// session's style, settings, state and drawing stay as they were. The GUI draws every style
+    /// this way. Fails for an unknown style or when no image is set.
+    pub fn trial(&mut self, name: &str) -> Result<(Run, Arc<Mutex<Shared>>), SessionError> {
+        let image = self.image.clone().ok_or(SessionError::NoImage)?;
+        // Switch and switch back, so a trial gets whatever settings a real switch would.
+        let (style, settings) = (self.style.clone(), self.settings.clone());
+        self.set_style(name)?;
+        let style = std::mem::replace(&mut self.style, style);
+        let settings = std::mem::replace(&mut self.settings, settings);
+        let slot = Arc::<Mutex<Shared>>::default();
+        let run = Run::new(
+            style,
+            settings,
+            self.roots(image),
+            self.cache.clone(),
+            slot.clone(),
+            Arc::default(),
+            0, // a fresh slot's generation
+        );
+        Ok((run, slot))
+    }
+
+    /// The roots a run starts from: `image`, the canvas and the pens.
+    fn roots(&self, image: Arc<Image>) -> [Artifact; 3] {
+        [
+            Artifact::Image(image),
+            Artifact::Canvas(Arc::new(self.canvas.clone())),
+            Artifact::Pens(Arc::new(self.pens.clone())),
+        ]
     }
 
     /// The state the latest run to write the slot left there, or [`RunState::Idle`] before any.
@@ -586,6 +611,34 @@ mod tests {
         }
         assert_eq!(s.state(), RunState::Done);
         assert_eq!(voronoi, ["cached"]);
+    }
+    #[test]
+    fn a_trial_shares_the_cache_and_leaves_the_session_alone() {
+        let mut s = Session::new(256 << 20);
+        assert!(matches!(s.trial("line"), Err(SessionError::NoImage)));
+        s.set_image(gradient(64, 48));
+        s.set_style("stipple").unwrap();
+        let mut r = s.start().unwrap();
+        while r.next_frame().is_some() {}
+        let (drawing, settings) = (s.drawing().unwrap(), s.settings().clone());
+        assert!(s.trial("nope").is_err());
+        let mut latest = s.start().unwrap();
+        let (mut trial, slot) = s.trial("line").unwrap();
+        let mut voronoi = vec![];
+        while let Some(f) = trial.next_frame() {
+            if f.stage == "voronoi" {
+                voronoi.push(f.label);
+            }
+        }
+        assert_eq!(voronoi, ["cached"]);
+        assert_eq!(slot.lock().unwrap().state, RunState::Done);
+        assert!(slot.lock().unwrap().drawing.is_some());
+        assert_eq!(s.style().name, "stipple");
+        assert_eq!(s.settings(), &settings);
+        assert_eq!(s.state(), RunState::Running);
+        assert!(Arc::ptr_eq(&s.drawing().unwrap(), &drawing));
+        while latest.next_frame().is_some() {}
+        assert_eq!(s.state(), RunState::Done); // the trial did not cancel it
     }
     #[test]
     fn preset_round_trip_and_warnings() {

@@ -1,7 +1,7 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, PenLine, Plus, Save, Settings as Gear, Target, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Save, Settings as Gear, Target, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
@@ -115,21 +115,56 @@ export function PensPanel({ pens, hidden, error, mode, onEdit, onToggle, childre
 
 // A modal on the native <dialog>, which brings focus trapping and Esc to close. Each change of
 // `opens` opens it; the dialog element alone knows whether it is open, so nothing waits on its
-// close event. The body holds a list of sections or items on the left and fields on the right.
-function Modal({ opens, title, icon, wide, children }: { opens: number; title: string; icon: JSX.Element; wide?: boolean; children: ComponentChildren }): JSX.Element {
+// close event, unless it asks with `onClose`. The body holds a list of sections or items on the left
+// and fields on the right.
+type ModalProps = { opens: number; title: string; icon: JSX.Element; wide?: boolean; onClose?: () => void; children: ComponentChildren };
+function Modal({ opens, title, icon, wide, onClose, children }: ModalProps): JSX.Element {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     if (opens > 0 && !ref.current!.open) ref.current!.showModal();
   }, [opens]);
   const id = `${title.toLowerCase()}-title`;
   return (
-    <dialog ref={ref} class={wide ? "modal wide" : "modal"} aria-labelledby={id}>
+    <dialog ref={ref} class={wide ? "modal wide" : "modal"} aria-labelledby={id} onClose={onClose}>
       <header>
         <h2 id={id}>{icon} {title}</h2>
         <button type="button" class="icon" title="Close" aria-label="Close" onClick={() => ref.current!.close()}><X /></button>
       </header>
       <div class="body">{children}</div>
     </dialog>
+  );
+}
+
+export type Thumb = { url: string | null; error: string | null };
+type StylesDialogProps = {
+  opens: number; styles: Array<{ name: string; label: string; description: string }>; style: string; canvas: Canvas;
+  thumbs: Record<string, Thumb>; onPick: (style: string) => void; onClose: () => void;
+};
+
+// Every style drawn small on the current image, page and pens, in a grid; a click switches to it
+// (spec 2026-10-15-try-styles-and-undo section 2). The pictures arrive one by one; closing stops them.
+export function StylesDialog({ opens, styles, style, canvas, thumbs, onPick, onClose }: StylesDialogProps): JSX.Element {
+  return (
+    <Modal opens={opens} title="All styles" icon={<LayoutGrid />} wide onClose={onClose}>
+      <ul class="thumbs">
+        {styles.map((s) => {
+          const t = thumbs[s.name];
+          return (
+            <li key={s.name}>
+              <button
+                type="button" title={s.description} aria-current={s.name === style ? "true" : undefined}
+                onClick={(e) => { onPick(s.name); e.currentTarget.closest("dialog")!.close(); }}
+              >
+                <span class="paper" style={{ aspectRatio: `${canvas.width_mm} / ${canvas.height_mm}` }}>
+                  {t?.url ? <img src={t.url} alt="" /> : <span>{t?.error ?? "Drawing…"}</span>}
+                </span>
+                {s.label}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </Modal>
   );
 }
 

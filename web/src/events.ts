@@ -18,6 +18,8 @@ export type FitResult = {
 /** `fit` is set when a fit ends done; the page applies its value with `update`. */
 export type EndEvent = { type: "end"; id: number; state: "done" | "cancelled" | "error"; error: string | null; stats: Stats | null; fit?: FitResult | null };
 export type Event = RunEvent | FrameEvent | ResultEvent | EndEvent;
+/** One style drawn for the styles dialog: its preview as PNG bytes, or why it failed. */
+export type ThumbEvent = { type: "thumb"; id: number; style: string; png: Uint8Array | null; error: string | null };
 export type Area = { x: number; y: number; width: number; height: number };
 export type Machine = {
   name: string; area: Area; z_down_mm: number; z_up_mm: number; z_safe_mm: number;

@@ -2,8 +2,8 @@
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
 import { describe, listInks, listPens, listStyles, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
-import { drive } from "./driver";
-import type { Canvas, Event, Machine, Pen, Stats } from "./events";
+import { drive, macrotask } from "./driver";
+import type { Canvas, Event, Machine, Pen, Stats, ThumbEvent } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `settings` apply after `style`. */
 export type Patch = { style?: string; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
@@ -22,7 +22,7 @@ export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
 // The commands that change what a drawing is made from: each one redraws once it succeeds.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "update", "loadPreset", "apply"]);
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "update", "loadPreset", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
 
@@ -31,9 +31,10 @@ export class Protocol {
   private counter = 0;
   private current: Run | null = null;
   private go: (() => void) | null = null;
+  private thumbsId = 0;
   private readonly methods: Record<string, (...args: any[]) => unknown>;
 
-  constructor(private readonly session: Session, private readonly post: (msg: Reply | Event, transfer?: Transferable[]) => void) {
+  constructor(private readonly session: Session, private readonly post: (msg: Reply | Event | ThumbEvent, transfer?: Transferable[]) => void) {
     const s = session;
     this.methods = {
       listStyles: () => JSON.parse(listStyles()),
@@ -64,6 +65,15 @@ export class Protocol {
       cancel: () => this.current?.cancel(),
       preset: () => JSON.parse(s.preset()),
       loadPreset: (preset: unknown) => s.loadPreset(JSON.stringify(preset)),
+      // A setup in the preset's shape over the current preset, so the format and version stay ours.
+      restore: (setup: Record<string, unknown>) => s.loadPreset(JSON.stringify({ ...JSON.parse(s.preset()), ...setup })),
+      // Draws every style after the reply, which carries the id its `thumb` events will have.
+      thumbs: (width: number) => {
+        const id = ++this.thumbsId;
+        this.go = () => void this.thumbs(id, width);
+        return id;
+      },
+      cancelThumbs: () => { this.thumbsId++; },
       svg: () => s.svg(),
       json: () => s.json(),
     };
@@ -95,6 +105,38 @@ export class Protocol {
         .catch((e) => this.post({ type: "end", id, state: "error", error: message(e), stats: null }, []))
         .finally(() => { if (this.current === run) this.current = null; }); // `drive` freed it
     };
+  }
+
+  // Draws every listed style in turn as a trial, which leaves the session's own run, drawing and
+  // settings alone, and posts each as a `thumb` event. It yields as `drive` does, so commands get
+  // their turn, and a newer `thumbs` or a `cancelThumbs` ends it.
+  private async thumbs(id: number, width: number): Promise<void> {
+    let lastYield = performance.now();
+    for (const { name } of JSON.parse(listStyles()) as Array<{ name: string }>) {
+      if (id !== this.thumbsId) return;
+      let png: Uint8Array | null = null;
+      let error: string | null = null;
+      try {
+        const trial = this.session.trial(name);
+        try {
+          for (let frame = trial.nextFrame(); frame; frame = trial.nextFrame()) {
+            frame.free();
+            if (performance.now() - lastYield >= 50) {
+              await macrotask();
+              lastYield = performance.now();
+              if (id !== this.thumbsId) return;
+            }
+          }
+          error = trial.error() ?? null;
+          png = trial.previewPng(width) ?? null;
+        } finally {
+          trial.free();
+        }
+      } catch (e) {
+        error = message(e);
+      }
+      this.post({ type: "thumb", id, style: name, png, error }, png ? [png.buffer as ArrayBuffer] : []);
+    }
   }
 
   private state(): State {

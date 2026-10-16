@@ -17,6 +17,12 @@
 //! points with every sample at least `d(q)` away. A line shorter than `2 * min_spacing` is
 //! dropped, and its samples are taken back out of the bucket grid, so it blocks nothing. When the
 //! drawing is split between pens, a kept line breaks where its lane has almost no ink.
+//!
+//! Split between pens, pen `i` of `n` also moves the centre and each coarse-grid point `i / n` of
+//! the separation there to the side, along the field's normal, before seeding from it. Every other
+//! seed lies a whole separation beside a line, as in Jobard and Lefer, so where two pens' fields
+//! agree the second pen's lines run between the first pen's instead of on them. A point the move
+//! would take off the rect, or where the field has no direction, stays where it is.
 
 use std::sync::Arc;
 
@@ -87,7 +93,7 @@ impl Stage for FlowStage {
         "Flow lines"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -108,8 +114,14 @@ impl Stage for FlowStage {
         ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<FlowSettings>(self.name(), &self.schema(), settings)?;
-        let lift = ctx.lane().count > 1;
-        Ok(Box::new(FlowRun::new(inputs.tone().clone(), &s, lift)))
+        let lane = ctx.lane();
+        let aside = lane.index as f64 / lane.count as f64;
+        Ok(Box::new(FlowRun::new(
+            inputs.tone().clone(),
+            &s,
+            lane.count > 1,
+            aside,
+        )))
     }
 }
 
@@ -156,10 +168,13 @@ struct FlowRun {
     expected: f64,
     /// Whether the pen lifts over no ink, as it does when the drawing is split between pens.
     lift: bool,
+    /// The share of a separation the centre and the coarse-grid points move to the side: the
+    /// lane's `index / count`.
+    aside: f64,
 }
 
 impl FlowRun {
-    fn new(tone: Arc<ToneMap>, s: &FlowSettings, lift: bool) -> FlowRun {
+    fn new(tone: Arc<ToneMap>, s: &FlowSettings, lift: bool, aside: f64) -> FlowRun {
         let (w, h) = (tone.width as usize, tone.height as usize);
         let b = math::blur(&tone.ink, w, h, s.smooth_mm / tone.mm_per_px);
         let at = |x: usize, y: usize| f64::from(b[y * w + x]);
@@ -207,6 +222,7 @@ impl FlowRun {
             paths: Paths::new(),
             expected: 0.0,
             lift,
+            aside,
             tone,
         };
         let px_area = run.tone.mm_per_px * run.tone.mm_per_px;
@@ -285,6 +301,24 @@ impl FlowRun {
         self.samples.push(Sample { p, line, seq });
     }
 
+    /// `p` moved `aside` of the separation there to the side, along the field's normal; `p` itself
+    /// where the field has no direction or the move would leave the rect.
+    fn moved_aside(&self, p: [f64; 2]) -> [f64; 2] {
+        if self.aside == 0.0 {
+            return p;
+        }
+        let Some(v) = self.direction(p) else {
+            return p;
+        };
+        let d = self.aside * self.spacing(p);
+        let q = [p[0] - d * v[1], p[1] + d * v[0]];
+        if inside(self.rect, q) {
+            q
+        } else {
+            p
+        }
+    }
+
     /// Whether `q` may seed a line: inside the rect, with no sample within its separation or
     /// within `r`, the separation at the sample it came from.
     fn free(&self, q: [f64; 2], r: f64) -> bool {
@@ -300,7 +334,7 @@ impl FlowRun {
         let [x, y, w, h] = self.rect;
         if !self.centred {
             self.centred = true;
-            return Some([x + w / 2.0, y + h / 2.0]);
+            return Some(self.moved_aside([x + w / 2.0, y + h / 2.0]));
         }
         while self.cursor < 2 * self.samples.len() {
             let c = self.cursor;
@@ -320,10 +354,10 @@ impl FlowRun {
         while self.scan < cols * rows {
             let (i, j) = (self.scan % cols, self.scan / cols);
             self.scan += 1;
-            let q = [
+            let q = self.moved_aside([
                 x + (i as f64 + 0.5) * w / cols as f64,
                 y + (j as f64 + 0.5) * h / rows as f64,
-            ];
+            ]);
             if self.free(q, f64::INFINITY) {
                 return Some(q);
             }
@@ -414,7 +448,10 @@ impl StageRun for FlowRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
+    use crate::stage::Lane;
+    use crate::test_util::{
+        assert_inside, bounds, run_tone_stage, run_tone_stage_in_lane, tone_map,
+    };
     use serde_json::json;
 
     /// A noise-like ink: a fixed hash of the pixel's position.
@@ -433,7 +470,7 @@ mod tests {
             (FlowStage.name(), FlowStage.label()),
             ("flow", "Flow lines")
         );
-        assert_eq!(FlowStage.version(), 1);
+        assert_eq!(FlowStage.version(), 2);
         assert_eq!(
             (FlowStage.requires(), FlowStage.provides()),
             (&[Kind::Tone][..], Kind::Paths)
@@ -459,6 +496,27 @@ mod tests {
             let (dx, dy) = (s[1][0] - s[0][0], s[1][1] - s[0][1]);
             assert!(dx * dy < 0.0 && (dx + dy).abs() < 1e-9, "{s:?}");
         }
+    }
+
+    #[test]
+    fn a_second_pen_runs_between_the_first_pens_lines() {
+        let run = |lane| {
+            run_tone_stage_in_lane(&FlowStage, tone_map(30, 20, |_, _| 0.5), json!({}), lane).1
+        };
+        let single = run(Lane::SINGLE);
+        assert_eq!(run(Lane { index: 0, count: 2 }).coords(), single.coords());
+        // Flat half ink draws straight lines 3.4 mm apart. Pen 1's first line starts 1.7 mm below
+        // the centre, so each of its lines lies halfway between two of pen 0's.
+        let second = run(Lane { index: 1, count: 2 });
+        assert!(second.len() > 5, "{} lines", second.len());
+        for path in second.iter() {
+            let near = single
+                .iter()
+                .map(|p| (p[0][1] - path[0][1]).abs())
+                .fold(f64::INFINITY, f64::min);
+            assert!((near - 1.7).abs() < 1e-6, "{near}");
+        }
+        assert_inside(&second, tone_map(30, 20, |_, _| 0.5).rect_mm());
     }
 
     #[test]

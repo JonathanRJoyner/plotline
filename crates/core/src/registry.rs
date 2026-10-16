@@ -334,9 +334,33 @@ pub fn get_style(name: &str) -> Option<Arc<Style>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stage::{Artifact, Kind, Lane};
     use crate::synthetic::{flat, gradient, radial, scene};
-    use crate::test_util::{assert_inside, run_to_drawing};
-    use std::collections::BTreeMap;
+    use crate::test_util::{assert_inside, black, run_stage_in_lane, run_to_drawing, tone_map};
+    use crate::types::{Paths, ToneMap};
+    use std::collections::{BTreeMap, HashMap, HashSet};
+
+    /// The paths that the stages of `style` between the split and path order draw over `tone` in
+    /// `lane`, at the style's defaults, with a black pen.
+    fn lane_paths(style: &Style, tone: &Arc<ToneMap>, lane: Lane) -> Arc<Paths> {
+        let defaults = style.defaults();
+        let first = style.stage_index("split").unwrap() + 1;
+        let last = style.stage_index("order").unwrap();
+        let mut made = HashMap::from([
+            (Kind::Tone, Artifact::Tone(tone.clone())),
+            (Kind::Pens, Artifact::Pens(Arc::new(vec![black()]))),
+        ]);
+        for stage in &style.stages[first..last] {
+            let inputs = stage.requires().iter().map(|k| made[k].clone()).collect();
+            let settings = defaults[stage.name()].clone();
+            let (_, out) = run_stage_in_lane(stage.as_ref(), inputs, settings, lane);
+            made.insert(out.kind(), out);
+        }
+        match &made[&Kind::Paths] {
+            Artifact::Paths(p) => p.clone(),
+            a => panic!("expected paths, got {}", a.kind().name()),
+        }
+    }
 
     #[test]
     fn lists_builtins_and_hides_test_styles() {
@@ -431,6 +455,47 @@ mod tests {
         for style in list_styles() {
             let d = run_to_drawing(&style, scene(64, 48));
             assert!(!d.layers[0].paths.is_empty(), "{} drew nothing", style.name);
+        }
+    }
+    #[test]
+    fn every_style_but_ink_keeps_its_pens_apart() {
+        // The same tone in two lanes, as where two pens both hold ink: a cone of ink over a floor
+        // of 0.15, under which a shared lane never lifts the pen, so only the spreading rules tell
+        // the lanes apart. The map is 80 by 60 mm at 0.2 mm a pixel, about 24 pixels to each
+        // Voronoi point as on real maps; on a map coarser than the points, relaxation puts many of
+        // them on the same pixel centres in every lane.
+        let cone = tone_map(400, 300, |x, y| {
+            let r = crate::math::hypot(f64::from(x) - 200.0, f64::from(y) - 150.0);
+            (0.15 + 0.7 * (1.0 - r / 150.0).max(0.0)) as f32
+        });
+        let tone = Arc::new(ToneMap {
+            mm_per_px: 0.2,
+            ..cone
+        });
+        let [x, y, w, h] = tone.rect_mm();
+        // Lines clamped onto the map's edge share it whatever the lane, so only vertices off the
+        // edge count.
+        let off_edge = |p: &&[f64; 2]| x < p[0] && p[0] < x + w && y < p[1] && p[1] < y + h;
+        let bits = |p: &[f64; 2]| p.map(f64::to_bits);
+        for style in list_styles().into_iter().filter(|s| s.name != "ink") {
+            let name = &style.name;
+            let single = lane_paths(&style, &tone, Lane::SINGLE);
+            let first = lane_paths(&style, &tone, Lane { index: 0, count: 2 });
+            let second = lane_paths(&style, &tone, Lane { index: 1, count: 2 });
+            // The first pen draws as it would alone, so one-pen drawings do not change.
+            assert_eq!(first.coords(), single.coords(), "{name}");
+            // At most one in fifty of the second pen's vertices lands on one of the first's. Lines
+            // turned against each other cross, and a crossing can be a vertex of both: about one
+            // in a hundred of the waves'.
+            let ones: HashSet<[u64; 2]> = first.coords().iter().map(bits).collect();
+            let inner: Vec<&[f64; 2]> = second.coords().iter().filter(off_edge).collect();
+            let shared = inner.iter().filter(|p| ones.contains(&bits(p))).count();
+            assert!(inner.len() >= 50, "{name}: {} vertices", inner.len());
+            assert!(
+                shared * 50 <= inner.len(),
+                "{name}: {shared} of {} vertices shared",
+                inner.len()
+            );
         }
     }
     #[test]
