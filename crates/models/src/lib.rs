@@ -30,17 +30,22 @@ pub struct TractRuntime {
 impl ModelRuntime for TractRuntime {
     fn load(&self, id: &str, bytes: &[u8], side: usize) -> Result<(), ModelError> {
         let invalid = |e: TractError| ModelError::Invalid(format!("{e:#}"));
-        let plan = onnx()
-            .model_for_read(&mut &bytes[..])
-            .and_then(|m| m.with_input_fact(0, f32::fact([1, 3, side, side]).into()))
+        let parsed = onnx().model_for_read(&mut &bytes[..]).map_err(invalid)?;
+        // Checked before anything indexes input 0 or output 0, which panics on a graph without one.
+        if parsed.inputs.len() != 1 || parsed.outputs.len() != 1 {
+            return Err(ModelError::Invalid(format!(
+                "the model must have one input and one output, not {} and {}",
+                parsed.inputs.len(),
+                parsed.outputs.len()
+            )));
+        }
+        let plan = parsed
+            .with_input_fact(0, f32::fact([1, 3, side, side]).into())
             .and_then(|m| m.into_optimized())
             .and_then(|m| m.into_runnable())
             .map_err(invalid)?;
-        let model = plan.model();
-        let fact = model.output_fact(0).map_err(invalid)?;
-        if model.inputs.len() != 1
-            || model.outputs.len() != 1
-            || fact.datum_type != f32::datum_type()
+        let fact = plan.model().output_fact(0).map_err(invalid)?;
+        if fact.datum_type != f32::datum_type()
             || fact.shape.as_concrete() != Some(&[1, 1, side, side][..])
         {
             return Err(ModelError::Invalid(format!(
@@ -89,6 +94,8 @@ impl ModelRuntime for TractRuntime {
 #[cfg(test)]
 mod tests {
     use plotline_core::models::{ModelError, ModelRuntime, TILE};
+    use prost::Message;
+    use tract_onnx::pb::{GraphProto, ModelProto, NodeProto};
 
     use crate::{tiny_conv_onnx, tiny_conv_onnx_with, TractRuntime};
 
@@ -157,6 +164,36 @@ mod tests {
     fn a_truncated_file_is_refused() {
         let bytes = tiny_conv_onnx();
         let r = TractRuntime::default().load("x", &bytes[..bytes.len() / 2], TILE);
+        assert!(matches!(r, Err(ModelError::Invalid(_))), "{r:?}");
+    }
+
+    /// The tiny model with its graph changed by `edit`, encoded again.
+    fn tiny_edited(edit: impl FnOnce(&mut GraphProto)) -> Vec<u8> {
+        let mut model = ModelProto::decode(&tiny_conv_onnx()[..]).unwrap();
+        edit(model.graph.as_mut().unwrap());
+        model.encode_to_vec()
+    }
+
+    #[test]
+    fn a_model_with_no_inputs_is_refused() {
+        // An Identity over a stored tensor: valid ONNX, but there is no input to give a picture to.
+        let bytes = tiny_edited(|g| {
+            g.input.clear();
+            g.node = vec![NodeProto {
+                op_type: "Identity".into(),
+                input: vec!["b".into()],
+                output: vec!["y".into()],
+                ..Default::default()
+            }];
+        });
+        let r = TractRuntime::default().load("x", &bytes, TILE);
+        assert!(matches!(r, Err(ModelError::Invalid(_))), "{r:?}");
+    }
+
+    #[test]
+    fn a_model_with_no_outputs_is_refused() {
+        let bytes = tiny_edited(|g| g.output.clear());
+        let r = TractRuntime::default().load("x", &bytes, TILE);
         assert!(matches!(r, Err(ModelError::Invalid(_))), "{r:?}");
     }
 
