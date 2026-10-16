@@ -296,6 +296,18 @@ test("apply runs the patch and redraws once", async () => {
   await ended(2);
 });
 
+test("apply sets a patch's pens before its settings and redraws once", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", 400, 200, syntheticGradient(400, 200));
+  await ended(1);
+  const pens = [{ name: "Yellow 0.3", width_mm: 0.3, color: "#f5c400" }, { name: "Black 0.3", width_mm: 0.3, color: "#000000" }];
+  const { state } = ok("apply", { pens, settings: { split: { mode: "by_colour" } } });
+  expect(state.pens).toEqual(pens);
+  expect((state.settings.split as { mode: string }).mode).toBe("by_colour");
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(2);
+  await ended(2);
+});
+
 test("a refused patch redraws nothing", async () => {
   const { posted, call, ok, ended } = setup();
   ok("setImage", ...image());

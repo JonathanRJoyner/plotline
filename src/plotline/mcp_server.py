@@ -39,18 +39,18 @@ INSTRUCTIONS = (
     "then set_page and set_pens if the defaults do not fit, then list_styles and describe_style "
     "to choose a style and see its settings and looks. Call analyse_image to see the image's "
     "statistics and suggested changes; apply a suggestion with run(style=..., settings=...) or "
-    "set_page. run draws the image and returns its stats, the tone match, the plot lint's "
-    "findings and a preview at true pen width; apply a finding's patch the same way as a "
-    "suggestion's. Look at "
-    "the preview, change settings with run(settings=...), and repeat; only the stages after a "
-    "changed setting run again. To meet a budget of plot time, paths, pen-down metres or dots, "
-    "call fit, which sets the style's density setting. To make the drawing's tones follow the "
-    "image more closely, call optimize, which suggests a density, or set tone.response to auto. "
-    "Use preview with region_mm to inspect detail. export writes the result. testchart "
-    "draws a calibration chart for the first pen, to plot and compare by eye. set_machine "
-    "describes a pen plotter or pen-fitted printer; export with gcode then writes one file per "
-    "pen. All lengths are millimetres, the page origin is its top-left corner and y grows down. "
-    "Paths must be absolute."
+    "set_page, and set_pens first when its patch holds pens. run draws the image and returns its "
+    "stats, the tone match, the plot lint's findings and a preview at true pen width; apply a "
+    "finding's patch the same way as a suggestion's. Look at the preview, change settings with "
+    "run(settings=...), and repeat; only the stages after a changed setting run again. To meet a "
+    "budget of plot time, paths, pen-down metres or dots, call fit, which sets the style's "
+    "density setting. To make the drawing's tones follow the image more closely, call optimize, "
+    "which suggests a density, or set tone.response to auto. Use preview with region_mm to "
+    "inspect detail. export writes the result. testchart draws a calibration chart for the "
+    "first pen, to plot and compare by eye. set_machine describes a pen plotter or "
+    "pen-fitted printer; export with gcode then writes one file per pen. All lengths are "
+    "millimetres, the page origin is its top-left corner and y grows down. Paths must be "
+    "absolute."
 )
 
 
@@ -184,10 +184,12 @@ def build_server(session: Session | None = None) -> MCPServer:
     @server.tool()
     async def analyse_image() -> dict[str, Any]:
         """Measure the loaded image and suggest changes for it. stats are numbers about its tones,
-        noise and colour. Each suggestion has a kind, a reason and a patch, which holds any of
-        style, settings ({stage: {setting: value}}) and page ({width_mm, height_mm}), or none for a
-        note. Apply a patch with run(style=..., settings=...) or set_page. The suggestions follow
-        the current style, settings and page."""
+        noise and colour; for a colour image, palette lists the inks that draw it best. Each
+        suggestion has a kind, a reason and a patch, which holds any of style, pens (a list of
+        {name, width_mm, color}), settings ({stage: {setting: value}}) and page ({width_mm,
+        height_mm}), or none for a note. Apply a patch with set_pens for its pens, then
+        run(style=..., settings=...) or set_page. The suggestions follow the current style, pens,
+        settings and page."""
         with _errors():
             return session.analysis()
 

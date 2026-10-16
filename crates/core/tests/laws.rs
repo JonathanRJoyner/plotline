@@ -660,6 +660,20 @@ fn apply(s: &mut Session, patch: &Value) -> Result<(), TestCaseError> {
         s.set_style(style)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
     }
+    if let Some(pens) = patch["pens"].as_array() {
+        let pen = |p: &Value| {
+            let text = |k: &str| p[k].as_str().unwrap_or_default();
+            Pen::new(
+                text("name"),
+                p["width_mm"].as_f64().unwrap_or(0.0),
+                text("color"),
+            )
+        };
+        let pens: Result<Vec<Pen>, _> = pens.iter().map(pen).collect();
+        let pens = pens.map_err(|e| TestCaseError::fail(e.to_string()))?;
+        s.set_pens(pens)
+            .map_err(|e| TestCaseError::fail(e.to_string()))?;
+    }
     for (stage, values) in patch["settings"].as_object().into_iter().flatten() {
         s.update(stage, values)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;

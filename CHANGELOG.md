@@ -4,14 +4,8 @@ New entries go under Unreleased until the next release.
 
 ## Unreleased
 
-### Styles
-
-- **Looks:** most styles offer a few measured starting points under plain names: Faithful, the lowest tone error on the test images; Quick, about half an hour on A4 where the defaults take longer; and Fine, the densest marks that still plot cleanly with a 0.3 mm pen. Balanced is the defaults. A look sets only the few settings that make it: the Look select in the GUI, `plotline run --look NAME`, the MCP `run` tool's `look` and `Session.apply_look()`.
-
 ### Output
 
-- **Embedded presets:** an exported SVG or JSON drawing carries the preset of the run that made it, in a `<metadata>` element in the SVG and a `preset` key in the JSON. Load preset in the GUI, `--preset` on the command line, `Session.load_preset` and the MCP `load_preset` tool read such a file as a preset, so a drawing brings its setup back.
-- **Test chart:** a page of small labelled patches for the first pen, to plot and compare by eye: lines at 0.5 to 4 pen widths apart, dots 1 to 6 pen widths wide, and a solid fill drawn 1 to 8 times over. It shows where lines merge, how big a dot comes out, how many passes the paper takes, and whether the plot takes the time the stats say. `plotline testchart`, the MCP `testchart` tool, `Session.testchart()` and the GUI's Test chart button make it, with no image needed.
 - **Pen lift by G-code lines:** a machine whose pen is lifted by a servo or a solenoid sets `pen_lift` to `gcode` and gives its own pen-down and pen-up lines, which the G-code writer puts where it would move Z. In the GUI, Settings > Pen lift > Lift by.
 - **Split moves:** a machine's `max_segment_mm` cuts every move into pieces no longer than it, for firmware that would draw a long straight move as a curve, as on a hanging plotter. In the GUI, Settings > G-code > Longest move.
 - Both are off by default: existing machines, presets and G-code are unchanged, and the preset version stays 3.

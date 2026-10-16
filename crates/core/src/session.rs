@@ -169,7 +169,13 @@ impl Session {
     /// the current page, style and settings. `None` without an image.
     pub fn analysis(&self) -> Option<Analysis> {
         let stats = self.image_stats.clone()?;
-        let suggestions = analysis::suggest(&stats, &self.canvas, &self.style.name, &self.settings);
+        let suggestions = analysis::suggest(
+            &stats,
+            &self.canvas,
+            &self.style.name,
+            &self.settings,
+            &self.pens,
+        );
         Some(Analysis { stats, suggestions })
     }
 
@@ -669,7 +675,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::analysis::measure;
-    use crate::synthetic::{gradient, ramp, still_life, strokes};
+    use crate::synthetic::{color_bars, gradient, ramp, still_life, strokes};
     use serde_json::json;
 
     #[test]
@@ -686,6 +692,20 @@ mod tests {
         assert_eq!(ink.stats, line_art.stats);
         s.set_image(ramp(256, 64, 0.0, 1.0));
         assert_ne!(s.analysis().unwrap().stats, line_art.stats);
+    }
+    #[test]
+    fn a_colour_image_suggests_pens_at_the_sessions_width() {
+        let mut s = Session::new(1 << 20);
+        s.set_pens(vec![Pen::new("Fine", 0.5, "#000000").unwrap()])
+            .unwrap();
+        s.set_image(color_bars(256, 64));
+        let analysis = s.analysis().unwrap();
+        let colour = analysis.suggestions.iter().find(|g| g.kind == "colour");
+        let patch = colour.and_then(|g| g.patch.as_ref()).unwrap();
+        let pens = patch["pens"].as_array().unwrap();
+        assert_eq!(pens.len(), analysis.stats.palette.len());
+        assert!(pens.iter().all(|p| p["width_mm"] == 0.5));
+        assert_eq!(patch["settings"]["split"]["mode"], "by_colour");
     }
     #[test]
     fn a_refused_image_keeps_the_analysis() {

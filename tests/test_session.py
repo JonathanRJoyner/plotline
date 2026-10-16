@@ -450,6 +450,21 @@ def test_two_pens_by_colour_draw_one_layer_each():
     assert {f.pen for f in frames if f.stage == "hatch"} == {0, 1}
 
 
+def test_a_colour_image_suggests_pens_that_set_pens_accepts():
+    img = np.ones((48, 64, 3))
+    for i, rgb in enumerate([[1.0, 0.0, 0.0], [0.0, 0.7, 0.0], [0.0, 0.0, 1.0], [1.0, 0.9, 0.0]]):
+        img[:, i * 16 : (i + 1) * 16] = rgb
+    s = Session()
+    s.set_image(img)
+    analysis = s.analysis()
+    assert 2 <= len(analysis["stats"]["palette"]) <= 4
+    assert analysis["stats"]["palette_error"] >= 0
+    patch = next(x["patch"] for x in analysis["suggestions"] if x["kind"] == "colour")
+    assert patch["settings"] == {"split": {"mode": "by_colour"}}
+    s.set_pens([Pen(p["name"], p["width_mm"], p["color"]) for p in patch["pens"]])
+    assert [p.name for p in s.pens] == [p["name"] for p in patch["pens"]]
+
+
 def test_fit_meets_a_budget_and_applies_the_value():
     s = Session()
     s.set_image(_core.synthetic_gradient(64, 48))

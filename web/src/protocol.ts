@@ -5,8 +5,8 @@ import { describe, listInks, listPens, listStyles, presetFromText, Session, synt
 import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
-/** A change the engine suggests, in the shape of `Session::analysis`: `settings` apply after `style`. */
-export type Patch = { style?: string; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
+/** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
+export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
 export type State = {
@@ -70,8 +70,9 @@ export class Protocol {
       update: (stage: string, values: Record<string, unknown>) => s().update(stage, JSON.stringify(values)),
       // The session calls, not `methods`, so the whole patch redraws once. A refusal partway leaves
       // the earlier parts applied; only a stale suggestion can cause one.
-      apply: ({ style, settings, page }: Patch) => {
+      apply: ({ style, pens, settings, page }: Patch) => {
         if (style) s().setStyle(style);
+        if (pens) s().setPens(JSON.stringify(pens));
         for (const [stage, values] of Object.entries(settings ?? {})) s().update(stage, JSON.stringify(values));
         if (page) s().setCanvas(JSON.stringify({ ...JSON.parse(s().preset()).canvas, ...page }));
       },

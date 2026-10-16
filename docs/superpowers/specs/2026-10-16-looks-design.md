@@ -1,6 +1,6 @@
 # plotline spec: looks
 
-Date: 2026-10-16. Status: built. The owner delegates the taste defaults, which are recorded in the brief's decision log ("Looks").
+Date: 2026-10-16. Status: built. The owner delegates the taste defaults, which are recorded in [the looks decision](../../decisions/2026-10-16-looks.md).
 
 The owner suggested presets within each style, built from what we see as optimal settings. A preset file holds a whole setup (style, page, pens, machine, settings), which is the wrong size for this: a starting point inside one style should change the few settings that set its character and leave the image, the page, the pens and the user's own adjustments alone. This spec calls such a starting point a **look**: a named settings patch declared with the style, like the style's own default overrides, and chosen by measurement rather than by eye.
 
@@ -12,7 +12,7 @@ The owner suggested presets within each style, built from what we see as optimal
 - `crates/core/examples/looks.rs` (new): the measurement that chose the values, so it can be run again.
 - `crates/core/tests/laws.rs`: the look law.
 - Bindings, CLI, MCP and GUI, with a tour step and a browser flow.
-- Docs: the brief's decision log, §6.3, §8 and §9, the README, the CHANGELOG.
+- Docs: [the looks decision](../../decisions/2026-10-16-looks.md), the brief's §6.3, §8 and §9, the README, `changelog.d/looks.md`.
 
 ## 2. Looks
 
