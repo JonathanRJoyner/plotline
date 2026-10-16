@@ -185,6 +185,264 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "used only when levels is auto, which is off by default",
     ),
     (
+        "grid",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "hatch",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "waves",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "spiral",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "ink",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "stipple",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "line",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "dashes",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "sketch",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "tree",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "mesh",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "cells",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "halftone",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "dither",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "circles",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "contours",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "flow",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "hilbert",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "scribble",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "mosaic",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "truchet",
+        "tone",
+        "focus_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "grid",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "hatch",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "waves",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "spiral",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "ink",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "stipple",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "line",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "dashes",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "sketch",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "tree",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "mesh",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "cells",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "halftone",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "dither",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "circles",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "contours",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "flow",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "hilbert",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "scribble",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "mosaic",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "truchet",
+        "tone",
+        "focus_blur_mm",
+        "used only with focus points, which are off by default",
+    ),
+    (
+        "truchet",
+        "tone",
+        "focus",
+        "a tile's arc count is rounded from the mean of 16 samples of its ink, and blurring the 64 by 48 noise image away from one point moves none of those means across a rounding point",
+    ),
+    (
         "truchet",
         "tone",
         "resolution",
@@ -259,6 +517,17 @@ fn another(prop: &Value, default: &Value, defs: &Value) -> Value {
             } else {
                 json!(v)
             }
+        }
+        // A list of number lists, such as the focus points: one list, every number mid-range.
+        Some("array") => {
+            let item = &prop["items"];
+            let n = item["minItems"].as_u64().expect("fixed-length items") as usize;
+            let (lo, hi) = (
+                item["items"]["minimum"].as_f64(),
+                item["items"]["maximum"].as_f64(),
+            );
+            let mid = (lo.expect("a range") + hi.expect("a range")) / 2.0;
+            json!([vec![mid; n]])
         }
         other => panic!("no way to vary a setting of type {other:?}; teach this test"),
     }

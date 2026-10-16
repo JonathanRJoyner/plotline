@@ -216,6 +216,14 @@ def test_a_preset_of_another_style_carries_its_changes(tmp_path, image):
     assert saved["settings"]["tone"]["gamma"] == 1.9
 
 
+def test_focus_points_reach_the_session_as_a_list(tmp_path, image):
+    base = ["--out", str(tmp_path / "o.svg"), "--quiet", "--set", "tone.resolution=64"]
+    p = tmp_path / "p.json"
+    r = run("run", "grid", image, *base, "--set", "tone.focus=[[0.5,0.5]]", "--save-preset", str(p))
+    assert r.exit_code == 0, r.output
+    assert json.loads(p.read_text())["settings"]["tone"]["focus"] == [[0.5, 0.5]]
+
+
 def test_two_pens_in_one_pen_mode_get_a_note(tmp_path, image):
     note = "Pen use is set to one pen, so only the first pen draws."
     args = ["run", "grid", image, "--out", str(tmp_path / "o.svg"), "--quiet"]
@@ -361,6 +369,11 @@ def test_parsers():
     values = [parse_set(f"a.b={text}")[2] for text in ("true", "false", "64", "1e3", "abc", "")]
     assert values == [True, False, 64, 1000.0, "abc", ""]
     assert [type(v) for v in values[:4]] == [bool, bool, int, float]
+    # Text that starts with [ or { is JSON, such as the tone stage's list of focus points.
+    assert parse_set("tone.focus=[[0.5,0.3]]") == ("tone", "focus", [[0.5, 0.3]])
+    assert parse_set('a.b={"c":1}')[2] == {"c": 1}
+    with pytest.raises(click.BadParameter, match="Expecting"):
+        parse_set("tone.focus=[[0.5,")
     # Only the last two colons split, so the name may hold colons and the colour keeps its '#'.
     assert parse_pen("Fine: red:0.5:#ff0000") == Pen("Fine: red", 0.5, "#ff0000")
     # An ink name in any case stands for its colour.
