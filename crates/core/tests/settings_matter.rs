@@ -36,6 +36,30 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "grid",
+        "order",
+        "simplify_mm",
+        "at its defaults every mark is a dot, and a path of fewer than three vertices has nothing to simplify",
+    ),
+    (
+        "dither",
+        "order",
+        "simplify_mm",
+        "at its defaults every mark is a dot, and a path of fewer than three vertices has nothing to simplify",
+    ),
+    (
+        "hatch",
+        "order",
+        "simplify_mm",
+        "every mark is a straight line of two vertices, and a path of fewer than three vertices has nothing to simplify",
+    ),
+    (
+        "dashes",
+        "order",
+        "simplify_mm",
+        "every mark is a straight dash of two vertices, and a path of fewer than three vertices has nothing to simplify",
+    ),
+    (
+        "grid",
         "tone",
         "clip_percent",
         "used only when levels is auto, which is off by default",

@@ -130,12 +130,16 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
 }
 
 /* The focus points over the preview: a dashed ring of the radius, a dot, and while focusing a
-   target that takes the click which removes the point. */
-.focus-rings { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
-.focus-rings .ring { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 4; }
-.focus-rings .dot { fill: var(--accent); }
+   target that takes the click which removes the point. The paper is white in both themes, so the
+   ring is a dark indigo that reads on it whatever the theme, and a white casing keeps it visible
+   where it runs past the paper onto the dark backdrop. */
+.focus-rings { --ring: #4338ca; position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.focus-rings .ring-halo, .focus-rings .ring { fill: none; stroke-dasharray: 6 4; }
+.focus-rings .ring-halo { stroke: #fff; stroke-width: 4; }
+.focus-rings .ring { stroke: var(--ring); stroke-width: 1.5; }
+.focus-rings .dot { fill: var(--ring); stroke: #fff; stroke-width: 1.5; }
 .focus-rings .hit { fill: transparent; stroke: transparent; stroke-width: 1.5; pointer-events: all; cursor: pointer; }
-.focus-rings .hit:hover, .focus-rings .hit:focus-visible { stroke: var(--accent); }
+.focus-rings .hit:hover, .focus-rings .hit:focus-visible { stroke: var(--ring); }
 .focus-line { margin: 4px 0; }
 .focus-line button { margin-left: 6px; }
 

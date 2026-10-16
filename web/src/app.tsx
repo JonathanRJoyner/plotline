@@ -320,11 +320,14 @@ export function App() {
   const [thumbs, setThumbs] = useState<Record<string, Thumb>>({});
   const thumbsFor = useRef(0); // the id of the pictures the styles dialog shows; 0 for none
 
-  const focusShares = useRef<number[][]>([]); // the focus points of the last state, as shares of the image
+  // The focus points the page holds, as shares of the image: the last state's, or while edits are
+  // on their way the list they will leave, so a quick second edit builds on the first.
+  const focusShares = useRef<number[][]>([]);
+  const focusEdits = useRef(0);
   const save = useRef<ReturnType<typeof setTimeout>>();
   const take = (s: State) => {
     setState(s);
-    focusShares.current = (s.settings.tone?.focus as number[][] | undefined) ?? [];
+    if (focusEdits.current === 0) focusShares.current = (s.settings.tone?.focus as number[][] | undefined) ?? [];
     history.see(setupOf(s), restoring.current);
     status.set({ run: s.run, stats: s.stats, layers: s.layers, lint: s.lint, tone: s.tone });
     clearTimeout(save.current);
@@ -491,13 +494,26 @@ export function App() {
   }
 
   // Each change of the focus points is one update of the tone stage, so it reruns from there and
-  // is one step of the history. A refusal, such as a 17th point, shows under the toolbar.
-  const setFocus = (points: number[][]) => call("update", ["tone", { focus: points }]);
+  // is one step of the history. It sends the list the page holds, changed, and the page holds the
+  // new list at once, so a second change before the reply still has the first. A refusal, such as
+  // a 17th point, shows under the toolbar, and the engine's own list comes back.
+  async function editFocus(change: (points: number[][]) => number[][]) {
+    focusShares.current = change(focusShares.current);
+    focusEdits.current++;
+    try {
+      await call("update", ["tone", { focus: focusShares.current }]);
+    } finally {
+      focusEdits.current--;
+    }
+  }
   // The engine says which share of the image lies under the page point; off the image, nothing.
   async function addFocus(mm: [number, number]) {
     const share = await call<number[] | null>("imagePoint", mm);
-    if (share) await setFocus([...focusShares.current, share]);
+    if (share) await editFocus((points) => [...points, share]);
   }
+  // A point goes by what it is, not its place in the list, which an edit in between may move.
+  const removeFocus = (share: number[] | undefined) =>
+    share && editFocus((points) => points.filter((p) => p[0] !== share[0] || p[1] !== share[1]));
 
   // A fit leaves the settings alone; this applies the value it chose, and the redraw that
   // follows comes from the cache.
@@ -554,7 +570,7 @@ export function App() {
           engine={engine} status={status} stages={stages} canvas={state.canvas} hidden={hidden}
           pens={state.pens} hasImage={state.image} onOpen={openImage}
           focus={state.focus} radius={Number(settings.tone?.focus_mm ?? 40)}
-          onFocusAt={addFocus} onFocusRemove={(i) => setFocus(focusShares.current.filter((_, j) => j !== i))}
+          onFocusAt={addFocus} onFocusRemove={(i) => removeFocus((state.settings.tone?.focus as number[][] | undefined)?.[i])}
           error={errors[""] || (errors.image && `Could not open the image (${errors.image}).${state.image ? " The previous image is still open." : ""}`)}
           onSample={() => call("sample", [], "image")} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
           onSettings={() => {

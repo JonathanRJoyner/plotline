@@ -247,14 +247,15 @@ export function Preview(props: Props): JSX.Element {
         }}
         onPointerCancel={() => (drag.current = null)}
       />
-      {/* Over the canvas in the canvas's own pixels, so a ring takes the theme's accent colour. Only
-          the removal target of each point, while focusing, takes the pointer. */}
+      {/* Over the canvas in the canvas's own pixels. Only the removal target of each point, while
+          focusing, takes the pointer. */}
       <svg class="focus-rings" aria-hidden={focusing ? undefined : "true"}>
         {focus.map(([x, y], i) => {
           const [cx, cy] = [view.x + x * view.scale, view.y + y * view.scale];
           const remove = () => onFocusRemove(i);
           return (
             <g key={i}>
+              <circle class="ring-halo" cx={cx} cy={cy} r={radius * view.scale} />
               <circle class="ring" cx={cx} cy={cy} r={radius * view.scale} />
               <circle class="dot" cx={cx} cy={cy} r={3} />
               {focusing && (

@@ -8,8 +8,10 @@
 //! colorfulness in natural images", *Human Vision and Electronic Imaging VIII*, SPIE 5007, 2003,
 //! doi:10.1117/12.477378), the noise level (J. Immerkær, "Fast noise variance estimation",
 //! *Computer Vision and Image Understanding* 64(2), 1996, pp. 300-302,
-//! doi:10.1006/cviu.1996.0060) and the tone at the border. For a colour image it also picks the
-//! pens that draw it best; see [`ImageStats::palette`].
+//! doi:10.1006/cviu.1996.0060) and the tone at the border. It also measures Otsu's separability
+//! once the paper's tone is flattened out (see [`crate::stages::tone::flatten`]), which tells a
+//! drawing on uneven paper from a photograph. For a colour image it also picks the pens that draw
+//! it best; see [`ImageStats::palette`].
 //!
 //! Every value is a deterministic function of the pixels: integer histograms with fixed bin
 //! edges, sums in row-major order, and `sqrt` (exact in IEEE 754) as the only float library call
@@ -23,6 +25,7 @@ use crate::math;
 use crate::pens::INKS;
 use crate::preview::rgb;
 use crate::stages::split;
+use crate::stages::tone::flatten;
 use crate::types::{Canvas, Fit, Image, Pen};
 
 /// Bins for the black and white points.
@@ -55,6 +58,9 @@ pub struct ImageStats {
     pub otsu: f64,
     /// Otsu's separability, 0 for a flat image to 1 for a pure two-tone one.
     pub two_level: f64,
+    /// Otsu's separability after the paper's tone is flattened out with a window of a sixteenth of
+    /// the grid's longer side: well above `two_level` for a drawing on grey or unevenly lit paper.
+    pub flat_two_level: f64,
     /// Shares of pixels below 0.25, from 0.25 to 0.75, and above 0.75.
     pub dark: f64,
     pub mid: f64,
@@ -372,6 +378,7 @@ pub fn measure(image: &Image) -> ImageStats {
     });
     let n = lum.len() as f64;
     let (p_low, p_high) = levels(&lum, 0.5);
+    let flat_two_level = otsu(&flatten(&lum, gw, gh, gw.max(gh) as f64 / 16.0)).1;
     let (otsu, two_level) = otsu(&lum);
     let colourfulness = colourfulness(&r, &g, &b);
     let (palette, palette_error) = if colourfulness > COLOUR_CUT {
@@ -389,6 +396,7 @@ pub fn measure(image: &Image) -> ImageStats {
         mean: lum.iter().map(|&v| f64::from(v)).sum::<f64>() / n,
         otsu,
         two_level,
+        flat_two_level,
         dark: dark as f64 / n,
         mid: (lum.len() - dark - light) as f64 / n,
         light: light as f64 / n,
@@ -424,6 +432,8 @@ const NARROW: &str =
     "The image uses a narrow range of tones. Auto levels stretch it over the full range.";
 const LIGHT_MARKS: &str =
     "This looks like light marks on a dark ground. Inverting it gives the marks the ink.";
+const PAPER: &str =
+    "The paper's tone is uneven. Flatten paper evens it out, so the paper draws as white.";
 const NOISY: &str =
     "The image is noisy. A blur of one tone-map pixel keeps the noise from turning into specks.";
 const TURN: &str = "The image would draw larger with the page turned.";
@@ -433,10 +443,10 @@ const TURN_GAIN: f64 = 1.3;
 
 /// Suggestions for the session as it stands, in a fixed order, each left out when already in
 /// effect. `settings` is `{stage: {key: value}}`; a missing `tone` or `split` key counts as its
-/// default (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000, `mode` one pen). `pens`
-/// are the session's: the colour suggestion gives the palette's pens the first one's width, and is
-/// left out when Pen use is by colour and the pens already have the palette's colours. The cut-offs
-/// are hand-set starting values, not a fitted model.
+/// default (`levels` manual, `flatten_mm` 0, `invert` off, `blur_mm` 0, `resolution` 1000, `mode`
+/// one pen). `pens` are the session's: the colour suggestion gives the palette's pens the first
+/// one's width, and is left out when Pen use is by colour and the pens already have the palette's
+/// colours. The cut-offs are hand-set starting values, not a fitted model.
 pub fn suggest(
     stats: &ImageStats,
     canvas: &Canvas,
@@ -468,6 +478,19 @@ pub fn suggest(
         let patch = json!({"settings": {"tone": {"levels": "auto"}}});
         add("levels", NARROW, Some(patch));
     }
+    let [_, _, dw, dh] = canvas.drawing_rect();
+    // Flattening that turns an image two-level is what a drawing on uneven paper shows.
+    // A colour image's flat patches also flatten to two levels, and colour has its own suggestion.
+    if stats.flat_two_level >= 0.85
+        && stats.flat_two_level >= stats.two_level + 0.05
+        && stats.colourfulness <= COLOUR_CUT
+        && tone("flatten_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0
+    {
+        // A sixteenth of the longer side, to the nearest half mm and within the schema's range.
+        let window = ((dw.max(dh) / 16.0 * 2.0).round() / 2.0).clamp(0.5, 50.0);
+        let patch = json!({"settings": {"tone": {"flatten_mm": window}}});
+        add("paper", PAPER, Some(patch));
+    }
     if stats.border < 0.3
         && stats.mean < 0.5
         && stats.two_level >= 0.85
@@ -476,7 +499,6 @@ pub fn suggest(
         let patch = json!({"settings": {"tone": {"invert": true}}});
         add("invert", LIGHT_MARKS, Some(patch));
     }
-    let [_, _, dw, dh] = canvas.drawing_rect();
     if stats.noise > 0.03 && tone("blur_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0 {
         let resolution = tone("resolution").and_then(Value::as_f64).unwrap_or(1000.0);
         // The schema's largest blur is 10 mm.
@@ -549,7 +571,9 @@ fn capitalise(word: &str) -> String {
 mod tests {
     use super::*;
     use crate::registry::get_style;
-    use crate::synthetic::{color_bars, flat, flat_noise, ramp, strokes};
+    use crate::synthetic::{
+        color_bars, flat, flat_noise, lit_strokes, ramp, scene, still_life, strokes,
+    };
 
     fn page() -> Canvas {
         Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap()
@@ -689,6 +713,70 @@ mod tests {
         );
         settings["tone"]["levels"] = json!("auto");
         assert!(find(&run(&image, "grid", &settings), "levels").is_none());
+    }
+
+    #[test]
+    fn flattening_makes_a_lit_drawing_two_level() {
+        let lit = measure(&lit_strokes(256, 256, 0.4));
+        assert!(lit.two_level < 0.8, "{}", lit.two_level);
+        assert!(lit.flat_two_level >= 0.99, "{}", lit.flat_two_level);
+        // Already even paper has nothing to flatten out, and a flat image no split.
+        let even = measure(&strokes(256, 256, 0.0, 1.0));
+        assert!((even.flat_two_level - even.two_level).abs() < 0.01);
+        assert_eq!(measure(&flat(256, 256, 0.5)).flat_two_level, 0.0);
+    }
+
+    #[test]
+    fn uneven_paper_suggests_flatten_paper() {
+        let image = lit_strokes(256, 256, 0.4);
+        let mut settings = defaults("grid");
+        assert_eq!(
+            patch(&run(&image, "grid", &settings), "paper"),
+            Some(json!({"settings": {"tone": {"flatten_mm": 17.5}}}))
+        );
+        // A missing tone key counts as off, and any window turns the suggestion off.
+        assert!(find(&run(&image, "grid", &json!({})), "paper").is_some());
+        settings["tone"]["flatten_mm"] = json!(10.0);
+        assert!(find(&run(&image, "grid", &settings), "paper").is_none());
+    }
+
+    #[test]
+    fn photographs_and_even_line_art_get_no_flatten_paper() {
+        let settings = defaults("grid");
+        for image in [
+            still_life(600, 875),
+            scene(400, 300),
+            ramp(256, 64, 0.0, 1.0),
+            strokes(256, 256, 0.0, 1.0),
+            flat(256, 256, 0.5),
+            color_bars(256, 64),
+        ] {
+            assert!(find(&run(&image, "grid", &settings), "paper").is_none());
+        }
+    }
+
+    #[test]
+    fn the_flatten_window_is_a_sixteenth_of_the_longer_side() {
+        let stats = measure(&lit_strokes(256, 256, 0.4));
+        let window = |canvas: Canvas| {
+            let all = suggest(&stats, &canvas, "grid", &json!({}), &black(0.3));
+            patch(&all, "paper").unwrap()["settings"]["tone"]["flatten_mm"].clone()
+        };
+        // 277 / 16 = 17.3125 on A4 and 100 / 16 = 6.25, to the nearest half mm; 1000 / 16 is past the
+        // schema's 50 and 5 / 16 under its half mm.
+        assert_eq!(window(page()), json!(17.5));
+        assert_eq!(
+            window(Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap()),
+            json!(6.5)
+        );
+        assert_eq!(
+            window(Canvas::new(1000.0, 800.0, 0.0, Fit::Fit).unwrap()),
+            json!(50.0)
+        );
+        assert_eq!(
+            window(Canvas::new(5.0, 5.0, 0.0, Fit::Fit).unwrap()),
+            json!(0.5)
+        );
     }
 
     #[test]
@@ -933,6 +1021,11 @@ mod tests {
                 ramp(256, 64, 0.4, 0.6),
                 "levels",
                 "The image uses a narrow range of tones. Auto levels stretch it over the full range.",
+            ),
+            (
+                lit_strokes(256, 256, 0.4),
+                "paper",
+                "The paper's tone is uneven. Flatten paper evens it out, so the paper draws as white.",
             ),
             (
                 strokes(256, 256, 1.0, 0.0),

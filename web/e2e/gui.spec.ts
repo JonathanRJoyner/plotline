@@ -265,6 +265,30 @@ test("Focus marks points on the preview, a click on one removes it, and Undo bri
   await ran(page, id);
 });
 
+test("Two quick clicks in Focus mode both land", async ({ page }) => {
+  const id = await sample(page);
+  await page.locator("label.chip", { hasText: "Focus" }).click();
+  const box = (await page.locator(".preview canvas").boundingBox())!;
+  const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+  // Sent together, so the second press arrives before the engine has answered the first.
+  await Promise.all([page.mouse.click(x - 100, y), page.mouse.click(x + 100, y), page.mouse.click(x, y + 150)]);
+  await expect(page.locator(".focus-rings .ring")).toHaveCount(3);
+  await ran(page, id);
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  await expect(page.locator(".focus-line")).toContainText("3 focus points");
+});
+
+test("Flatten paper changes the drawing", async ({ page }) => {
+  const id = await pick(page, "ink", await sample(page));
+  const stats = await page.locator(".stats").textContent();
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  const flatten = page.getByRole("spinbutton", { name: /^flatten paper$/i });
+  await flatten.fill("10");
+  await flatten.blur();
+  await ran(page, id);
+  await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
+});
+
 test("the thumbnail grid picks a style", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);
