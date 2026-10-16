@@ -62,7 +62,7 @@ All arithmetic is plain `f64` with `ln` and `exp` from the crate's `math` module
 `Fit` is driven like a `Run`: `next_frame`, `cancel`, `cancel_flag`, `state` and `error` behave the same, so the hosts drive it with the code that drives a run. Each trial is a `Run` with the setting changed, sharing the session's cache and cancel flag but writing a private slot, so the session's slot shows the fit running until it ends. The tone and split stages stay cached across trials; only the stages from the density setting's stage on run again.
 
 - A trial's frames pass through with their label prefixed, as `trial 3 of 8: relaxation 18/30`.
-- After each trial the fit gives a frame of stage `fit` with no geometry, labelled `trial 3 of 8: 72.4 min`, at progress `trial / 8`.
+- After each trial the fit gives a frame of stage `fit` with no geometry, labelled `trial 3 of 8: 72.4 min`, at progress 1, so a host that throttles frames still shows it.
 - A trial that is cancelled or fails ends the fit the same way, with the trial's message.
 - At the end the fit writes the nearest trial's drawing to the session's slot as `done`.
 

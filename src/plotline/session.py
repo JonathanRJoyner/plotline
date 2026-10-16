@@ -68,13 +68,15 @@ def _have(value: T | None) -> T:
 
 
 class RunHandle:
-    """One run of a style, as ``Session.run`` or ``Session.run_blocking`` makes it.
+    """One run of a style, as ``Session.run``, ``Session.run_blocking`` or ``Session.fit`` makes
+    it.
 
     ``state`` starts as ``running`` and ends as ``done``, ``cancelled`` or ``error``. ``result``
     is set when the run is ``done`` and ``error`` holds the exception when it ended in ``error``:
     a ``RuntimeError`` with the engine's message for a failed stage, or what a subscriber raised.
-    All of them can be read from any thread. A handle from ``run_blocking`` has no thread, so it
-    is finished by the time the caller has it.
+    ``fit`` holds what a fit chose once it is ``done``, and is ``None`` for a plain run. All of
+    them can be read from any thread. A handle from ``run_blocking`` has no thread, so it is
+    finished by the time the caller has it.
     """
 
     def __init__(self, run: _core.Run) -> None:
@@ -83,6 +85,7 @@ class RunHandle:
         self._state = RunState.running
         self._result: Drawing | None = None
         self._error: BaseException | None = None
+        self._fit: dict[str, Any] | None = None
 
     @property
     def state(self) -> RunState:
@@ -95,6 +98,12 @@ class RunHandle:
     @property
     def error(self) -> BaseException | None:
         return self._error
+
+    @property
+    def fit(self) -> dict[str, Any] | None:
+        """``{stage, key, metric, target, value, achieved, samples}``, where ``samples`` lists
+        every trial as ``{value, metric}`` in order."""
+        return self._fit
 
     def cancel(self) -> None:
         """Ask the run to stop; the stage under way sees it at its next check. A run that has
@@ -256,7 +265,7 @@ class Session:
         to ``cancelled``. Either way ``result`` stays as it was. Raises ``RuntimeError`` when no
         image is loaded.
         """
-        return self._execute(self._start())
+        return self._execute(self._start(self._core.start))
 
     def run(self) -> RunHandle:
         """Run the style on a worker thread and return its handle at once.
@@ -267,11 +276,24 @@ class Session:
         ends in ``error`` and the handle keeps the exception. Raises ``RuntimeError`` when no
         image is loaded.
         """
-        handle = self._start()
-        thread = threading.Thread(target=self._work, args=(handle,), daemon=True)
-        handle._thread = thread
-        thread.start()
-        return handle
+        return self._spawn(self._start(self._core.start))
+
+    def fit(self, metric: str, target: float) -> RunHandle:
+        """Find the value of the style's density setting that brings ``metric`` of the drawing
+        near ``target``, on a worker thread as ``run`` does, and return its handle at once.
+
+        ``metric`` is ``minutes`` (the estimated plot time at ``speeds``), ``paths``, ``metres``
+        of pen-down length, or ``dots`` for a style that places points. The style reruns with the
+        setting changed, up to eight times, until the metric is within 2 % of the target, and the
+        trial nearest it is kept: when the handle is ``done``, the setting holds its value,
+        ``result`` its drawing and the handle's ``fit`` the search. The time estimate leaves out
+        acceleration, so a time target runs optimistic on styles of short strokes or dots.
+        Raises ``RuntimeError`` when no image is loaded and ``ValueError`` for an unknown
+        metric, a target that is not above 0, a style with no density setting, or ``dots`` for
+        a style that places none.
+        """
+        self._core.set_speeds(asdict(self.speeds))
+        return self._spawn(self._start(lambda: self._core.fit(metric, target)))
 
     def cancel(self) -> None:
         """Ask the latest run to stop, which ends it in ``cancelled``. Nothing happens when there
@@ -295,13 +317,20 @@ class Session:
 
         return unsubscribe
 
-    def _start(self) -> RunHandle:
-        """Stop the latest run, wait for it, and start the next one in the engine, which takes a
-        snapshot of the session."""
+    def _start(self, begin: Callable[[], _core.Run]) -> RunHandle:
+        """Stop the latest run, wait for it, and start the next one in the engine with ``begin``,
+        which takes a snapshot of the session."""
         if self._handle is not None:
             self._handle.cancel()
             self._handle.wait()
-        self._handle = handle = RunHandle(self._core.start())
+        self._handle = handle = RunHandle(begin())
+        return handle
+
+    def _spawn(self, handle: RunHandle) -> RunHandle:
+        """Drive ``handle`` on a new worker thread and return it."""
+        thread = threading.Thread(target=self._work, args=(handle,), daemon=True)
+        handle._thread = thread
+        thread.start()
         return handle
 
     def _work(self, handle: RunHandle) -> None:
@@ -322,6 +351,10 @@ class Session:
                 self._deliver(_frame(frame))
             state = RunState(run.state())
             if state is RunState.done:
+                # Applied before the handle ends, so a reader that sees done sees the new value.
+                if (fit := run.result()) is not None:
+                    self._core.update(fit["stage"], {fit["key"]: fit["value"]})
+                    handle._fit = fit
                 # No newer run has started, so the engine's latest drawing is this run's.
                 self.result = result = _drawing(_have(self._core.drawing()))
                 handle._end(state, result)

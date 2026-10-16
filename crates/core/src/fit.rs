@@ -450,7 +450,8 @@ impl FitRun {
                 }
                 return Some(Frame {
                     stage: "fit".to_string(),
-                    progress: n as f32 / MAX_TRIALS as f32,
+                    // A trial's last frame, which a host that throttles frames still shows.
+                    progress: 1.0,
                     label: format!("trial {n} of {MAX_TRIALS}: {}", self.metric.show(metric)),
                     points: None,
                     paths: None,

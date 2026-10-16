@@ -17,7 +17,7 @@ import json
 import math
 import warnings
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -31,7 +31,7 @@ from typing_extensions import TypedDict  # pydantic refuses typing.TypedDict bef
 
 import plotline
 from plotline import registry
-from plotline.session import Session
+from plotline.session import RunHandle, Session
 from plotline.types import Cancelled, Canvas, Frame, Pen, RunState
 
 INSTRUCTIONS = (
@@ -41,9 +41,10 @@ INSTRUCTIONS = (
     "suggested changes; apply a suggestion with run(style=..., settings=...) or set_page. run "
     "draws the image and returns its stats and a preview at true pen width. Look at the preview, "
     "change settings with run(settings=...), and repeat; only the stages after a changed setting "
-    "run again. Use preview with region_mm to inspect detail. export writes the result. All "
-    "lengths are millimetres, the page origin is its top-left corner and y grows down. Paths must "
-    "be absolute."
+    "run again. To meet a budget of plot time, paths, pen-down metres or dots, call fit, which "
+    "sets the style's density setting. Use preview with region_mm to inspect detail. export "
+    "writes the result. All lengths are millimetres, the page origin is its top-left corner and y "
+    "grows down. Paths must be absolute."
 )
 
 
@@ -193,33 +194,29 @@ def build_server(session: Session | None = None) -> MCPServer:
             )
             return _array([asdict(pen) for pen in session.pens])
 
-    @server.tool()
-    async def run(
-        ctx: Context,
-        style: str | None = None,
-        settings: dict[str, dict[str, Any]] | None = None,
-    ) -> list[str | Image]:
-        """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
-        px wide. A style that differs from the current one replaces it and resets the settings to
-        its defaults. settings is {stage: {setting: value}} and changes only the values given; only
-        the stages after a changed setting run again. When a change is refused, nothing changes
-        and nothing runs."""
-        with _errors(), ExitStack() as stack:
-            old_style, old_settings = session.style.name, session.settings
-            try:
-                if style is not None and style != old_style:
-                    session.set_style(style)
-                for stage, values in (settings or {}).items():
-                    session.update(stage, **values)
-            except Exception:
-                session.set_style(old_style)
-                for stage, values in old_settings.items():
-                    session.update(stage, **values)
-                raise
+    def change(style: str | None, settings: dict[str, dict[str, Any]] | None) -> None:
+        """Switch to ``style`` and apply ``settings``; when a change is refused, put the style and
+        settings back and raise."""
+        old_style, old_settings = session.style.name, session.settings
+        try:
+            if style is not None and style != old_style:
+                session.set_style(style)
+            for stage, values in (settings or {}).items():
+                session.update(stage, **values)
+        except Exception:
+            session.set_style(old_style)
+            for stage, values in old_settings.items():
+                session.update(stage, **values)
+            raise
 
+    async def follow(ctx: Context, start: Callable[[], RunHandle]) -> RunHandle:
+        """Start a run with ``start``, report its frames as progress at most every 100 ms, and
+        wait for it to end. Raises the run's error, or ``Cancelled`` when it was cancelled or a
+        newer run took the drawing. A client cancel cancels the run."""
+        with ExitStack() as stack:
             latest: deque[Frame] = deque(maxlen=1)
             stack.callback(session.subscribe(latest.append))
-            handle = session.run()
+            handle = start()
             stack.callback(handle.cancel)  # a run that has ended stays as it ended
             sent: Frame | None = None
             count = 0
@@ -234,8 +231,48 @@ def build_server(session: Session | None = None) -> MCPServer:
             # A newer run that started while this call slept owns the engine's drawing now.
             if session.state is RunState.running or session.result is not handle.result:
                 raise Cancelled("the run was cancelled")
-            png = session.preview_png(_page_px(session))
-            return [json.dumps(asdict(session.stats())), Image(data=png, format="png")]
+            return handle
+
+    def shown() -> list[str | Image]:
+        """The result's stats as JSON and a preview of it."""
+        png = session.preview_png(_page_px(session))
+        return [json.dumps(asdict(session.stats())), Image(data=png, format="png")]
+
+    @server.tool()
+    async def run(
+        ctx: Context,
+        style: str | None = None,
+        settings: dict[str, dict[str, Any]] | None = None,
+    ) -> list[str | Image]:
+        """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
+        px wide. A style that differs from the current one replaces it and resets the settings to
+        its defaults. settings is {stage: {setting: value}} and changes only the values given; only
+        the stages after a changed setting run again. When a change is refused, nothing changes
+        and nothing runs."""
+        with _errors():
+            change(style, settings)
+            await follow(ctx, session.run)
+            return shown()
+
+    @server.tool()
+    async def fit(
+        ctx: Context,
+        metric: Literal["minutes", "paths", "metres", "dots"],
+        target: float,
+        style: str | None = None,
+        settings: dict[str, dict[str, Any]] | None = None,
+    ) -> list[str | Image]:
+        """Find the value of the style's density setting that brings a metric of the drawing near
+        target: minutes of estimated plot time, paths, metres of pen-down length, or dots for a
+        style that places points. style and settings apply first, as in run. The style reruns
+        with the setting changed, up to eight times, and keeps the run nearest the target; the
+        setting keeps its value. Returns the stage, key, chosen value and the value and metric of
+        every trial as JSON, then the stats and a preview as run does. The time estimate leaves
+        out acceleration, so a time target runs optimistic on styles of short strokes or dots."""
+        with _errors():
+            change(style, settings)
+            handle = await follow(ctx, lambda: session.fit(metric, target))
+            return [json.dumps(handle.fit), *shown()]
 
     @server.tool()
     async def preview(

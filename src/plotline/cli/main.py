@@ -137,6 +137,37 @@ def page_options(command: Callable[..., Any]) -> Callable[..., Any]:
     return command
 
 
+# The budget metrics, each with its option's help and the unit its result prints with.
+FITS = {
+    "minutes": ("MINUTES", "the estimated plot time", "min"),
+    "paths": ("N", "the path count", "paths"),
+    "metres": ("METRES", "the pen-down length", "m"),
+    "dots": ("N", "the number of dots, for a style that places points", "dots"),
+}
+
+
+def fit_options(command: Callable[..., Any]) -> Callable[..., Any]:
+    """Give ``command`` one ``--fit-METRIC`` option per budget metric, which ``run`` passes to
+    ``Session.fit``."""
+    for metric, (metavar, what, _) in reversed(FITS.items()):
+        command = click.option(
+            f"--fit-{metric}",
+            type=float,
+            metavar=metavar,
+            help=(
+                f"Fit the style's density setting so that {what} comes near {metavar}, in up to "
+                "eight runs, instead of running once."
+                + (
+                    " The estimate leaves out acceleration, so a style of short strokes or dots "
+                    "plots slower than it says."
+                    if metric == "minutes"
+                    else ""
+                )
+            ),
+        )(command)
+    return command
+
+
 def set_page(
     session: Session,
     width: float | None,
@@ -204,6 +235,7 @@ def analyse(
     type=click.Path(),
     help="Write the style, page, pens and settings used to a preset file.",
 )
+@fit_options
 @click.option("--quiet", is_flag=True, help="Do not print progress.")
 def run(
     style: str,
@@ -219,9 +251,17 @@ def run(
     sets: list[tuple[str, str, bool | int | float | str]],
     preset: str | None,
     save_preset: str | None,
+    fit_minutes: float | None,
+    fit_paths: float | None,
+    fit_metres: float | None,
+    fit_dots: float | None,
     quiet: bool,
 ) -> None:
     """Run STYLE on IMAGE and write the drawing as an SVG."""
+    given = zip(FITS, (fit_minutes, fit_paths, fit_metres, fit_dots), strict=True)
+    fits = [(metric, target) for metric, target in given if target is not None]
+    if len(fits) > 1:
+        raise click.UsageError("give at most one --fit option")
     session = Session(max_fps=4)
     if not quiet:
         session.subscribe(lambda frame: click.echo(f"{frame.stage}: {frame.label}", err=True))
@@ -237,7 +277,22 @@ def run(
             session.set_pens(pens)
         for stage, key, value in sets:
             session.update(stage, **{key: value})
-        session.run_blocking()
+        if fits:
+            [(metric, target)] = fits
+            handle = session.fit(metric, target)
+            handle.wait()
+            if handle.error is not None:
+                raise handle.error
+            chosen = handle.fit
+            assert chosen is not None  # a fit that ended without an error is done
+            unit = FITS[metric][2]
+            click.echo(
+                f"fit: {chosen['stage']}.{chosen['key']} = {chosen['value']} "
+                f"({chosen['achieved']:.4g} {unit} for a target of {target:g} {unit}, "
+                f"{len(chosen['samples'])} trials)"
+            )
+        else:
+            session.run_blocking()
         session.export_svg(out)
         if json_out is not None:
             session.export_json(json_out)
