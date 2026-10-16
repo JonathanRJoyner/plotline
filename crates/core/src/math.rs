@@ -106,6 +106,18 @@ fn box_blur(values: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32>
     v
 }
 
+/// The mean of a row-major `width x height` grid over the square of `2r + 1` samples around each
+/// sample, along the rows and then the columns, each a running sum (Wells, 1986), so every pixel
+/// costs the same whatever `r`. Samples past an edge take the edge value.
+pub fn box_mean(values: &[f32], width: usize, height: usize, r: usize) -> Vec<f32> {
+    if values.is_empty() {
+        return Vec::new();
+    }
+    let w = 2 * r + 1;
+    let v = box_lines(values, height, width, |y, x| y * width + x, w);
+    box_lines(&v, width, height, |x, y| y * width + x, w)
+}
+
 /// The mean over a window of odd width `w` along each of `count` lines of `len` samples, where
 /// `at(line, j)` indexes sample `j` of a line. Samples past an edge take the edge value.
 fn box_lines(
@@ -442,6 +454,32 @@ mod tests {
             assert!(worst < 0.02, "{sigma}: {worst}");
             assert!(fast[..w].iter().all(|x| (0.0..=1.0).contains(x)));
         }
+    }
+    #[test]
+    fn box_mean_matches_a_direct_mean_with_edge_clamping() {
+        let (w, h) = (7usize, 5usize);
+        let v: Vec<f32> = (0..w * h)
+            .map(|i| ((i * 7919) % 1000) as f32 / 1000.0)
+            .collect();
+        for r in [1usize, 2, 9] {
+            let got = box_mean(&v, w, h, r);
+            for y in 0..h {
+                for x in 0..w {
+                    let mut sum = 0.0f64;
+                    for dy in -(r as isize)..=r as isize {
+                        for dx in -(r as isize)..=r as isize {
+                            let sy = (y as isize + dy).clamp(0, h as isize - 1) as usize;
+                            let sx = (x as isize + dx).clamp(0, w as isize - 1) as usize;
+                            sum += f64::from(v[sy * w + sx]);
+                        }
+                    }
+                    let want = (sum / ((2 * r + 1) * (2 * r + 1)) as f64) as f32;
+                    assert!((got[y * w + x] - want).abs() < 1e-6, "r {r} at ({x}, {y})");
+                }
+            }
+        }
+        assert_eq!(box_mean(&vec![0.37; w * h], w, h, 3), vec![0.37; w * h]);
+        assert!(box_mean(&[], 0, 0, 2).is_empty());
     }
     #[test]
     fn gaussian_kernel_has_radius_three_sigma_and_sums_to_one() {

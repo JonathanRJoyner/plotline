@@ -8,6 +8,9 @@
 //! With `flatten_mm` set, the paper's own tone is divided out of the resized map before the
 //! levels; see [`flatten`].
 //!
+//! With `smooth_mm` set, the map is then smoothed with the guided filter of K. He, J. Sun and
+//! X. Tang, which averages away noise and paper grain but keeps edges; see [`guided`].
+//!
 //! With `levels` auto, the black and white points come from the resized map: the single-channel
 //! case of the "Simplest Color Balance" (N. Limare, J.-L. Lisani, J.-M. Morel, A. B. Petro and
 //! C. Sbert, *Image Processing On Line* 1, 2011, doi:10.5201/ipol.2011.llmps-scb), written from
@@ -92,6 +95,17 @@ pub struct ToneSettings {
         extend("x-step" = 0.5, "x-unit" = "mm", "x-label" = "Flatten paper")
     )]
     pub flatten_mm: f64,
+    /// Smooths noise and paper grain over this radius but keeps edges: tone steps of about a tenth of the range or more stay sharp, unlike Blur; 0 turns it off.
+    #[schemars(
+        range(min = 0.0, max = 10.0),
+        extend(
+            "x-step" = 0.1,
+            "x-unit" = "mm",
+            "x-label" = "Smooth, keep edges",
+            "x-advanced" = true
+        )
+    )]
+    pub smooth_mm: f64,
     /// Gaussian blur, given as sigma in mm, that smooths the tone map; 0 turns it off.
     #[schemars(
         range(min = 0.0, max = 10.0),
@@ -138,6 +152,7 @@ impl Default for ToneSettings {
             gamma: 1.0,
             contrast: 0.0,
             flatten_mm: 0.0,
+            smooth_mm: 0.0,
             blur_mm: 0.0,
             response: Response::Off,
             focus: Vec::new(),
@@ -148,8 +163,9 @@ impl Default for ToneSettings {
 }
 
 /// Turn the image into a tone map. In order: luminance, a centre crop for `fill`, resize, flatten
-/// (when `flatten_mm` is set), levels (found from the flattened map when `levels` is auto), gamma,
-/// contrast, invert, blur and the blur that grows away from the focus points.
+/// (when `flatten_mm` is set), smooth (when `smooth_mm` is set), levels (found from the filtered
+/// map when `levels` is auto), gamma, contrast, invert, blur and the blur that grows away from the
+/// focus points.
 pub struct ToneStage;
 
 impl Stage for ToneStage {
@@ -193,14 +209,14 @@ impl Stage for ToneStage {
         }
         Ok(Box::new(ToneRun {
             input: Some((image, canvas, settings)),
-            resized: None,
+            pending: None,
             map: None,
         }))
     }
 }
 
-/// The resized luminance, `w x h`, kept for the second step to flatten.
-struct Resized {
+/// The luminance between the first step and the last, with the filters still to run.
+struct Pending {
     y: Vec<f32>,
     w: usize,
     h: usize,
@@ -208,15 +224,21 @@ struct Resized {
     settings: ToneSettings,
     /// The source image's width and height, which the focus points are shares of.
     size: (u32, u32),
+    /// The guided filter, from its first step to its last.
+    guided: Option<Guided>,
+    /// Steps done, the first one included, and in all.
+    done: usize,
+    total: usize,
 }
 
-/// The first step resizes and, with `flatten_mm` 0, finishes the map and reports one frame. With
-/// it set, the second step flattens and finishes. The last step gives the map.
+/// The first step resizes. With `flatten_mm` and `smooth_mm` 0 it finishes the map and reports one
+/// frame. Otherwise one step flattens when `flatten_mm` is set and four smooth when `smooth_mm` is,
+/// and the last of them finishes the map. One more step gives the map.
 struct ToneRun {
     /// What the first step reads; `None` once it has run.
     input: Option<(Arc<Image>, Arc<Canvas>, ToneSettings)>,
-    /// The resized map, between the first step and the second, when flattening is on.
-    resized: Option<Resized>,
+    /// The map between the first step and the last filter step.
+    pending: Option<Pending>,
     /// The finished map, before the last step.
     map: Option<ToneMap>,
 }
@@ -237,23 +259,53 @@ impl StageRun for ToneRun {
         if let Some((image, canvas, settings)) = self.input.take() {
             let (y, w, h) = resized(&image, &canvas, &settings);
             let size = (image.width, image.height);
-            if settings.flatten_mm > 0.0 {
-                self.resized = Some(Resized {
-                    y,
-                    w,
-                    h,
-                    canvas,
-                    settings,
-                    size,
-                });
-                return Ok(frame(0.5, "tone map"));
+            let filters =
+                (settings.flatten_mm > 0.0) as usize + 4 * (settings.smooth_mm > 0.0) as usize;
+            if filters == 0 {
+                self.map = Some(finish(y, (w, h), &canvas, &settings, size));
+                return Ok(frame(1.0, "tone map"));
             }
-            self.map = Some(finish(y, (w, h), &canvas, &settings, size));
-            return Ok(frame(1.0, "tone map"));
+            let total = 1 + filters;
+            self.pending = Some(Pending {
+                y,
+                w,
+                h,
+                canvas,
+                settings,
+                size,
+                guided: None,
+                done: 1,
+                total,
+            });
+            return Ok(frame(1.0 / total as f32, "tone map"));
         }
-        if let Some(r) = self.resized.take() {
-            self.map = Some(finish(r.y, (r.w, r.h), &r.canvas, &r.settings, r.size));
-            return Ok(frame(1.0, "flatten paper"));
+        if let Some(mut p) = self.pending.take() {
+            let (mm_per_px, _) = p.canvas.image_transform(p.w as u32, p.h as u32);
+            let label = if p.settings.flatten_mm > 0.0 && p.done == 1 {
+                p.y = flatten(&p.y, p.w, p.h, p.settings.flatten_mm / mm_per_px);
+                "flatten paper"
+            } else {
+                let g = p.guided.get_or_insert_with(|| {
+                    let r = ((p.settings.smooth_mm / mm_per_px).round() as usize).max(1);
+                    Guided::new(std::mem::take(&mut p.y), p.w, p.h, r)
+                });
+                if g.step() {
+                    p.y = p
+                        .guided
+                        .take()
+                        .expect("the filter is running")
+                        .into_output();
+                }
+                "smooth"
+            };
+            p.done += 1;
+            let progress = p.done as f32 / p.total as f32;
+            if p.done == p.total {
+                self.map = Some(finish(p.y, (p.w, p.h), &p.canvas, &p.settings, p.size));
+            } else {
+                self.pending = Some(p);
+            }
+            return Ok(frame(progress, label));
         }
         let map = self.map.take().expect("the tone run has already finished");
         Ok(Step::Done(Artifact::Tone(Arc::new(map))))
@@ -275,10 +327,11 @@ fn resized(image: &Image, canvas: &Canvas, s: &ToneSettings) -> (Vec<f32>, usize
     resize(&lum, w, h, s.resolution as usize)
 }
 
-/// The tone map from the resized luminance `y`, `tw x th` on `canvas`, made from an image of
-/// `size` pixels: flatten on, in the order the module documents.
+/// The tone map from the luminance `y`, `tw x th` on `canvas`, made from an image of `size` pixels,
+/// once it is resized, flattened and smoothed: levels to the focus falloff, in the order the module
+/// documents.
 fn finish(
-    mut y: Vec<f32>,
+    y: Vec<f32>,
     (tw, th): (usize, usize),
     canvas: &Canvas,
     s: &ToneSettings,
@@ -286,9 +339,6 @@ fn finish(
 ) -> ToneMap {
     let (tw32, th32) = (tw as u32, th as u32);
     let (mm_per_px, origin_mm) = canvas.image_transform(tw32, th32);
-    if s.flatten_mm > 0.0 {
-        y = flatten(&y, tw, th, s.flatten_mm / mm_per_px);
-    }
     let (black, white) = match s.levels {
         Levels::Manual => (s.black, s.white),
         Levels::Auto => {
@@ -488,6 +538,117 @@ fn window(
     out
 }
 
+/// The penalty on the slope of the guided filter's fit: a tone step of about a tenth of the range,
+/// `0.1^2` in variance, counts as an edge.
+const EPS: f32 = 0.01;
+
+/// The four steps of [`guided`], run one at a time so that the tone run can report each.
+struct Guided {
+    y: Vec<f32>,
+    w: usize,
+    h: usize,
+    r: usize,
+    /// Steps done, 0 to 4.
+    done: usize,
+    mean_i: Vec<f32>,
+    mean_ii: Vec<f32>,
+    b: Vec<f32>,
+    mean_a: Vec<f32>,
+    q: Vec<f32>,
+}
+
+impl Guided {
+    /// A filter for the row-major `w x h` grid `y` with a window of `2r + 1` pixels.
+    fn new(y: Vec<f32>, w: usize, h: usize, r: usize) -> Guided {
+        Guided {
+            y,
+            w,
+            h,
+            r,
+            done: 0,
+            mean_i: Vec::new(),
+            mean_ii: Vec::new(),
+            b: Vec::new(),
+            mean_a: Vec::new(),
+            q: Vec::new(),
+        }
+    }
+
+    /// Run the next of the four steps; true once the fourth has run.
+    fn step(&mut self) -> bool {
+        let (w, h, r) = (self.w, self.h, self.r);
+        match self.done {
+            0 => self.mean_i = math::box_mean(&self.y, w, h, r),
+            1 => {
+                let squares: Vec<f32> = self.y.iter().map(|&v| v * v).collect();
+                self.mean_ii = math::box_mean(&squares, w, h, r);
+            }
+            2 => {
+                let (mean_i, mean_ii) = (
+                    std::mem::take(&mut self.mean_i),
+                    std::mem::take(&mut self.mean_ii),
+                );
+                let (mut a, mut b) = (
+                    Vec::with_capacity(mean_i.len()),
+                    Vec::with_capacity(mean_i.len()),
+                );
+                for (&m, &mm) in mean_i.iter().zip(&mean_ii) {
+                    let var = (mm - m * m).max(0.0);
+                    let slope = var / (var + EPS);
+                    a.push(slope);
+                    b.push((1.0 - slope) * m);
+                }
+                self.mean_a = math::box_mean(&a, w, h, r);
+                self.b = b;
+            }
+            3 => {
+                let mean_b = math::box_mean(&self.b, w, h, r);
+                let rows = self.y.iter().zip(&self.mean_a).zip(&mean_b);
+                self.q = rows
+                    .map(|((&v, &a), &b)| (a * v + b).clamp(0.0, 1.0))
+                    .collect();
+            }
+            _ => panic!("the guided filter has already run its four steps"),
+        }
+        self.done += 1;
+        self.done == 4
+    }
+
+    /// The smoothed grid, once [`Guided::step`] has returned true.
+    fn into_output(self) -> Vec<f32> {
+        assert_eq!(self.done, 4, "the guided filter has not run its four steps");
+        self.q
+    }
+}
+
+/// The row-major `w x h` grid `y` smoothed by the guided filter of K. He, J. Sun and X. Tang,
+/// "Guided image filtering", *ECCV 2010*, LNCS 6311, pp. 1-14, doi:10.1007/978-3-642-15549-9_1
+/// (journal version *IEEE TPAMI* 35(6), 2013, pp. 1397-1409, doi:10.1109/TPAMI.2012.213), with the
+/// image as its own guide.
+///
+/// In each window of `2r + 1` pixels the output is a linear function of the input, `q = a I + b`,
+/// fitted by least squares with a penalty [`EPS`] on `a`: where the window's variance is well above
+/// it (an edge) `a` is near 1 and the edge stays, and where it is well below (noise on a flat tone)
+/// `a` is near 0 and the window's mean takes over. With `box` the mean over a window,
+/// [`math::box_mean`]:
+///
+/// 1. `mean_I = box(I)`.
+/// 2. `mean_II = box(I * I)`.
+/// 3. `var = max(0, mean_II - mean_I^2)`, `a = var / (var + EPS)`, `b = (1 - a) mean_I` and
+///    `mean_a = box(a)`.
+/// 4. `mean_b = box(b)`, `q = clamp(mean_a I + mean_b, 0, 1)`.
+///
+/// The output averages convex combinations of a pixel and window means, so it stays within the
+/// input's own range. Only f32 arithmetic and [`math::box_mean`] are used, so native and WebAssembly
+/// builds give the same bits.
+///
+/// The tone run steps through the same code in four steps.
+pub fn guided(y: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
+    let mut filter = Guided::new(y.to_vec(), w, h, r);
+    while !filter.step() {}
+    filter.into_output()
+}
+
 /// The width and height of the tone map the stage makes from a `w x h` image on `canvas` at
 /// `resolution`, without making it.
 pub(crate) fn map_size(w: usize, h: usize, canvas: &Canvas, resolution: u32) -> (usize, usize) {
@@ -566,7 +727,7 @@ mod tests {
     use super::*;
     use crate::settings::merge;
     use crate::synthetic::{
-        checkerboard, color_bars, flat, gradient, lit_strokes, noise, ramp, still_life,
+        checkerboard, color_bars, flat, flat_noise, gradient, lit_strokes, noise, ramp, still_life,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1048,6 +1209,142 @@ mod tests {
         let paper = |t: &ToneMap| t.ink[88 * 160 + 8];
         assert!(paper(&off) > 0.5 && paper(&on) < 0.05);
     }
+    /// A two-tone step, 0.2 on the left half and 0.8 on the right, `w x h`, with the noise on it
+    /// (uniform, standard deviation 0.03) and without.
+    fn noisy_step(w: usize, h: usize) -> (Vec<f32>, Vec<f32>) {
+        let noise = flat_noise(w as u32, h as u32, 0.5, 0.03, 7).luminance();
+        let clean: Vec<f32> = (0..w * h)
+            .map(|i| if i % w < w / 2 { 0.2 } else { 0.8 })
+            .collect();
+        let noisy = clean.iter().zip(&noise).map(|(c, n)| c + n - 0.5).collect();
+        (noisy, clean)
+    }
+    /// The root mean square of `got - clean` over the columns `xs` of a `w`-wide grid.
+    fn rms(got: &[f32], clean: &[f32], w: usize, xs: std::ops::Range<usize>) -> f32 {
+        let d: Vec<f32> = (got.iter().zip(clean).enumerate())
+            .filter(|(i, _)| xs.contains(&(i % w)))
+            .map(|(_, (g, c))| g - c)
+            .collect();
+        (d.iter().map(|v| v * v).sum::<f32>() / d.len() as f32).sqrt()
+    }
+    #[test]
+    fn guided_keeps_a_step_that_a_blur_softens_and_still_lowers_the_noise() {
+        let (w, h, r) = (64, 32, 4);
+        let (noisy, clean) = noisy_step(w, h);
+        let smooth = guided(&noisy, w, h, r);
+        let blurred = math::blur(&noisy, w, h, r as f64);
+        // The step's size at the edge, from the middle row of the profile averaged down the rows.
+        let jump = |g: &[f32]| {
+            let at = |x: usize| (0..h).map(|y| g[y * w + x]).sum::<f32>() / h as f32;
+            at(w / 2) - at(w / 2 - 1)
+        };
+        // Away from the step by more than the window, where only noise is left.
+        let flat = |g: &[f32]| rms(g, &clean, w, 8..24).max(rms(g, &clean, w, 40..56));
+        let (jg, jb) = (jump(&smooth), jump(&blurred));
+        let (ng, nb, n0) = (flat(&smooth), flat(&blurred), flat(&noisy));
+        // Measured: the step is 0.53 after guided and 0.06 after the blur; the noise falls from
+        // 0.030 to 0.0039 and to 0.0029.
+        assert!(
+            jg > 0.5 && jb < 0.3,
+            "the step is 0.6: guided {jg}, blur {jb}"
+        );
+        assert!(
+            ng < n0 / 5.0 && ng < 2.0 * nb,
+            "noise: guided {ng}, blur {nb}, input {n0}"
+        );
+    }
+    #[test]
+    fn guided_leaves_a_flat_image_flat() {
+        for (w, h, r) in [(16, 12, 1), (5, 40, 3), (1, 1, 2), (30, 30, 40)] {
+            let y = vec![0.6f32; w * h];
+            let out = guided(&y, w, h, r);
+            assert!(
+                out.iter().all(|v| (v - 0.6).abs() < 1e-6),
+                "{w} x {h}, r {r}"
+            );
+        }
+        assert!(guided(&[], 0, 0, 1).is_empty());
+    }
+    #[test]
+    fn the_steps_of_the_guided_filter_give_the_function_bits() {
+        let (w, h) = (40, 24);
+        let (noisy, _) = noisy_step(w, h);
+        let mut filter = Guided::new(noisy.clone(), w, h, 3);
+        let finished: Vec<bool> = (0..4).map(|_| filter.step()).collect();
+        assert_eq!(finished, [false, false, false, true]);
+        assert_eq!(filter.into_output(), guided(&noisy, w, h, 3));
+    }
+    #[test]
+    fn smooth_off_makes_the_map_it_always_did() {
+        let image = || lit_strokes(160, 160, 0.4);
+        let (frames, off) = run_tone(image(), SQUARE, json!({"smooth_mm": 0.0}));
+        let (_, default) = run_tone(image(), SQUARE, json!({}));
+        assert_eq!(off.ink, default.ink);
+        let labels: Vec<_> = frames
+            .iter()
+            .map(|f| (f.label.as_str(), f.progress))
+            .collect();
+        assert_eq!(labels, [("tone map", 1.0)]);
+    }
+    #[test]
+    fn smooth_on_reports_four_frames_after_the_resize() {
+        let image = || noise(64, 64, 3);
+        let (frames, on) = run_tone(image(), SQUARE, json!({"smooth_mm": 2.0}));
+        let labels: Vec<_> = frames
+            .iter()
+            .map(|f| (f.label.as_str(), f.progress))
+            .collect();
+        let want = [
+            ("tone map", 0.2),
+            ("smooth", 0.4),
+            ("smooth", 0.6),
+            ("smooth", 0.8),
+            ("smooth", 1.0),
+        ];
+        assert_eq!(labels, want.map(|(l, p)| (l, p as f32)));
+        // The map is the smoothed luminance through the rest of the stage: ink is one minus it.
+        let (w, h) = (64, 64);
+        let (mm_per_px, _) = SQUARE.image_transform(w, h);
+        let r = ((2.0 / mm_per_px).round() as usize).max(1);
+        let lum = noise(64, 64, 3).luminance();
+        let want = guided(&lum, w as usize, h as usize, r);
+        assert!(on
+            .ink
+            .iter()
+            .zip(&want)
+            .all(|(i, q)| (i + q - 1.0).abs() < 1e-6));
+        let (_, off) = run_tone(image(), SQUARE, json!({}));
+        assert_ne!(on.ink, off.ink);
+    }
+    #[test]
+    fn flatten_and_smooth_run_in_that_order_and_make_the_documented_map() {
+        let image = || lit_strokes(160, 160, 0.4);
+        let patch = json!({"resolution": 160, "flatten_mm": 5.0, "smooth_mm": 0.6});
+        let (frames, on) = run_tone(image(), SQUARE, patch);
+        let labels: Vec<_> = frames.iter().map(|f| f.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "tone map",
+                "flatten paper",
+                "smooth",
+                "smooth",
+                "smooth",
+                "smooth"
+            ]
+        );
+        let progress: Vec<_> = frames.iter().map(|f| f.progress).collect();
+        assert!(progress.windows(2).all(|p| p[0] < p[1]) && progress[5] == 1.0);
+        let (mm_per_px, _) = SQUARE.image_transform(160, 160);
+        let r = ((0.6 / mm_per_px).round() as usize).max(1);
+        let flat = flatten(&image().luminance(), 160, 160, 5.0 / mm_per_px);
+        let want = guided(&flat, 160, 160, r);
+        assert!(on
+            .ink
+            .iter()
+            .zip(&want)
+            .all(|(i, q)| (i + q - 1.0).abs() < 1e-6));
+    }
     #[test]
     #[ignore = "timing: cargo test --release flatten_timing -- --ignored --nocapture"]
     fn flatten_timing() {
@@ -1062,6 +1359,24 @@ mod tests {
             start.elapsed()
         );
         assert_eq!(out.len(), y.len());
+    }
+    #[test]
+    #[ignore = "timing: cargo test --release guided_timing -- --ignored --nocapture"]
+    fn guided_timing() {
+        let (w, h) = (4000, 2800);
+        let y: Vec<f32> = (0..w * h)
+            .map(|i| 0.5 + 0.5 * ((i % w) as f32 / w as f32))
+            .collect();
+        let start = std::time::Instant::now();
+        let out = guided(&y, w, h, 15);
+        eprintln!("guided of {w} x {h} with r = 15: {:?}", start.elapsed());
+        assert_eq!(out.len(), y.len());
+        let mut filter = Guided::new(y, w, h, 15);
+        for n in 1..=4 {
+            let start = std::time::Instant::now();
+            filter.step();
+            eprintln!("step {n}: {:?}", start.elapsed());
+        }
     }
     #[test]
     fn synthetic_images_have_the_documented_values() {
