@@ -237,6 +237,11 @@ def analyse(
 )
 @fit_options
 @click.option("--quiet", is_flag=True, help="Do not print progress.")
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit with status 1 when the plot lint finds a warning or an error.",
+)
 def run(
     style: str,
     image: str,
@@ -256,8 +261,10 @@ def run(
     fit_metres: float | None,
     fit_dots: float | None,
     quiet: bool,
+    strict: bool,
 ) -> None:
-    """Run STYLE on IMAGE and write the drawing as an SVG."""
+    """Run STYLE on IMAGE and write the drawing as an SVG. The plot lint's findings follow the
+    stats on stderr, each with the --set options that fix it where a setting does."""
     given = zip(FITS, (fit_minutes, fit_paths, fit_metres, fit_dots), strict=True)
     fits = [(metric, target) for metric, target in given if target is not None]
     if len(fits) > 1:
@@ -304,12 +311,29 @@ def run(
         f"paths: {stats.path_count}  pen down: {stats.pen_down_mm:.1f} mm  "
         f"pen up: {stats.pen_up_mm:.1f} mm  estimated: {stats.estimated_seconds:.1f} s"
     )
-    if len(pens) > 1 and session.settings["split"]["mode"] == "one_pen":
-        click.echo(
-            "Pen use is set to one pen, so only the first pen draws. Add "
-            "--set split.mode=light_to_dark or --set split.mode=by_colour to use the others.",
-            err=True,
-        )
+    findings = session.lint()
+    for finding in findings:
+        click.echo(f"{finding['severity']}: {finding['message']}", err=True)
+        if fix := _options(finding["patch"]):
+            click.echo(f"  fix: {fix}", err=True)
+    if strict and any(f["severity"] != "info" for f in findings):
+        sys.exit(1)
+
+
+def _options(patch: dict[str, Any] | None) -> str:
+    """The ``run`` options that apply a lint patch: ``--set`` for each setting, then ``--width``
+    and ``--height`` for a page."""
+    if patch is None:
+        return ""
+    sets = [
+        # A boolean as coerce reads it; numbers and text as they are.
+        f"--set {stage}.{key}={str(value).lower() if isinstance(value, bool) else value}"
+        for stage, values in patch.get("settings", {}).items()
+        for key, value in values.items()
+    ]
+    if page := patch.get("page"):
+        sets.append(f"--width {page['width_mm']:g} --height {page['height_mm']:g}")
+    return " ".join(sets)
 
 
 @main.command()

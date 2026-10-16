@@ -3,7 +3,7 @@
 // `worker.ts` only connects it to `self`.
 import { describe, listInks, listPens, listStyles, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
 import { drive, macrotask } from "./driver";
-import type { Canvas, Event, Machine, Pen, Stats, ThumbEvent } from "./events";
+import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `settings` apply after `style`. */
 export type Patch = { style?: string; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
@@ -17,6 +17,8 @@ export type State = {
   layers: Pen[];
   /** What would suit the image, from the current settings; empty without an image. */
   suggestions: Suggestion[];
+  /** The plot lint's findings for the last drawing, from the current settings; empty without one. */
+  lint: Finding[];
 };
 export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
@@ -103,7 +105,7 @@ export class Protocol {
     this.current = run;
     this.go = () => {
       drive(this.session, run, id, this.post)
-        .catch((e) => this.post({ type: "end", id, state: "error", error: message(e), stats: null }, []))
+        .catch((e) => this.post({ type: "end", id, state: "error", error: message(e), stats: null, lint: [] }, []))
         .finally(() => { if (this.current === run) this.current = null; }); // `drive` freed it
     };
   }
@@ -154,9 +156,11 @@ export class Protocol {
       }
     }
     const analysis = s.analysis();
+    const lint = s.lint();
     return {
       image: this.image, style, canvas, pens, machine, settings, speeds: JSON.parse(s.speeds()), layers,
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
+      lint: lint ? JSON.parse(lint) : [],
       run: { id: this.counter, state: s.state(), error: s.error() ?? null },
       stats: stats ? JSON.parse(stats) : null,
     };

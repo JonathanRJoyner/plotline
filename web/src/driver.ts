@@ -81,7 +81,8 @@ export async function drive(
     if (state === "done") postResult(session, id, post);
     const stats = session.stats();
     const fit = run.result();
-    post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, fit: fit ? JSON.parse(fit) : null }, []);
+    const lint = session.lint();
+    post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, fit: fit ? JSON.parse(fit) : null, lint: lint ? JSON.parse(lint) : [] }, []);
   } finally {
     run.free();
   }
