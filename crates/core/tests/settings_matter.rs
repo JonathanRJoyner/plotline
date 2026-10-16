@@ -11,6 +11,12 @@ use serde_json::{json, Value};
 /// Settings that leave the drawing alone on purpose: style, stage, key and why.
 const NO_OPS: &[(&str, &str, &str, &str)] = &[
     (
+        "contours",
+        "tone",
+        "response",
+        "level lines cover no more paper where the image is darker, so there is no response to invert",
+    ),
+    (
         "grid",
         "tone",
         "contrast",

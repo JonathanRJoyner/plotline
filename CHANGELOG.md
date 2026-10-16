@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.1.0
+New entries go under Unreleased until the next release.
+
+## Unreleased
+
+- **Enlarged style pictures:** in Try all styles, pointing at a picture or tabbing to it shows it 2.5 times larger beside its cell. The pictures are drawn 600 px wide so the enlargement stays sharp.
+- **Engine failures recover:** a panic in the browser engine shows its message, and the worker rebuilds its session, so one failure cannot stall Try all styles or the page. The `ink` style no longer panics in the browser on a large drawing with many rings.
+
+## 0.1.0 (2026-10-16)
 
 The first release. One Rust engine runs everything: the Python package, the command line and the MCP server use it as a native extension, and the browser GUI runs it as WebAssembly.
 
@@ -19,6 +26,8 @@ Every run ends with path ordering, which cuts pen-up travel, joins paths whose e
 A style switch keeps the settings you changed in the stages both styles share, Pen use included, and gives the rest the new style's defaults, so a tuned placement of points carries from one Voronoi style to the next, and a value you set comes back when you switch away and back. **Reset to defaults** in the GUI, `reset` on the MCP `run` tool and `Session.reset_settings()` put every setting of the style back.
 
 **Plot lint** checks every finished drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, needless vertices, unused pens, and vertices off the page, the margin or the machine. Each finding comes with the setting change that fixes it where one does. The GUI lists the findings under the stats with Apply buttons, `plotline run` prints them on stderr and fails on a warning with `--strict`, and the MCP `run` result carries them.
+
+**Tone match** scores every drawing on how closely its tones follow the image through a 1.5 mm eye filter, as a tone error and an SSIM, shown with the stats in the GUI and the CLI and returned by the MCP `run` tool. **Optimize** searches the style's density setting for the value with the lowest tone error, within a budget if one is given, in eight runs, and suggests it without applying it: an Optimize button beside Fit to target, `plotline run --optimize` and the MCP `optimize` tool. The tone stage's **Response** setting can be `auto`, which runs the style on a small step wedge first and corrects the tone map for the coverage it measures; it is off by default, and helps most the joined-point styles `line`, `tree` and `mesh`.
 
 ### Pens
 
@@ -41,12 +50,11 @@ A style switch keeps the settings you changed in the stages both styles share, P
 ### Front ends
 
 - **Budgets:** give a plot time in minutes, a path count, metres of pen-down line or a dot count, and plotline finds the value of the style's density setting that meets it, in up to eight runs. The GUI has a target field with a Fit to target button, `plotline run` takes `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots`, and the MCP server has a `fit` tool. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says.
-- **Browser GUI** with a live preview that shows each stage working, true to pen width and colour, with the pen-up travel overlay, stats and plot-time estimate, a settings panel generated from the stage declarations, the pens and settings dialogs, suggestions, presets, export and a guided tour. **Try all styles** draws every style small on the current image, page and pens, shows a picture larger when you point at it, and a click switches to one; **undo and redo** (Ctrl+Z, Ctrl+Shift+Z and toolbar buttons) step through changes to the style, settings, page and pens. `plotline gui` serves it locally, and the same files are the hosted page at <https://jonathanrjoyner.github.io/plotline/>. The engine runs in the visitor's browser, so no image is uploaded.
+- **Browser GUI** with a live preview that shows each stage working, true to pen width and colour, with the pen-up travel overlay, stats and plot-time estimate, a settings panel generated from the stage declarations, the pens and settings dialogs, suggestions, presets, export and a guided tour. **Try all styles** draws every style small on the current image, page and pens, and a click switches to one; **undo and redo** (Ctrl+Z, Ctrl+Shift+Z and toolbar buttons) step through changes to the style, settings, page and pens. `plotline gui` serves it locally, and the same files are the hosted page at <https://jonathanrjoyner.github.io/plotline/>. The engine runs in the visitor's browser, so no image is uploaded.
 - **First-run fixes:** the GUI works at phone width, a new visitor starts on `waves`, settings show plain labels, a new machine is marked as placeholder values, a dropped file that is not an image plotline opens says so, and Fit to target names the setting it changed and says when a target is out of reach.
 - **Clearer names:** exports are named after the style (`plotline-waves.svg`), a preset that will not load names its file, and the toolbar's view fit is called Fit page, apart from Fit to target and the page's fit setting.
 - **G-code export buttons:** with one pen, Export shows a single G-code button; with several, one row per pen, told apart by its number and colour swatch, since pens can share a name, with long names cut short and shown in full on hover.
 - **Command line:** `plotline run`, `styles`, `describe`, `analyse`, `gui` and `mcp`. `plotline run --machine FILE --gcode DIR` draws for a machine and writes one G-code file per pen.
 - **MCP server** over stdio, in the `mcp` extra, with thirteen tools: `list_styles`, `describe_style`, `load_image`, `set_page`, `set_pens`, `set_machine`, `run`, `fit`, `preview`, `get_session`, `analyse_image`, `load_preset` and `export`, which also writes G-code.
-- **Engine failures recover:** a panic in the browser engine shows its message, and the worker rebuilds its session, so one failure cannot stall Try all styles or the page. The `ink` style no longer panics in the browser on a large drawing with many rings.
 - **A smaller WebAssembly module:** one PNG library instead of two, image decoding and JSON built for size, and wasm-opt at `-O3`. The module is 41 KB smaller and the Voronoi relaxation about 12 percent faster, with every drawing unchanged.
 - **Python library:** `Session`, with `set_machine` and `export_gcode`, the style registry and the value types, with type information.
