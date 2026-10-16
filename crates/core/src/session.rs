@@ -329,7 +329,8 @@ impl Session {
             self.shared.clone(),
             self.cancel.clone(),
             generation,
-        ))
+        )
+        .with_models(self.models.clone()))
     }
 
     /// Cancel the latest run and return a fit, which reruns the style with its density setting
@@ -458,7 +459,8 @@ impl Session {
             slot.clone(),
             Arc::default(),
             0, // a fresh slot's generation
-        );
+        )
+        .with_models(self.models.clone());
         Ok((run, slot))
     }
 

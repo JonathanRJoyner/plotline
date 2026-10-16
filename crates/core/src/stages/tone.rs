@@ -137,14 +137,7 @@ impl Stage for ToneStage {
     ) -> Result<Box<dyn StageRun>, StageError> {
         let settings = validate::<ToneSettings>(self.name(), &self.schema(), settings)?;
         let (image, canvas) = (inputs.image().clone(), inputs.canvas().clone());
-        // Image's fields are public, so check here what the resize would otherwise panic on.
-        let (w, h, n) = (image.width as usize, image.height as usize, image.rgb.len());
-        if w == 0 || h == 0 || n != w * h * 3 {
-            return Err(StageError::Failed(format!(
-                "the image is {w} x {h} pixels with {n} values; it needs at least one pixel \
-                 and 3 values per pixel"
-            )));
-        }
+        check_image(&image)?;
         Ok(Box::new(ToneRun {
             input: Some((image, canvas, settings)),
             map: None,
@@ -234,6 +227,19 @@ fn tone_map(image: &Image, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
         mm_per_px,
         origin_mm,
     }
+}
+
+/// Check what the resize would otherwise panic on, since `Image`'s fields are public: at least
+/// one pixel and 3 values per pixel.
+pub(crate) fn check_image(image: &Image) -> Result<(), StageError> {
+    let (w, h, n) = (image.width as usize, image.height as usize, image.rgb.len());
+    if w == 0 || h == 0 || n != w * h * 3 {
+        return Err(StageError::Failed(format!(
+            "the image is {w} x {h} pixels with {n} values; it needs at least one pixel \
+             and 3 values per pixel"
+        )));
+    }
+    Ok(())
 }
 
 /// The width and height of the tone map the stage makes from a `w x h` image on `canvas` at
