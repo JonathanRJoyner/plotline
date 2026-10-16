@@ -98,10 +98,17 @@ impl Session {
         Ok(self.inner.gcode(layer)?)
     }
 
-    /// Switch to the built-in style `name` with every stage at its defaults.
+    /// Switch to the built-in style `name`; a stage the old style also has keeps the values the
+    /// user changed, and everything else takes the new style's defaults.
     #[wasm_bindgen(js_name = setStyle)]
     pub fn set_style(&mut self, name: &str) -> Result<(), JsError> {
         Ok(self.inner.set_style(name)?)
+    }
+
+    /// Put every stage of the style, Pen use included, back to the style's defaults.
+    #[wasm_bindgen(js_name = resetSettings)]
+    pub fn reset_settings(&mut self) {
+        self.inner.reset_settings();
     }
 
     /// Every stage's settings as JSON, keyed by stage name.

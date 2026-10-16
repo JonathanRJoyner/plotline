@@ -105,6 +105,17 @@ def test_preset_is_applied_and_style_kept(tmp_path, image):
     assert same
 
 
+def test_a_preset_of_another_style_carries_its_changes(tmp_path, image):
+    base = ["--out", str(tmp_path / "o.svg"), "--quiet"]
+    p, q = str(tmp_path / "p.json"), str(tmp_path / "q.json")
+    run("run", "grid", image, *base, "--set", "tone.resolution=64", "--save-preset", p)
+    r = run("run", "waves", image, *base, "--preset", p, "--save-preset", q)
+    assert r.exit_code == 0, r.output
+    saved = json.loads((tmp_path / "q.json").read_text())
+    assert saved["style"] == "waves" and saved["settings"]["tone"]["resolution"] == 64
+    assert saved["settings"]["tone"]["gamma"] == 1.9
+
+
 def test_two_pens_in_one_pen_mode_get_a_note(tmp_path, image):
     note = "Pen use is set to one pen, so only the first pen draws."
     args = ["run", "grid", image, "--out", str(tmp_path / "o.svg"), "--quiet"]

@@ -194,13 +194,17 @@ def build_server(session: Session | None = None) -> MCPServer:
             )
             return _array([asdict(pen) for pen in session.pens])
 
-    def change(style: str | None, settings: dict[str, dict[str, Any]] | None) -> None:
-        """Switch to ``style`` and apply ``settings``; when a change is refused, put the style and
-        settings back and raise."""
+    def change(
+        style: str | None, settings: dict[str, dict[str, Any]] | None, reset: bool = False
+    ) -> None:
+        """Switch to ``style``, reset the settings when ``reset`` is set, and apply ``settings``;
+        when a change is refused, put the style and settings back and raise."""
         old_style, old_settings = session.style.name, session.settings
         try:
             if style is not None and style != old_style:
                 session.set_style(style)
+            if reset:
+                session.reset_settings()
             for stage, values in (settings or {}).items():
                 session.update(stage, **values)
         except Exception:
@@ -243,14 +247,16 @@ def build_server(session: Session | None = None) -> MCPServer:
         ctx: Context,
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
+        reset: bool = False,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
-        px wide. A style that differs from the current one replaces it and resets the settings to
-        its defaults. settings is {stage: {setting: value}} and changes only the values given; only
-        the stages after a changed setting run again. When a change is refused, nothing changes
-        and nothing runs."""
+        px wide. A style that differs from the current one replaces it; a stage the two styles
+        share keeps the values changed from the old style's defaults, and the rest take the new
+        style's defaults. reset puts every setting back to the style's defaults first. settings
+        is {stage: {setting: value}} and changes only the values given; only the stages after a
+        changed setting run again. When a change is refused, nothing changes and nothing runs."""
         with _errors():
-            change(style, settings)
+            change(style, settings, reset)
             await follow(ctx, session.run)
             return shown()
 

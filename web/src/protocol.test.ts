@@ -279,12 +279,17 @@ test("undoing a random run of edits through restore returns the start, and undo 
   const pick = <T,>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
   const edits = [
     () => ok("setStyle", pick(styles)),
+    () => ok("resetSettings"),
     () => ok("update", "tone", { gamma: 0.5 + rand() * 1.5, invert: rand() < 0.5 }),
     () => ok("update", "split", { mode: pick(["one_pen", "light_to_dark", "by_colour"]) }),
     () => ok("setCanvas", { width_mm: pick([148, 210, 297]), height_mm: 297, margin_mm: Math.round(rand() * 20), fit: pick(["fit", "fill"]) }),
     () => ok("setPens", [{ name: "P", width_mm: 0.1 + Math.round(rand() * 8) / 10, color: pick(["#000000", "#d0202e"]) }]),
   ];
   for (let i = 0; i < 40; i++) see(pick(edits)().state);
+  see(ok("update", "tone", { gamma: 1.3 }).state);
+  const steps = history.past.length;
+  see(ok("resetSettings").state);
+  expect(history.past.length).toBe(steps + 1); // a reset is one step, and the first undo below takes it back
   const end = see(ok("preset").state);
   expect(history.past.length).toBeGreaterThan(20);
   const step = (setup: string | undefined) => {

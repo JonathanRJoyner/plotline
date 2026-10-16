@@ -73,7 +73,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `flow` | Evenly spaced lines that follow the image's edges, closer together where it is darker. |
 | `hilbert` | A space-filling curve that folds tighter where the image is darker, broken where it leaves the image. |
 
-`stipple`, `line`, `dashes`, `tree`, `mesh` and `cells` share one placement of points, so switching between them at their default settings reuses the points. A style switch resets the settings to the new style's defaults.
+`stipple`, `line`, `dashes`, `tree`, `mesh` and `cells` share one placement of points, so switching between them reuses the points. A style switch keeps the settings you changed wherever the new style has the same stage, Pen use included, and gives the rest the new style's defaults; Reset to defaults puts them all back.
 
 ## In the browser
 

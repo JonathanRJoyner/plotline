@@ -2,7 +2,7 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
-import { CircleHelp, Download, Image as ImageIcon, ImageUp, LayoutGrid, Maximize, Monitor, Moon, Play, Redo2, Route, Settings as Gear, Sparkles, Square, Sun, Undo2 } from "lucide-preact";
+import { CircleHelp, Download, Image as ImageIcon, ImageUp, LayoutGrid, Maximize, Monitor, Moon, Play, Redo2, RotateCcw, Route, Settings as Gear, Sparkles, Square, Sun, Undo2 } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
 import type { BankPen, FitResult, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
@@ -459,6 +459,7 @@ export function App() {
           </label>
           <p class="help">{styles.find((s) => s.name === state.style)?.description}</p>
           <button type="button" data-tour="styles" disabled={!state.image} onClick={tryStyles}><LayoutGrid /> Try all styles</button>
+          <button type="button" data-tour="reset" onClick={() => call("resetSettings")}><RotateCcw /> Reset to defaults</button>
         </fieldset>
         <div class="stages" data-tour="settings">
           <Settings stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
