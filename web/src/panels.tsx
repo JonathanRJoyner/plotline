@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
 import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Optimum, Pen, Stats, ToneMatch } from "./events";
 import { download } from "./files";
+import { lengthText, pathsText } from "./format";
 import { addPen, libraryFile, loadLibrary, mergeLibraries, parseLibrary, removePen, samePen, saveLibrary, usable } from "./library";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 import { controlsFor } from "./schema";
@@ -72,8 +73,10 @@ export function PagePanel({ canvas, paper, error, onChange, onPaper }: PageProps
   );
 }
 
-// What the engine suggests for the image: each reason, with an Apply button when it has a change to make.
-export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions: Suggestion[]; error?: string; onApply: (patch: Patch) => void }): JSX.Element {
+// What the engine suggests for the image: each reason, with an Apply button when it has a change to
+// make and a button that hides it.
+type SuggestionsProps = { suggestions: Suggestion[]; error?: string; onApply: (patch: Patch) => void; onDismiss: (kind: string) => void };
+export function SuggestionsPanel({ suggestions, error, onApply, onDismiss }: SuggestionsProps): JSX.Element {
   return (
     <fieldset>
       <legend>Suggestions</legend>
@@ -84,7 +87,10 @@ export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions:
           return (
             <li key={s.kind}>
               <p>{s.reason}</p>
-              {p && <button type="button" aria-label={`Apply: ${s.reason}`} onClick={() => onApply(p)}><Check /> Apply</button>}
+              <div class="buttons">
+                {p && <button type="button" aria-label={`Apply: ${s.reason}`} onClick={() => onApply(p)}><Check /> Apply</button>}
+                <button type="button" class="icon" title="Dismiss" aria-label={`Dismiss: ${s.reason}`} onClick={() => onDismiss(s.kind)}><X /></button>
+              </div>
             </li>
           );
         })}
@@ -96,13 +102,14 @@ export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions:
 
 type PensProps = {
   pens: Pen[]; hidden: Set<number>; error?: string;
-  onEdit: () => void; onToggle: (index: number) => void;
+  onEdit: () => void; onToggle: (index: number) => void; onTestchart: () => void;
   // Shown right after the pen list: the Pen use setting.
   children?: ComponentChildren;
 };
 
-// The pens as a short list with their preview toggles; they are edited in the pens dialog.
-export function PensPanel({ pens, hidden, error, onEdit, onToggle, children }: PensProps): JSX.Element {
+// The pens as a short list with their preview toggles; they are edited in the pens dialog. The test
+// chart replaces the drawing with a calibration page for the first pen, so it needs no image.
+export function PensPanel({ pens, hidden, error, onEdit, onToggle, onTestchart, children }: PensProps): JSX.Element {
   return (
     <fieldset data-tour="pens">
       <legend>Pens</legend>
@@ -118,6 +125,7 @@ export function PensPanel({ pens, hidden, error, onEdit, onToggle, children }: P
       {children}
       {hidden.size > 0 && <p class="help">A hidden pen is only hidden in the preview: it still exports.</p>}
       <button type="button" onClick={onEdit}><PenLine /> Edit pens</button>
+      <button type="button" data-tour="testchart" title="Replace the drawing with a page of labelled test patches for the first pen" onClick={onTestchart}><Ruler /> Test chart</button>
     </fieldset>
   );
 }
@@ -218,11 +226,17 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
   const [importError, setImportError] = useState<string>();
   const i = Math.min(chosen, pens.length - 1); // the list can shrink under it, as on a refused change
   const pen = pens[i];
-  const set = (patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  // The list the dialog last sent, which the prop catches up with on the reply, so a second edit made
+  // before it builds on the first rather than undoing it.
+  const latest = useRef(pens);
+  useEffect(() => { latest.current = pens; }, [pens]);
+  const send = (list: Pen[]) => { latest.current = list; onChange(list); };
+  const set = (patch: Partial<Pen>) => send(latest.current.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   // Puts `list` in place and chooses the pen at `next`.
-  const put = (list: Pen[], next: number) => { onChange(list); choose(next); };
+  const put = (list: Pen[], next: number) => { send(list); choose(next); };
   const move = (by: number) => {
-    const list = [...pens];
+    const list = [...latest.current];
+    if (!list[i] || !list[i + by]) return; // the sent list is shorter than the one shown
     [list[i], list[i + by]] = [list[i + by], list[i]];
     put(list, i + by);
   };
@@ -260,12 +274,12 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
           ))}
         </ol>
         <div class="actions">
-          <button type="button" class="icon" title="Add pen" aria-label="Add pen" onClick={() => put([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }], pens.length)}><Plus /></button>
-          <button type="button" class="icon" title="Duplicate pen" aria-label="Duplicate pen" onClick={() => put([...pens.slice(0, i + 1), { ...pen }, ...pens.slice(i + 1)], i + 1)}><Copy /></button>
+          <button type="button" class="icon" title="Add pen" aria-label="Add pen" onClick={() => put([...latest.current, { name: `Pen ${latest.current.length + 1}`, width_mm: 0.3, color: "#000000" }], latest.current.length)}><Plus /></button>
+          <button type="button" class="icon" title="Duplicate pen" aria-label="Duplicate pen" onClick={() => put([...latest.current.slice(0, i + 1), { ...(latest.current[i] ?? pen) }, ...latest.current.slice(i + 1)], i + 1)}><Copy /></button>
           <button type="button" class="icon" title="Move up: draws earlier" aria-label="Move up" disabled={i === 0} onClick={() => move(-1)}><ArrowUp /></button>
           <button type="button" class="icon" title="Move down: draws later" aria-label="Move down" disabled={i === pens.length - 1} onClick={() => move(1)}><ArrowDown /></button>
           {/* The session refuses an empty pen list. */}
-          <button type="button" class="icon" title="Remove pen" aria-label="Remove pen" disabled={pens.length === 1} onClick={() => put(pens.filter((_, j) => j !== i), Math.max(0, i - 1))}><X /></button>
+          <button type="button" class="icon" title="Remove pen" aria-label="Remove pen" disabled={pens.length === 1} onClick={() => put(latest.current.filter((_, j) => j !== i), Math.max(0, i - 1))}><X /></button>
         </div>
         <p class="help">Pens plot in this order, and with Pen use set to one pen the first draws alone. List light inks first.</p>
       </nav>
@@ -356,7 +370,7 @@ export function StatsPanel({ stats, tone }: { stats: Stats | null; tone: ToneMat
   if (stats.path_count === 0) return <p class="stats">No marks at these settings.</p>;
   return (
     <p class="stats">
-      {stats.path_count} paths · pen down {stats.pen_down_mm.toFixed(1)} mm · pen up {stats.pen_up_mm.toFixed(1)} mm
+      {pathsText(stats.path_count)} · pen down {lengthText(stats.pen_down_mm)} · pen up {lengthText(stats.pen_up_mm)}{" "}
       · about {Math.floor(t / 60)} min {t % 60} s to plot
       {tone && (
         <span title="How far the drawing's tones are from the image's, seen from a metre or two: the tone error is in the image's own ink, 0 for a perfect match, and SSIM compares their shapes, 1 for identical.">
@@ -396,18 +410,26 @@ const UNITS = [["minutes", "min"], ["paths", "paths"], ["metres", "m"], ["dots",
 const FIT_TOLERANCE = 0.02;
 
 type FitProps = {
-  disabled: boolean; error?: string; fitted: FitResult | null; optimum: Optimum | null;
+  disabled: boolean; error?: string; fitted: FitResult | null; optimum: Optimum | null; settings: State["settings"];
   stages: { name: string; label: string; schema: Record<string, unknown> }[];
   onFit: (metric: string, target: number) => void; onOptimize: (metric?: string, target?: number) => void; onApply: (patch: Patch) => void;
 };
 
 // A budget: a target in one of the units, which Fit meets by changing the style's density setting.
-export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
+// What a fit or a search says holds only for the settings it was made with, so it shows while they do.
+export function FitPanel({ disabled, error, fitted, optimum, settings, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
   const [target, setTarget] = useState("");
   const [metric, setMetric] = useState("minutes");
   // Closed until the first need, so the stats lead; a result or an error opens it so none is hidden, and nothing closes it again.
   const [open, setOpen] = useState(false);
   useEffect(() => { if (error || fitted || optimum) setOpen(true); }, [error, fitted, optimum]);
+  // A fit applies its value, so its message shows once the setting holds it and while it still does.
+  const fit = fitted && settings[fitted.stage]?.[fitted.key] === fitted.value ? fitted : null;
+  // A search applies nothing, so its suggestion shows while the settings are those of the render it arrived in.
+  const now = JSON.stringify(settings);
+  const arrival = useRef<{ optimum: Optimum | null; settings: string }>({ optimum: null, settings: "" });
+  if (arrival.current.optimum !== optimum) arrival.current = { optimum, settings: now };
+  const search = optimum && arrival.current.settings === now ? optimum : null;
   const unit = (m: string) => UNITS.find(([name]) => name === m)?.[1] ?? m;
   // What the fit says: the setting under its label and unit from the settings panel, and whether the target was met.
   const text = (f: FitResult) => {
@@ -459,10 +481,10 @@ export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOp
         >
           <Wand /> Optimize
         </button>
-        {error ? <span class="error">{error}</span> : fitted ? <span>{text(fitted)}</span> : optimum && (
+        {error ? <span class="error">{error}</span> : fit ? <span>{text(fit)}</span> : search && (
           <span>
-            {found(optimum)}
-            {optimum.patch && <button type="button" aria-label={`Apply: ${found(optimum)}`} onClick={() => onApply(optimum.patch!)}><Check /> Apply</button>}
+            {found(search)}
+            {search.patch && <button type="button" aria-label={`Apply: ${found(search)}`} onClick={() => onApply(search.patch!)}><Check /> Apply</button>}
           </span>
         )}
       </form>
@@ -524,15 +546,14 @@ export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps):
 }
 
 type ExportProps = {
-  drawing: boolean; layers: Pen[]; machine: boolean; error?: string;
-  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void; onTestchart: () => void;
+  drawing: boolean; layers: Pen[]; machine: boolean;
+  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void;
 };
 
 // SVG, JSON and one HPGL file for the whole drawing; then, once a machine is set, one G-code file
 // per layer. With several pens each G-code file gets a row told apart by its number and swatch,
-// since pens can share a name. The test chart replaces the drawing with a calibration page for the
-// first pen, so it needs no image.
-export function ExportPanel({ drawing, layers, machine, error, onExport, onHpgl, onGcode, onTestchart }: ExportProps): JSX.Element {
+// since pens can share a name.
+export function ExportPanel({ drawing, layers, machine, onExport, onHpgl, onGcode }: ExportProps): JSX.Element {
   return (
     <fieldset data-tour="export">
       <legend>Export</legend>
@@ -551,10 +572,6 @@ export function ExportPanel({ drawing, layers, machine, error, onExport, onHpgl,
             ))}
           </div>
         )}
-      <div>
-        <button type="button" data-tour="testchart" title="Replace the drawing with a page of labelled test patches for the first pen" onClick={onTestchart}><Ruler /> Test chart</button>
-      </div>
-      {error && <p class="error">{error}</p>}
     </fieldset>
   );
 }
