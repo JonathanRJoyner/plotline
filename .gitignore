@@ -15,6 +15,8 @@ htmlcov/
 
 # Node (GUI frontend)
 node_modules/
+web/test-results/
+web/playwright-report/
 
 # Local work and outputs: keep personal images and plots out of the repo
 scratch/

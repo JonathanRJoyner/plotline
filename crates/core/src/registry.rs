@@ -16,6 +16,7 @@ use crate::stages::ink::InkStage;
 use crate::stages::mosaic::MosaicStage;
 use crate::stages::order::OrderStage;
 use crate::stages::poisson::PoissonPlacer;
+use crate::stages::scribble::ScribbleStage;
 use crate::stages::sketch::SketchStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
@@ -154,6 +155,27 @@ pub fn line_style() -> Style {
         Arc::new(VoronoiPlacer),
         Arc::new(TspRenderer),
     )
+}
+
+/// Loops traced along the one line through evenly spread points: tone, split, voronoi, tsp,
+/// scribble, order. The first four stages have the defaults of `line`, so a switch reuses its
+/// points and its tour.
+pub fn scribble_style() -> Style {
+    Style::new(
+        "scribble",
+        "Scribble",
+        "Loops traced along one line through the points, small and close where the image is dark, \
+         wide and loose where it is light.",
+        vec![
+            Arc::new(ToneStage),
+            Arc::new(SplitStage),
+            Arc::new(VoronoiPlacer),
+            Arc::new(TspRenderer),
+            Arc::new(ScribbleStage),
+            Arc::new(OrderStage),
+        ],
+    )
+    .expect("the scribble style is valid")
 }
 
 /// Short strokes that follow the image's edges: tone, split, voronoi, dashes, order.
@@ -327,6 +349,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(contours_style()),
         Arc::new(flow_style()),
         Arc::new(hilbert_style()),
+        Arc::new(scribble_style()),
         Arc::new(mosaic_style()),
         Arc::new(slow_style()),
     ]
@@ -386,7 +409,7 @@ mod tests {
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
                 "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
-                "hilbert", "mosaic"
+                "hilbert", "scribble", "mosaic"
             ]
         );
         assert!(get_style("_slow").is_some());
@@ -533,11 +556,14 @@ mod tests {
         // Equal settings give equal cache keys, so switching between these styles at their
         // defaults reuses the points.
         let first = get_style("stipple").unwrap().defaults();
-        for name in ["line", "dashes", "tree", "mesh", "cells"] {
+        for name in ["line", "dashes", "tree", "mesh", "cells", "scribble"] {
             let d = get_style(name).unwrap().defaults();
             assert_eq!(d["tone"], first["tone"], "{name}");
             assert_eq!(d["voronoi"], first["voronoi"], "{name}");
         }
+        // The scribble follows the tour of `line`, so a switch between them reuses that too.
+        let tour = |name: &str| get_style(name).unwrap().defaults()["tsp"].clone();
+        assert_eq!(tour("scribble"), tour("line"));
     }
     /// Prints the time of `stipple` and `line` at their defaults on a 1000 by 750 radial image.
     /// Run with `cargo test --release -p plotline-core --lib default_timings -- --ignored
@@ -551,6 +577,48 @@ mod tests {
             run_to_drawing(&style, radial(1000, 750));
             println!("{name}: {:.2} s", start.elapsed().as_secs_f64());
         }
+    }
+    /// Prints the time of `stipple` at the Rust core spec's relaxation target, 10,000 points over
+    /// 50 passes on a 1000 by 750 radial image, and of its relaxation alone, from the frame before
+    /// the first `voronoi` frame to the last. Run with `cargo test --release -p plotline-core --lib
+    /// target_timings -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn target_timings() {
+        use crate::cache::StageCache;
+        use crate::runner::Run;
+        use std::sync::Mutex;
+        use std::time::Instant;
+        let style = get_style("stipple").unwrap();
+        let mut settings = style.defaults();
+        settings["voronoi"]["count"] = 10_000.into();
+        settings["voronoi"]["iterations"] = 50.into();
+        let [_, canvas, pens] = crate::test_util::roots();
+        let image = Artifact::Image(Arc::new(radial(1000, 750)));
+        let mut run = Run::new(
+            style,
+            settings,
+            [image, canvas, pens],
+            Arc::new(Mutex::new(StageCache::new(1 << 20))),
+            Arc::default(),
+            Arc::default(),
+            0,
+        );
+        let start = Instant::now();
+        let (mut before, mut relax) = (start, None);
+        while let Some(frame) = run.next_frame() {
+            let now = Instant::now();
+            if frame.stage == "voronoi" {
+                relax = Some((relax.map_or(before, |(from, _)| from), now));
+            }
+            before = now;
+        }
+        let (from, to) = relax.expect("the run relaxes");
+        println!(
+            "stipple, 10000 points, 50 passes: {:.2} s, relaxation {:.2} s",
+            start.elapsed().as_secs_f64(),
+            (to - from).as_secs_f64()
+        );
     }
     #[test]
     fn every_style_survives_tiny_white_and_black_images() {

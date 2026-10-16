@@ -14,6 +14,7 @@ pub mod lines;
 pub mod mosaic;
 pub mod order;
 pub mod poisson;
+pub mod scribble;
 pub mod sketch;
 pub mod slow;
 pub mod spiral;
