@@ -264,7 +264,7 @@ test("thumbs without an image posts each style's error", async () => {
   ok("thumbs", 120);
   for (let i = 0; i < 50; i++) await macrotask();
   const events = posted.filter((m) => m.type === "thumb");
-  expect(events).toHaveLength(18);
+  expect(events).toHaveLength((ok("listStyles").value as unknown[]).length);
   expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
 });
 
