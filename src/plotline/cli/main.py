@@ -251,7 +251,11 @@ def read_machine(path: str) -> dict[str, Any]:
     metavar="STAGE.KEY=VALUE",
     help="Change a setting, such as tone.resolution=500. Repeat for more. See 'describe'.",
 )
-@click.option("--preset", type=click.Path(), help="Start from a saved preset.")
+@click.option(
+    "--preset",
+    type=click.Path(),
+    help="Start from a saved preset, or from an exported SVG or JSON drawing.",
+)
 @click.option(
     "--look",
     metavar="NAME",

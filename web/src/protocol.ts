@@ -1,7 +1,7 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
-import { describe, listInks, listPens, listStyles, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
+import { describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
 import { drive, free, macrotask } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
@@ -29,7 +29,7 @@ export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
 // The commands that change what a drawing is made from: each one redraws once it succeeds.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "apply", "restore"]);
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
 // A trap: a panic or memory running out aborts the call with a `RuntimeError`, and a stack
@@ -85,6 +85,8 @@ export class Protocol {
       cancel: () => this.current?.cancel(),
       preset: () => JSON.parse(s().preset()),
       loadPreset: (preset: unknown) => s().loadPreset(JSON.stringify(preset)),
+      // The text of a preset file, an exported SVG or an exported JSON drawing.
+      loadPresetText: (text: string) => s().loadPreset(presetFromText(text)),
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
       restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
       // Draws every style after the reply, which carries the id its `thumb` events will have.

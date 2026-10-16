@@ -57,7 +57,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Several pens.** Pen use shares a drawing between your pens: light to dark in list order, or each pen by its colour, so cyan, magenta, yellow and black pens can draw a colour image. By default the first pen draws alone.
 - **Real pens.** A bank of common fineliners, technical pens, gel pens, ballpoints and markers gives each pen its maker's line width, and a list of common inks gives it a colour.
 - **Looks.** Most styles offer a few starting points chosen by measuring test images: Balanced is the defaults, Faithful follows the image's tones most closely, Quick plots in about half an hour and Fine draws the densest marks that still plot cleanly. A look changes only the few settings that set it.
-- **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a setup and share it.
+- **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a setup and share it. An exported SVG or JSON drawing carries the preset of the run that made it, and loads as a preset too.
 - **One engine.** The engine is written in Rust and compiled twice: to a native extension for the Python package, and to WebAssembly for the browser. The Python package and the command line are thin layers over it.
 
 | Style | What it draws |
@@ -128,7 +128,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | List a style's settings | `plotline describe grid` |
 | Start from one of the style's looks, which `plotline describe` lists | `--look faithful`, `quick` or `fine` |
 | Save the run's setup as a preset | `--save-preset my-setup.json` |
-| Start a later run from a preset | `--preset my-setup.json` |
+| Start a later run from a preset, or from an exported SVG or JSON drawing | `--preset my-setup.json` or `--preset drawing.svg` |
 | See an image's statistics and suggested changes as JSON | `plotline analyse your-photo.jpg` |
 | Fail when the plot lint finds a warning or an error | `--strict` |
 | Draw for a machine: its drawable area becomes the page | `--machine my-printer.json`, a machine or a preset that has one |

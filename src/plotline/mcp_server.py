@@ -440,8 +440,9 @@ def build_server(session: Session | None = None) -> MCPServer:
 
     @server.tool()
     async def load_preset(path: str) -> dict[str, Any]:
-        """Load the preset file at the absolute path, which replaces the style, page, pens and
-        settings. Settings that the style does not have are dropped and named in the warnings."""
+        """Load the preset at the absolute path, which replaces the style, page, pens and settings.
+        The file is a saved preset, an exported SVG or an exported JSON drawing. Settings that the
+        style does not have are dropped and named in the warnings."""
         with _errors(), warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             session.load_preset(_absolute(path))

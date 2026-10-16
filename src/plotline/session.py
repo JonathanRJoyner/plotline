@@ -300,12 +300,13 @@ class Session:
         Path(path).write_text(text, encoding="utf-8", newline="\n")
 
     def load_preset(self, path: str | os.PathLike[str]) -> None:
-        """Read the preset file at ``path`` and apply it, so its style, canvas, pens, machine and
-        settings replace the current ones. A key the file leaves out keeps its default, and each
-        stage or setting the style does not have is dropped with a ``UserWarning``. A preset with
-        a machine also sets ``speeds`` to the machine's. Raises ``ValueError`` for a file that is
-        not a preset or that the engine refuses."""
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        """Read the file at ``path`` and apply the preset it holds, so its style, canvas, pens,
+        machine and settings replace the current ones. The file is a preset, an SVG exported with
+        its preset embedded or a JSON drawing exported with one. A key the file leaves out keeps
+        its default, and each stage or setting the style does not have is dropped with a
+        ``UserWarning``. A preset with a machine also sets ``speeds`` to the machine's. Raises
+        ``ValueError`` for a file that holds no preset or that the engine refuses."""
+        data = _core.preset_from_text(Path(path).read_text(encoding="utf-8"))
         for message in self._core.load_preset(data):
             warnings.warn(message, UserWarning, stacklevel=2)
         if self._core.machine() is not None:

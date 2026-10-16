@@ -12,8 +12,8 @@ use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::machine::Machine;
 use plotline_core::runner::Shared;
 use plotline_core::{
-    image, pens, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen, RunState,
-    SessionError, DEFAULT_CACHE_BYTES,
+    image, pens, presets, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen,
+    RunState, SessionError, DEFAULT_CACHE_BYTES,
 };
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -503,6 +503,13 @@ pub fn describe(name: &str) -> Result<String, JsError> {
     let style =
         registry::get_style(name).ok_or_else(|| SessionError::UnknownStyle(name.to_string()))?;
     Ok(style.schema().to_string())
+}
+
+/// The preset in `text`, as JSON: a preset file, an exported SVG or an exported JSON drawing; see
+/// [`presets::from_text`].
+#[wasm_bindgen(js_name = presetFromText)]
+pub fn preset_from_text(text: &str) -> Result<String, JsError> {
+    Ok(presets::from_text(text)?.to_string())
 }
 
 /// A `w` by `h` left-to-right gradient as RGB floats; see [`synthetic::gradient`].

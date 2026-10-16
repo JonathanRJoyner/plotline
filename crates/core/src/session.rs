@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::analysis::{self, Analysis, ImageStats};
@@ -498,14 +498,25 @@ impl Session {
         self.shared.lock().unwrap().error.clone()
     }
 
-    /// The last finished drawing as SVG text.
+    /// The last finished drawing as SVG text, with its preset embedded; see
+    /// [`Session::embedded_preset`].
     pub fn svg(&self) -> Option<String> {
-        self.drawing().map(|d| svg::to_svg(&d))
+        self.drawing()
+            .map(|d| svg::to_svg(&d, self.embedded_preset(&d).as_ref()))
     }
 
-    /// The last finished drawing in the `plotline-paths` JSON format.
+    /// The last finished drawing in the `plotline-paths` JSON format, with its preset embedded.
     pub fn json(&self) -> Option<Value> {
-        self.drawing().map(|d| json::to_value(&d))
+        self.drawing()
+            .map(|d| json::to_value(&d, self.embedded_preset(&d).as_ref()))
+    }
+
+    /// The preset of the run that made `d` with the session's machine in place of the run's null
+    /// one, so loading an export later keeps the user's machine. `None` for a drawing no run made.
+    fn embedded_preset(&self, d: &Drawing) -> Option<Value> {
+        let mut preset = d.preset.clone()?;
+        preset["machine"] = json!(self.machine);
+        Some(preset)
     }
 
     /// Layer `layer` of the last finished drawing as G-code for the machine. Fails without a
@@ -1171,6 +1182,33 @@ mod tests {
                 "ignoring unknown stage \"nostage\""
             ]
         );
+    }
+
+    #[test]
+    fn exports_load_back_as_the_runs_own_preset_with_the_sessions_machine() {
+        let mut s = Session::new(1 << 20);
+        s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.set_pens(vec![Pen::new("A & <B>", 0.4, "#112233").unwrap()])
+            .unwrap();
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        s.update("points", &json!({"spacing_mm": 3.0})).unwrap();
+        s.set_image(gradient(64, 48));
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+        let sent = s.preset();
+        for text in [s.svg().unwrap(), s.json().unwrap().to_string()] {
+            let mut t = Session::new(1 << 20);
+            let v = presets::from_text(&text).unwrap();
+            assert!(t.load_preset(&v).unwrap().is_empty());
+            assert_eq!(t.preset(), sent);
+        }
+        // Later changes do not reach the drawing's own preset, but the machine is the session's.
+        s.update("points", &json!({"spacing_mm": 4.0})).unwrap();
+        s.set_machine(Some(crate::test_util::machine())).unwrap();
+        let v = presets::from_text(&s.svg().unwrap()).unwrap();
+        assert_eq!(v["settings"]["points"]["spacing_mm"], 3.0);
+        assert_eq!(v["machine"], s.preset()["machine"]);
+        assert_eq!(s.json().unwrap()["preset"], v);
     }
 
     #[test]

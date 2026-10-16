@@ -437,7 +437,7 @@ export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps):
       <label class="button">
         <FolderOpen /> Load preset
         <input
-          class="visually-hidden" type="file" accept="application/json,.json"
+          class="visually-hidden" type="file" accept="application/json,.json,image/svg+xml,.svg"
           onChange={(e) => {
             const file = e.currentTarget.files?.[0];
             e.currentTarget.value = ""; // so the same file can be loaded again

@@ -172,7 +172,7 @@ The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D was chosen o
 - `set_machine(machine)`, which sets the machine G-code is written for, or clears it with `null`, and makes the page the machine's drawable area (§14, "Machines outside the GUI")
 - `get_session()`, which returns the style, its look, settings, page, pens, machine, image size, run state and stats
 - `analyse_image()`, which returns the loaded image's statistics and suggested changes; each suggestion's patch applies with `run(style=..., settings=...)` or `set_page`, and its `pens` with `set_pens`
-- `load_preset(path)`, which returns the style and the warnings for any settings it dropped
+- `load_preset(path)`, which reads a preset, an exported SVG or an exported JSON drawing ([embedded presets](decisions/2026-10-16-embedded-presets.md)) and returns the style and the warnings for any settings it dropped
 - `export(path, format, overwrite)`, where the format is `svg`, `json`, `png`, `preset` or `gcode`; for `gcode` the path is a folder that gets one file per pen
 
 Rules: no algorithm code in the MCP layer, every tool maps to a session method, and previews are returned as images so the assistant can judge the result visually.
@@ -189,8 +189,8 @@ How the tools behave:
 
 - **Input:** PNG and JPEG. Colour images become a tone map; with Pen use set to by colour, each pen also takes its share of the image's colour.
 - **Output:**
-  - SVG in millimetres, with one group per pen layer and pen metadata
-  - a plain JSON paths format, so other programs can read results
+  - SVG in millimetres, with one group per pen layer, pen metadata and the run's preset
+  - a plain JSON paths format, so other programs can read results, with the run's preset
   - G-code, one file per pen, for a machine the user describes
   - PNG previews
   - presets (settings files)
@@ -228,7 +228,7 @@ The ten questions the brief opened with (frontend stack, performance strategy, c
 5. **Standalone Rust CLI binary.** Users without Python could get the CLI as one executable. Not before the Python surface settles.
 6. **Python stage API.** Stages written in Python through callbacks would run natively but not in the browser. Decide when someone asks for one.
 7. **JSON-declared styles.** Compositions of existing stages as data, so a new style needs no code. Decide after the Voronoi family shows which compositions people want.
-8. **Additions after 0.1.** The 0.1 candidates were settled on 2026-10-15 (§14, "0.1 scope"): the MCP `load_preset` tool was already built, and the rest wait until after 0.1. They are a paper colour for the preview, Ramer–Douglas–Peucker simplification in the ordering stage, the run's settings embedded in SVG and JSON exports as a preset block, and a `plotline testchart` command. Also proposed for after 0.1: edge and outline layers, HPGL export, a compare view in the GUI, and a saved pen library. None of them is scheduled yet.
+8. **Additions after 0.1.** The 0.1 candidates were settled on 2026-10-15 (§14, "0.1 scope"): the MCP `load_preset` tool was already built, and the rest wait until after 0.1. They are a paper colour for the preview, Ramer–Douglas–Peucker simplification in the ordering stage, and a `plotline testchart` command. The run's settings embedded in exports were built on 2026-10-16 ([embedded presets](decisions/2026-10-16-embedded-presets.md)). Also proposed for after 0.1: edge and outline layers, HPGL export, a compare view in the GUI, and a saved pen library. None of them is scheduled yet.
 
 ## 13. Suggested milestones
 

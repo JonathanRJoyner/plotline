@@ -128,7 +128,8 @@ def test_run_writes_all_outputs(tmp_path, image):
         "fill",
     )
     assert r.exit_code == 0, r.output
-    assert ET.parse(tmp_path / "o.svg").getroot()[0].get("stroke") == "#ff0000"
+    first_layer = ET.parse(tmp_path / "o.svg").getroot().find("{http://www.w3.org/2000/svg}g")
+    assert first_layer is not None and first_layer.get("stroke") == "#ff0000"
     assert (tmp_path / "o.json").exists() and (tmp_path / "o.png").read_bytes()[:4] == b"\x89PNG"
     preset = json.loads((tmp_path / "p.json").read_text())
     assert preset["canvas"]["width_mm"] == 100 and preset["canvas"]["fit"] == "fill"
@@ -163,6 +164,16 @@ def test_preset_is_applied_and_style_kept(tmp_path, image):
     assert r.exit_code == 0 and "tone:" not in r.stderr
     # Compared outside the assert, because pytest would spend minutes diffing two long SVGs.
     same = (tmp_path / "a.svg").read_text() == (tmp_path / "b.svg").read_text()
+    assert same
+
+
+def test_an_exported_svg_is_a_preset(tmp_path, image):
+    a, b = tmp_path / "a.svg", tmp_path / "b.svg"
+    args = ["run", "grid", image, "--quiet", "--set", "tone.resolution=64"]
+    run(*args, "--out", str(a), "--set", "points.spacing_mm=4")
+    r = run(*args, "--out", str(b), "--preset", str(a))
+    assert r.exit_code == 0, r.output
+    same = a.read_text() == b.read_text()
     assert same
 
 
