@@ -1,5 +1,5 @@
-//! Golden files: the grid and stipple styles' output on small synthetic images, compared to files
-//! in `crates/core/golden`.
+//! Golden files: the grid, stipple and Hilbert curve styles' output on small synthetic images,
+//! compared to files in `crates/core/golden`.
 //!
 //! Only the coordinates are compared with a tolerance (1e-3 mm). Everything else must match
 //! exactly: every top-level key except `layers`, the number of layers, and the pen and the path
@@ -88,6 +88,12 @@ fn styles_match_golden_files() {
                 "voronoi": {"count": 300, "iterations": 10},
                 "stipple": {"shape": "point"}
             }),
+        ),
+        (
+            "hilbert_gradient",
+            "hilbert",
+            gradient(64, 48),
+            json!({"tone": {"resolution": 64}, "hilbert": {"cell_mm": 2.0}}),
         ),
     ];
     for (name, style, image, patch) in cases {

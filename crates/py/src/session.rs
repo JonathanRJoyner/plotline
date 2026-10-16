@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use numpy::{PyArray3, PyReadonlyArray3};
+use plotline_core::machine::Machine;
 use plotline_core::{image, Canvas, Job, Pen, RunState, Speeds, DEFAULT_CACHE_BYTES};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -132,6 +133,25 @@ impl Session {
         let speeds: Speeds = from_py(speeds)?;
         self.inner.set_speeds(speeds);
         Ok(())
+    }
+
+    /// The machine as a dict, or `None`.
+    fn machine<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        serde_to_py(py, &self.inner.machine())
+    }
+
+    /// Use a machine dict, or `None` for none. A machine also sets the speeds to the ones it
+    /// implies. A machine the engine refuses raises `ValueError` and changes nothing.
+    fn set_machine(&mut self, machine: &Bound<'_, PyAny>) -> PyResult<()> {
+        let machine: Option<Machine> = from_py(machine)?;
+        self.inner.set_machine(machine).map_err(session_error)
+    }
+
+    /// Layer `layer` of the latest result as G-code for the machine. Raises `RuntimeError` without
+    /// a machine or a result and `ValueError` for a layer the result lacks or a page that does not
+    /// fit the machine's area.
+    fn gcode(&self, layer: usize) -> PyResult<String> {
+        self.inner.gcode(layer).map_err(session_error)
     }
 
     /// Cancel the latest run and start a new one over a snapshot of the session. Raises

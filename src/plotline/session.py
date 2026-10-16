@@ -12,6 +12,7 @@ call this layer and nothing below it.
 import json
 import math
 import os
+import re
 import threading
 import time
 import warnings
@@ -146,17 +147,18 @@ class RunHandle:
 
 
 class Session:
-    """One working context: an image, a canvas, pens, a style with its settings, plot speeds, the
-    stage cache and the latest result.
+    """One working context: an image, a canvas, pens, a style with its settings, plot speeds, an
+    optional machine, the stage cache and the latest result.
 
-    The attributes can be read at any time; ``image``, ``canvas``, ``pens``, ``style`` and
-    ``settings`` are copies of what the engine holds. Change them through the ``set_*`` methods and
-    ``update``, which the engine checks: a refused value raises ``ValueError`` and changes
-    nothing. ``cache_bytes`` bounds the stage cache and ``max_fps`` caps how often frames are
-    delivered to the subscribers. ``run`` works on a worker thread and ``run_blocking`` in the
-    caller's. Starting either one stops the run before it, so at most one is active. A session is
-    not safe for concurrent changes, so a front end should call it from one thread. ``speeds``,
-    which ``stats`` reads, has no setter and is edited in place.
+    The attributes can be read at any time; ``image``, ``canvas``, ``pens``, ``style``,
+    ``settings`` and ``machine`` are copies of what the engine holds. Change them through the
+    ``set_*`` methods and ``update``, which the engine checks: a refused value raises
+    ``ValueError`` and changes nothing. ``cache_bytes`` bounds the stage cache and ``max_fps``
+    caps how often frames are delivered to the subscribers. ``run`` works on a worker thread and
+    ``run_blocking`` in the caller's. Starting either one stops the run before it, so at most one
+    is active. A session is not safe for concurrent changes, so a front end should call it from one
+    thread. ``speeds``, which ``stats`` reads, has no setter and is edited in place, but
+    ``set_machine`` and ``load_preset`` replace it with a machine's.
     """
 
     def __init__(self, cache_bytes: int = 512 * 2**20, max_fps: float = 15.0) -> None:
@@ -239,6 +241,21 @@ class Session:
         every result needs a pen, and for a pen the engine refuses."""
         self._core.set_pens([asdict(pen) for pen in pens])
 
+    @property
+    def machine(self) -> dict[str, Any] | None:
+        """The machine that ``gcode`` writes for, as the dict of a preset's ``machine`` (``name``,
+        ``area``, the heights and feeds, ``start_gcode`` and ``end_gcode``), or ``None``."""
+        return self._core.machine()
+
+    def set_machine(self, machine: dict[str, Any] | None) -> None:
+        """Use ``machine``, a dict in the shape of a preset's ``machine``, or ``None`` for no
+        machine. A machine also sets ``speeds`` to the ones it implies; ``None`` leaves them as
+        they are. Raises ``ValueError`` for a machine the engine refuses, with a message that
+        names the field, and changes nothing."""
+        self._core.set_machine(machine)
+        if machine is not None:
+            self.speeds = Speeds(**self._core.speeds())
+
     def set_style(self, name: str) -> None:
         """Switch to the built-in style called ``name``. A stage that the old style also has
         keeps each value changed from the old style's default; every other value takes the new
@@ -264,13 +281,17 @@ class Session:
         Path(path).write_text(text, encoding="utf-8", newline="\n")
 
     def load_preset(self, path: str | os.PathLike[str]) -> None:
-        """Read the preset file at ``path`` and apply it, so its style, canvas, pens and settings
-        replace the current ones. A key the file leaves out keeps its default, and each stage or
-        setting the style does not have is dropped with a ``UserWarning``. Raises ``ValueError``
-        for a file that is not a preset or that the engine refuses."""
+        """Read the preset file at ``path`` and apply it, so its style, canvas, pens, machine and
+        settings replace the current ones. A key the file leaves out keeps its default, and each
+        stage or setting the style does not have is dropped with a ``UserWarning``. A preset with
+        a machine also sets ``speeds`` to the machine's. Raises ``ValueError`` for a file that is
+        not a preset or that the engine refuses."""
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         for message in self._core.load_preset(data):
             warnings.warn(message, UserWarning, stacklevel=2)
+        if self._core.machine() is not None:
+            # The engine took the machine's speeds, and ``stats`` would push the old ones back.
+            self.speeds = Speeds(**self._core.speeds())
 
     def run_blocking(self) -> Drawing:
         """Run the style in the calling thread and return the drawing, which is also kept in
@@ -441,6 +462,35 @@ class Session:
         Raises ``RuntimeError`` when there is no result."""
         text = json.dumps(self.json_dict(), indent=0) + "\n"
         Path(path).write_text(text, encoding="utf-8", newline="\n")
+
+    def gcode(self, layer: int) -> str:
+        """Layer ``layer`` of the result, counted from 0, as G-code text for the machine. Raises
+        ``RuntimeError`` when there is no machine or no result, and ``ValueError`` for a layer the
+        result lacks or a page larger than the machine's drawable area."""
+        return self._core.gcode(layer)
+
+    def export_gcode(self, directory: str | os.PathLike[str], overwrite: bool = True) -> list[Path]:
+        """Write one G-code file per layer of the result into ``directory``, which is created with
+        its parents if missing, and return the paths in layer order. A file is named
+        ``plot_{n}_{pen}.gcode``, where ``n`` counts from 1 and every run of characters outside
+        ``[A-Za-z0-9_.-]`` in the pen's name becomes ``_``. The text is UTF-8 with LF line ends.
+        With ``overwrite`` false, a file that already exists raises ``FileExistsError`` naming it,
+        before anything is written. Raises ``RuntimeError`` when there is no machine or no result
+        and ``ValueError`` for a page larger than the machine's drawable area; in both cases
+        nothing is written."""
+        layers = _have(self.result).layers
+        # All the text first, so that a refusal from the engine leaves the directory untouched.
+        texts = [self.gcode(i) for i in range(len(layers))]
+        files = []
+        for n, layer in enumerate(layers, 1):
+            pen = re.sub(r"[^\w.-]+", "_", layer.pen.name, flags=re.ASCII)
+            files.append(Path(directory) / f"plot_{n}_{pen}.gcode")
+        if not overwrite and (clash := next((f for f in files if f.exists()), None)):
+            raise FileExistsError(f"{clash} already exists")
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        for file, text in zip(files, texts, strict=True):
+            file.write_text(text, encoding="utf-8", newline="\n")
+        return files
 
     def stats(self) -> Stats:
         """The path count, pen-down and pen-up distances and estimated plot time of the result at

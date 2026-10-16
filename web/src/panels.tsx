@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
 import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Optimum, Pen, Stats, ToneMatch } from "./events";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
+import { controlsFor } from "./schema";
 
 const SIZES: [string, number, number][] = [
   ["A5", 148, 210], ["A4", 210, 297], ["A3", 297, 420], ["Letter", 215.9, 279.4], ["Tabloid", 279.4, 431.8],
@@ -120,7 +121,7 @@ function Modal({ opens, title, icon, wide, onClose, children }: ModalProps): JSX
   useEffect(() => {
     if (opens > 0 && !ref.current!.open) ref.current!.showModal();
   }, [opens]);
-  const id = `${title.toLowerCase()}-title`;
+  const id = `${title.toLowerCase().replace(/\s+/g, "-")}-title`; // an id with a space breaks aria-labelledby
   return (
     <dialog ref={ref} class={wide ? "modal wide" : "modal"} aria-labelledby={id} onClose={onClose}>
       <header>
@@ -298,16 +299,43 @@ export function LintList({ findings, error, onApply }: { findings: Finding[]; er
 
 const UNITS = [["minutes", "min"], ["paths", "paths"], ["metres", "m"], ["dots", "dots"]] as const;
 
+// How near the target a fit counts as met: the solver's own tolerance.
+const FIT_TOLERANCE = 0.02;
+
 type FitProps = {
   disabled: boolean; error?: string; fitted: FitResult | null; optimum: Optimum | null;
+  stages: { name: string; label: string; schema: Record<string, unknown> }[];
   onFit: (metric: string, target: number) => void; onOptimize: (metric?: string, target?: number) => void; onApply: (patch: Patch) => void;
 };
 
 // A budget: a target in one of the units, which Fit meets by changing the style's density setting.
-export function FitPanel({ disabled, error, fitted, optimum, onFit, onOptimize, onApply }: FitProps): JSX.Element {
+export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
   const [target, setTarget] = useState("");
   const [metric, setMetric] = useState("minutes");
   const unit = (m: string) => UNITS.find(([name]) => name === m)?.[1] ?? m;
+  // What the fit says: the setting under its label and unit from the settings panel, and whether the target was met.
+  const text = (f: FitResult) => {
+    const stage = stages.find((s) => s.name === f.stage);
+    const c = stage && controlsFor(stage.schema).find((c) => c.key === f.key);
+    const label = c?.label ?? f.key;
+    const set = `${String(f.value)}${c && "unit" in c && c.unit ? ` ${c.unit}` : ""}`;
+    const u = unit(f.metric);
+    const got = Number(f.achieved.toPrecision(4));
+    const runs = `${f.samples.length} ${f.samples.length === 1 ? "run" : "runs"}`;
+    if (Math.abs(f.achieved / f.target - 1) <= FIT_TOLERANCE) return `${label} set to ${set}: ${got} ${u} for a target of ${f.target} ${u}, in ${runs}.`;
+    return `Could not reach ${f.target} ${u}. The nearest was ${got} ${u}, with ${label} at ${set}, after ${runs}.`;
+  };
+  // What the search found, in the same words: the setting under its label and unit.
+  const found = (o: Optimum) => {
+    const stage = stages.find((s) => s.name === o.stage);
+    const c = stage && controlsFor(stage.schema).find((c) => c.key === o.key);
+    const label = c?.label ?? o.key;
+    const at = (v: unknown) => `${String(v)}${c && "unit" in c && c.unit ? ` ${c.unit}` : ""}`;
+    const within = o.budget ? ` within ${o.budget.target} ${unit(o.budget.metric)}` : "";
+    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best${within}, with a tone error of ${o.error.toFixed(3)}.`;
+    const against = o.current_error === null ? `${at(o.current)} goes over the target` : `against ${o.current_error.toFixed(3)} at ${at(o.current)}`;
+    return `${label} at ${at(o.value)} follows the image's tones best${within}: a tone error of ${o.error.toFixed(3)}, ${against}.`;
+  };
   return (
     <form
       class="fit" data-tour="fit"
@@ -330,13 +358,9 @@ export function FitPanel({ disabled, error, fitted, optimum, onFit, onOptimize, 
       >
         <Wand /> Optimize
       </button>
-      {error ? <span class="error">{error}</span> : fitted ? (
+      {error ? <span class="error">{error}</span> : fitted ? <span>{text(fitted)}</span> : optimum && (
         <span>
-          {fitted.stage}.{fitted.key} set to {String(fitted.value)}: {Number(fitted.achieved.toPrecision(4))} {unit(fitted.metric)} for a target of {fitted.target} {unit(fitted.metric)} in {fitted.samples.length} runs
-        </span>
-      ) : optimum && (
-        <span>
-          {optimum.reason}
+          {found(optimum)}
           {optimum.patch && <button type="button" onClick={() => onApply(optimum.patch!)}><Check /> Apply</button>}
         </span>
       )}
@@ -484,6 +508,7 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
         </label>
         {machine && (
           <>
+            <p class="help">A new machine starts from placeholder values. Replace the drawable area, the feeds and every pen-lift value with your machine's own before you plot: a wrong pen-down Z can press the pen into the bed.</p>
             <label>Name <input type="text" value={machine.name} onChange={(e) => onEdit({ ...machine, name: e.currentTarget.value })} /></label>
             <h3>Drawable area</h3>
             {AREA.map(([k, label]) => num(label, "mm", machine.area[k], (v) => onEdit({ ...machine, area: { ...machine.area, [k]: v } })))}
