@@ -245,7 +245,8 @@ class Session:
     @property
     def machine(self) -> dict[str, Any] | None:
         """The machine that ``gcode`` writes for, as the dict of a preset's ``machine`` (``name``,
-        ``area``, the heights and feeds, ``start_gcode`` and ``end_gcode``), or ``None``."""
+        ``area``, the heights and feeds, ``start_gcode`` and ``end_gcode``, and when used
+        ``pen_lift``, ``pen_down_gcode``, ``pen_up_gcode`` and ``max_segment_mm``), or ``None``."""
         return self._core.machine()
 
     def set_machine(self, machine: dict[str, Any] | None) -> None:

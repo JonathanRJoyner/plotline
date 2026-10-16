@@ -28,7 +28,7 @@ export const STEPS: Step[] = [
   { target: "export", title: "Export", text: "SVG writes the drawing in millimetres, one layer per pen that draws, for your plotter's own software. JSON writes the paths for other programs." },
   { target: "testchart", title: "Calibrate on paper", text: "Test chart replaces the drawing with a page of labelled patches for the first pen, at the pen's own width: lines at growing spacing, dots of growing size, and a solid fill drawn over one to eight times. Plot it, then look at where the spaced lines merge, how big each dot really comes out, at how many passes the paper scuffs, and whether the plot takes the time the stats say. The next run or change to a setting draws your image again." },
   { target: "presets", title: "Keep a look", text: "A preset is a small file with the style, page, pens and settings, so you can come back to a look or share it. An exported SVG or JSON drawing holds its own preset, so Load preset reads those too. The page also remembers your last setup." },
-  { target: "machine", title: "Plot from G-code", text: "Settings holds a pen-fitted 3D printer: its drawable area, pen heights and feeds. Once one is set, Export writes a G-code file per pen." },
+  { target: "machine", title: "Plot from G-code", text: "Settings holds your machine: its drawable area, its feeds, and how it lifts the pen, by Z moves or by its own lines for a servo or a solenoid. Once one is set, Export writes a G-code file per pen." },
   { target: "help", title: "Help on every setting", text: "Hover over a setting's name to read its help, or turn on Show help to see it under every control." },
 ];
 

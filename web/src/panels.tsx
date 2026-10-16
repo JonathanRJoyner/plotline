@@ -456,13 +456,15 @@ export function ExportPanel({ drawing, layers, machine, error, onExport, onGcode
 }
 
 type NumberKey = "z_down_mm" | "z_up_mm" | "z_safe_mm" | "draw_feed" | "travel_feed" | "z_feed" | "settle_ms";
-const PEN_LIFT: [NumberKey, string, string, string][] = [
+const Z_LIFT: [NumberKey, string, string, string][] = [
   ["z_down_mm", "Pen down Z", "mm", "The Z the pen draws at."],
   ["z_up_mm", "Pen up Z", "mm", "The Z it travels at between paths."],
   ["z_safe_mm", "Safe Z", "mm", "The Z each file lifts to before its first move and before its end lines."],
   ["z_feed", "Z feed", "mm/min", "How fast the pen moves up and down."],
-  ["settle_ms", "Settle", "ms", "The pause after each Z move."],
 ];
+// Placeholders that keep a switch to G-code lines from being refused for empty lines; the help
+// says to replace them.
+const SERVO = { pen_down_gcode: "M280 P0 S30", pen_up_gcode: "M280 P0 S90" };
 const FEEDS: [NumberKey, string][] = [["draw_feed", "Draw"], ["travel_feed", "Travel"]];
 const AREA: [keyof Area, string][] = [["width", "Width"], ["height", "Height"], ["x", "Offset X"], ["y", "Offset Y"]];
 const SPEEDS: [keyof Speeds, string, string, number][] = [
@@ -534,17 +536,55 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
         )}
       </>
     ),
-    "Pen lift": machine ? PEN_LIFT.map(([k, label, unit, help]) => (
+    "Pen lift": machine ? (
       <>
-        {num(label, unit, machine[k], (v) => onEdit({ ...machine, [k]: v }))}
-        <p class="help">{help}</p>
+        <label>
+          Lift by{" "}
+          <select
+            value={machine.pen_lift ?? "z"}
+            onChange={(e) => onEdit(e.currentTarget.value === "gcode"
+              ? { ...machine, pen_lift: "gcode", pen_down_gcode: machine.pen_down_gcode || SERVO.pen_down_gcode, pen_up_gcode: machine.pen_up_gcode || SERVO.pen_up_gcode }
+              : { ...machine, pen_lift: "z" })}
+          >
+            <option value="z">Z moves</option>
+            <option value="gcode">G-code lines</option>
+          </select>
+        </label>
+        {machine.pen_lift === "gcode" ? (
+          <>
+            <p class="help">For a pen lifted by a servo or a solenoid: plotline writes these lines as they are where it would move Z. The servo command filled in is a placeholder: replace it with your machine's own.</p>
+            <label>Pen down <textarea rows={3} value={machine.pen_down_gcode} onChange={(e) => onEdit({ ...machine, pen_down_gcode: e.currentTarget.value })} /></label>
+            <label>Pen up <textarea rows={3} value={machine.pen_up_gcode} onChange={(e) => onEdit({ ...machine, pen_up_gcode: e.currentTarget.value })} /></label>
+          </>
+        ) : Z_LIFT.map(([k, label, unit, help]) => (
+          <>
+            {num(label, unit, machine[k], (v) => onEdit({ ...machine, [k]: v }))}
+            <p class="help">{help}</p>
+          </>
+        ))}
+        {num("Settle", "ms", machine.settle_ms, (v) => onEdit({ ...machine, settle_ms: v }))}
+        <p class="help">The pause after each pen move, so the pen has landed or lifted before the next move.</p>
       </>
-    )) : choose,
+    ) : choose,
     "G-code": machine ? (
       <>
         <label>Start <textarea rows={6} value={machine.start_gcode} onChange={(e) => onEdit({ ...machine, start_gcode: e.currentTarget.value })} /></label>
         <label>End <textarea rows={6} value={machine.end_gcode} onChange={(e) => onEdit({ ...machine, end_gcode: e.currentTarget.value })} /></label>
-        <p class="help">plotline writes G21 and G90 before the start lines, and lifts to safe Z before the end lines. Home the machine before mounting the pen: the files have no G28.</p>
+        <p class="help">
+          {machine.pen_lift === "gcode"
+            ? "plotline writes G21 and G90 before the start lines, and lifts the pen after them."
+            : "plotline writes G21 and G90 before the start lines, and lifts to safe Z before the end lines."}
+          {" "}Home the machine before mounting the pen: the files have no G28.
+        </p>
+        <label>
+          Longest move{" "}
+          <input
+            type="number" min={0.5} step="any" placeholder="whole" value={machine.max_segment_mm ?? ""}
+            onChange={(e) => { const n = e.currentTarget.valueAsNumber; onEdit({ ...machine, max_segment_mm: Number.isFinite(n) ? n : null }); }}
+          />{" "}
+          mm
+        </label>
+        <p class="help">For firmware that draws a long straight move as a curve, as a hanging plotter's may: plotline cuts every move into pieces no longer than this. Leave it empty to keep moves whole.</p>
       </>
     ) : choose,
     "Plot time": (

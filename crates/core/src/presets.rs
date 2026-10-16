@@ -515,6 +515,10 @@ mod tests {
         let v = to_value("grid", &a4(), &[black()], Some(&m), &json!({}));
         assert_eq!(v["machine"]["area"]["x"], 28.0);
         assert_eq!(parse(&v).unwrap().machine, Some(m));
+        let mut m = crate::test_util::servo_machine();
+        m.max_segment_mm = Some(1.0);
+        let v = to_value("grid", &a4(), &[black()], Some(&m), &json!({}));
+        assert_eq!(parse(&v).unwrap().machine, Some(m));
     }
 
     #[test]
