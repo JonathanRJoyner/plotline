@@ -217,7 +217,7 @@ The repo starts private and will go public, so treat every commit as public from
 
 ## 12. Open questions for the builder
 
-Decide these during design, write the decision and reason into this brief, or ask the project owner if it's a matter of taste.
+Decide these during design, write the decision and reason as a file in docs/decisions/, or ask the project owner if it's a matter of taste.
 
 The ten questions the brief opened with (frontend stack, performance strategy, continuous-line solver, dot geometry, settings schema, cache, toolchain adapters, third-party styles, Python and tooling, preset format) were settled on 2026-10-11. Each decision and its reason is in §14, and the core ones are detailed in [the spec for the first sub-project](superpowers/specs/2026-10-11-core-engine-design.md). Still open:
 
@@ -254,6 +254,8 @@ Each milestone, or pair of milestones, gets its own spec under `docs/superpowers
 Milestone 2 was completed in Python and then ported to Rust on 2026-10-12 under the Rust core spec. The Python engine is gone: the Python package is now a thin layer over the Rust extension, and the algorithm milestones that follow proceed in Rust. Milestone 6 is built before 3 to 5, see the decision log. It was built on 2026-10-12 under [the GUI spec](superpowers/specs/2026-10-12-gui-design.md). Milestones 3 to 5 were built on 2026-10-13 under [spec 8](superpowers/specs/2026-10-12-point-family-and-more-styles-design.md), together with nine more styles. Milestone 3's benchmark is an ignored test, `default_timings` in `crates/core/src/registry.rs`, and its numbers are in the decision log under "Timings and size". It measures the defaults; a second ignored test beside it, `target_timings`, measures the target in §14, which was met on 2026-10-16. Milestone 7 was built on 2026-10-12 under [the MCP spec](superpowers/specs/2026-10-12-mcp-server-design.md).
 
 ## 14. Decision log
+
+From 2026-10-16, new decisions are files in [docs/decisions/](decisions/README.md), one per decision, so that pull requests landing side by side don't conflict over the end of this table. The table below holds the decisions made before then, and the decisions folder lists every later one, including amendments to rows here.
 
 | Decision | Choice | Reason |
 |---|---|---|
