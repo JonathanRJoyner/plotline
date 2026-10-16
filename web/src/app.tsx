@@ -525,7 +525,10 @@ export function App() {
         />
       </main>
       <aside>
-        {state.suggestions.length > 0 && <SuggestionsPanel suggestions={state.suggestions} error={errors.suggestions} onApply={(patch) => call("apply", [patch], "suggestions")} />}
+        {/* Always present, as the lint list's is, so the tour can ring it before any image. */}
+        <div data-tour="suggestions">
+          {state.suggestions.length > 0 && <SuggestionsPanel suggestions={state.suggestions} error={errors.suggestions} onApply={(patch) => call("apply", [patch], "suggestions")} />}
+        </div>
         <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
         <PensPanel
           pens={state.pens} hidden={hidden} error={errors.pens}

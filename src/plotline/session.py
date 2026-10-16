@@ -229,10 +229,13 @@ class Session:
 
     def analysis(self) -> dict[str, Any]:
         """What the image looks like and what would suit it, as ``{"stats", "suggestions"}``.
-        ``stats`` holds numbers measured when the image was set. Each suggestion is
-        ``{"kind", "reason", "patch"}``, where ``patch`` is ``None`` or any of ``style``,
-        ``settings`` (``{stage: {key: value}}``) and ``page`` (``{width_mm, height_mm}``), which
-        the caller applies; the list follows the current style, settings and page. Raises
+        ``stats`` holds numbers measured when the image was set, among them ``palette`` (the
+        ink names that draw a colour image best, lightest first, empty for a grey one) and
+        ``palette_error`` (its mean colour difference). Each suggestion is
+        ``{"kind", "reason", "patch"}``, where ``patch`` is ``None`` or any of ``style``, ``pens``
+        (a list of ``{name, width_mm, color}``, for :meth:`set_pens`), ``settings``
+        (``{stage: {key: value}}``) and ``page`` (``{width_mm, height_mm}``), which the caller
+        applies in that order; the list follows the current style, pens, settings and page. Raises
         ``RuntimeError`` when no image is loaded."""
         analysis = self._core.analysis()
         if analysis is None:
