@@ -4,6 +4,7 @@
 // an input the user is typing into.
 import { CircleHelp, Crosshair, Download, Image as ImageIcon, ImageUp, LayoutGrid, Maximize, Monitor, Moon, Play, Redo2, RotateCcw, Route, Settings as Gear, Sparkles, Square, Sun, Undo2 } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { choice, CompareControls, offers, type Against } from "./compare";
 import { Engine } from "./engine";
 import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, ResultEvent } from "./events";
 import { ACCEPT, download, imageFile } from "./files";
@@ -146,7 +147,7 @@ function Export({ status, machine, error, onExport, onHpgl, onGcode, onTestchart
   return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} error={error} onExport={onExport} onHpgl={onHpgl} onGcode={onGcode} onTestchart={onTestchart} />;
 }
 
-type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits" | "focusing"> & {
+type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "compare" | "previous" | "view" | "onView" | "fits" | "focusing"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string; fitError?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
   onSettings: () => void; onTour: () => void; onUndo?: () => void; onRedo?: () => void;
@@ -162,9 +163,14 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
   const [result, setResult] = useState<ResultEvent | null>(null);
+  // The result the latest one replaced, for the compare view.
+  const [previous, setPrevious] = useState<ResultEvent | null>(null);
   const [progress, setProgress] = useState<Record<string, { label: string; progress: number }>>({});
   const [showSource, setShowSource] = useState(false);
   const [showTravel, setShowTravel] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [against, setAgainst] = useState<Against>("previous");
+  const [swipe, setSwipe] = useState(50);
   const [focusing, setFocusing] = useState(false);
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [fits, setFits] = useState(0);
@@ -176,6 +182,9 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
   // A mark under a device pixel wide draws as a faint grey or not at all, which reads as a blank page.
   const thin = stats !== null && preview.pens[0].width_mm * view.scale * (window.devicePixelRatio || 1) < 1;
   const latest = useRef(0);
+  const offered = offers(previous, result);
+  const shown = choice(against, offered);
+  const current = useRef<ResultEvent | null>(null); // the `result` state for the event handler, which is set up once
   useEffect(() => {
     engine.onEvent = (e) => {
       if (e.type === "run") {
@@ -193,6 +202,8 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
         if (e.stage === "fit" || e.stage === "optimize") setProgress({ [e.stage]: { label: e.label, progress: e.progress } });
         else setProgress((p) => ({ ...p, [e.stage]: { label: e.label, progress: e.progress } }));
       } else if (e.type === "result") {
+        if (current.current && current.current !== e) setPrevious(current.current);
+        current.current = e;
         setResult(e);
         status.set({ ...status.value, layers: e.layers.map((l) => l.pen) });
       } else {
@@ -257,10 +268,15 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
         </span>
       </div>
       {error && <p class="error">{error}</p>}
-      <div class="preview" data-tour="preview">
+      <div class={comparing && shown ? "preview comparing" : "preview"} data-tour="preview">
         <Preview
           {...preview} frames={frames} result={result} running={run.state === "running"} showSource={showSource}
-          showTravel={showTravel} view={view} onView={setView} fits={fits} focusing={focusing}
+          showTravel={showTravel} compare={comparing && shown ? { against: shown, at: swipe } : null} previous={previous}
+          view={view} onView={setView} fits={fits} focusing={focusing}
+        />
+        <CompareControls
+          on={comparing} enabled={result !== null} against={shown} offered={offered} at={swipe}
+          onOn={setComparing} onAgainst={setAgainst} onAt={setSwipe}
         />
         {thin && <p class="hint">At this zoom the pen is under a pixel wide: zoom in to see its marks.</p>}
       </div>
