@@ -813,6 +813,16 @@ mod tests {
     }
 
     #[test]
+    fn the_kept_drawing_carries_the_fitted_value_in_its_preset() {
+        let mut s = session("hatch", &[]);
+        let (r, _) = fit(&mut s, "minutes", 5.0);
+        let loaded = crate::presets::from_text(&s.svg().unwrap()).unwrap();
+        assert_eq!(loaded["settings"][&r.stage][&r.key], r.value);
+        // The fit left the session's own setting alone.
+        assert_ne!(s.settings()[&r.stage][&r.key], r.value);
+    }
+
+    #[test]
     fn the_samples_are_pinned() {
         // The same literals are in crates/wasm/tests/smoke.rs, so CI proves both targets agree.
         let mut s = session("waves", &[]);
