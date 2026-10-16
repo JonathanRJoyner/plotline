@@ -11,7 +11,7 @@ The property laws' pull-request seed moved from `0x706c_6f74_6c69_6e65` to 1. A 
 - a nearest-neighbour `line` (`tsp.optimize` off): 164 and 614 points drew 0.376 m and 0.371 m;
 - `sketch`: 164 and 614 lines drew 3.28 m and 3.22 m.
 
-Seed 3 also breaks the density law on `circles`, where a spacing of 16.6 mm and 19.0 mm drew 0.46 m and 0.57 m. Seeds 1 and 2 pass every law.
+Seed 3 also breaks the density law on `circles`, where a spacing of 16.6 mm and 19.0 mm drew 0.46 m and 0.57 m. Seed 1 passes every law.
 
 **Reason:** A global tone curve cannot tell a shadow on the paper from a stroke. On `lit_strokes`, line art under light from 0.4 to 1, Otsu's separability is 0.728 and rises to 0.9998 once flattened. The paper then reads 0.975 or more and the strokes about 0.2. The closing needs only comparisons, so its cost does not depend on the window, and it gives the same bits in the browser: about 140 ms at a 4000 by 2800 map in a release build, as its own step. The blocks keep the grid at most 1024 pixels on its longer side.
 
