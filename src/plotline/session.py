@@ -182,8 +182,9 @@ class Session:
 
     @property
     def state(self) -> RunState:
-        """The state of the latest run, or ``idle`` before any run."""
-        return RunState.idle if self._handle is None else self._handle.state
+        """The state of the latest run, ``done`` after a test chart, or ``idle`` before any run."""
+        # With no handle the engine's slot is all there is: idle, or the chart's done.
+        return RunState(self._core.state()) if self._handle is None else self._handle.state
 
     def load_image(self, path: str | os.PathLike[str]) -> None:
         """Read the PNG, JPEG or WebP file at ``path`` as the source image. Raises ``OSError``
@@ -327,13 +328,14 @@ class Session:
         is a page of small labelled patches: line spacings, dot sizes and repeated passes, all
         scaled to the pen. Plot it to see where lines merge, how big dots come out, how many
         passes the paper takes, and whether ``stats`` gives the plot time. It needs no image. A
-        run under way is cancelled and waited for first. Raises ``ValueError`` when the page is
-        too small for the chart, leaving ``result`` as it was.
+        run under way is cancelled and waited for, and ``state`` is ``done``. Raises ``ValueError``
+        when the page is too small for the chart, leaving ``result`` and the run as they were.
         """
+        self._core.testchart()  # cancels the engine's run, and refuses before it does
         if self._handle is not None:
             self._handle.cancel()
             self._handle.wait()
-        self._core.testchart()
+            self._handle = None
         self.result = result = _drawing(_have(self._core.drawing()))
         return result
 
