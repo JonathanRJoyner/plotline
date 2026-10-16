@@ -13,10 +13,8 @@
 //!
 //! Every value is a deterministic function of the pixels: integer histograms with fixed bin
 //! edges, sums in row-major order, and `sqrt` (exact in IEEE 754) as the only float library call
-//! besides `cbrt` and `pow`, which go through [`crate::math`] (`libm`), so native and WebAssembly
-//! builds agree bit for bit.
-
-use std::collections::BTreeSet;
+//! besides `exp` and `ln` for the palette's powers, which go through [`crate::math`] (`libm`), so
+//! native and WebAssembly builds agree bit for bit.
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -223,7 +221,7 @@ fn lab(srgb: [f64; 3]) -> [f64; 3] {
         if c <= 0.04045 {
             c / 12.92
         } else {
-            math::powf((c + 0.055) / 1.055, 2.4)
+            math::exp(2.4 * math::ln((c + 0.055) / 1.055))
         }
     });
     let f = |row: [f64; 3]| {
@@ -231,7 +229,7 @@ fn lab(srgb: [f64; 3]) -> [f64; 3] {
             / (row[0] + row[1] + row[2]);
         let edge: f64 = 6.0 / 29.0;
         if t > edge * edge * edge {
-            math::cbrt(t)
+            math::exp(math::ln(t) / 3.0)
         } else {
             t / (3.0 * edge * edge) + 4.0 / 29.0
         }
@@ -507,9 +505,16 @@ pub fn suggest(
                 .find(|ink| ink.0 == name)
                 .map_or("", |ink| ink.1)
         };
-        let wanted: BTreeSet<&str> = stats.palette.iter().map(|&name| hex(name)).collect();
-        let have: BTreeSet<String> = pens.iter().map(|p| p.color.to_lowercase()).collect();
-        let in_effect = by_colour && have.iter().map(String::as_str).eq(wanted.iter().copied());
+        // In effect when the pens' colours and the palette's are the same set, ignoring case.
+        let inked = |pen: &Pen| {
+            stats
+                .palette
+                .iter()
+                .any(|&n| pen.color.eq_ignore_ascii_case(hex(n)))
+        };
+        let held = |n: &str| pens.iter().any(|p| p.color.eq_ignore_ascii_case(hex(n)));
+        let in_effect =
+            by_colour && pens.iter().all(inked) && stats.palette.iter().all(|&n| held(n));
         if !in_effect {
             let width = pens.first().map_or(0.3, |p| p.width_mm);
             let list: Vec<Value> = stats
@@ -536,7 +541,7 @@ pub fn suggest(
 fn capitalise(word: &str) -> String {
     let mut chars = word.chars();
     chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
+        first.to_ascii_uppercase().to_string() + chars.as_str()
     })
 }
 
