@@ -356,8 +356,9 @@ impl Run {
     }
 
     /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}` JSON, or what
-    /// a search found, as `{stage, key, value, error, current, current_error, budget, trials,
-    /// reason, patch}` JSON, once it is done; `undefined` for a plain run.
+    /// a search found, as `{stage, key, value, error, minutes, current, current_error,
+    /// current_minutes, budget, trials, reason, patch}` JSON, once it is done; `undefined` for a
+    /// plain run.
     pub fn result(&self) -> Option<String> {
         self.inner.result().map(|r| r.to_string())
     }

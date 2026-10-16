@@ -337,8 +337,11 @@ def echo_stats(session: Session) -> None:
     is_flag=True,
     help=(
         "Also search the style's density setting for the value whose drawing follows the "
-        "image's tones best, in eight runs, and print it with the --set option that applies it. "
-        "With a --fit option, every trial stays within its target instead of fitting it. "
+        "image's tones best, in up to nine runs, and print it and its plot time with the --set "
+        "option that applies it. Values that plot for over twice as long, or an hour if that is "
+        "more, or that the plot lint warns about, are left out. "
+        "With a --fit option, every trial stays within its target instead of fitting it, and "
+        "--fit-minutes replaces the time limit. "
         "The drawing written is the one the given settings make."
     ),
 )

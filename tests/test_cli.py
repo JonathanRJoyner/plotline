@@ -257,7 +257,7 @@ def test_run_prints_the_tone_match_and_an_optimize_suggestion(tmp_path, image):
     r = run(*args, "--optimize")
     assert r.exit_code == 0, r.output
     line = next(x for x in r.stdout.splitlines() if x.startswith("optimize: "))
-    assert "spacing_mm" in line
+    assert "spacing_mm" in line and " min" in line
     lines = r.stdout.splitlines()
     apply = [x for x in lines if x.startswith("  apply: --set hatch.spacing_mm=")]
     assert len(apply) == ("already follows" not in line)

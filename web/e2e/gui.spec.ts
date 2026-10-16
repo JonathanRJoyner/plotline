@@ -209,6 +209,7 @@ test("Optimize suggests a spacing and changes nothing until Apply", async ({ pag
   const searched = await ran(page, id);
   const found = page.locator("form.fit span");
   await expect(found).toContainText("follows the image's tones best");
+  await expect(found).toContainText(/\d min to plot/);
   await expect(spacing).toHaveValue(before);
   // The still life's best hatch spacing is wider than the default (brief §14, "Optimize").
   const [, value] = /^Spacing at ([\d.]+) mm follows/.exec((await found.textContent()) ?? "") ?? [];
