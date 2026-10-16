@@ -144,6 +144,19 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await ran(page, id);
 });
 
+test("the test chart draws without an image", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Test chart" }).click();
+  const id = await ran(page, 0);
+  const [, paths] = /(\d+) paths/.exec((await page.locator(".stats").textContent()) ?? "") ?? [];
+  expect(Number(paths)).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Export SVG" })).toBeEnabled();
+  // The passes patches are overdraw by design, and the next run replaces the chart.
+  await expect(page.locator("ul.lint")).toContainText("drawn over");
+  await page.getByRole("button", { name: "Sample image" }).click();
+  await ran(page, id);
+});
+
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.
 const STEPS = [...readFileSync(new URL("../src/tour.tsx", import.meta.url), "utf8").matchAll(/\{ (?:target: "([^"]+)", )?title: "([^"]+)"/g)]
   .map(([, target, title]) => ({ target, title }));

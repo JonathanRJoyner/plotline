@@ -151,6 +151,12 @@ impl Session {
         })
     }
 
+    /// Cancel the latest run and make the test chart for the page and the first pen the latest
+    /// drawing, finished. Needs no image. Fails when the chart does not fit the page.
+    pub fn testchart(&mut self) -> Result<(), JsError> {
+        Ok(self.inner.testchart()?)
+    }
+
     /// A run of the style `name` at the settings a switch to it would give, which shares the
     /// cache but leaves the session's style, settings, latest run and drawing alone. Fails for an
     /// unknown style or when no image is set.

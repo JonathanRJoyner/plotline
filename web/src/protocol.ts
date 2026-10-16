@@ -2,7 +2,7 @@
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
 import { describe, listInks, listPens, listStyles, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
-import { drive, macrotask } from "./driver";
+import { drive, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `settings` apply after `style`. */
@@ -66,6 +66,14 @@ export class Protocol {
       // The settings stay as they are: the page applies the value the run's end carries.
       fit: (metric: string, target: number) => this.start(() => s.fit(metric, target)),
       cancel: () => this.current?.cancel(),
+      // The calibration chart for the page and the first pen. The engine cancels the run, and the
+      // events a finished run posts follow the reply. A refusal changes nothing.
+      testchart: () => {
+        s.testchart();
+        const id = ++this.counter;
+        this.current = null;
+        this.go = () => postDone(s, id, this.post);
+      },
       preset: () => JSON.parse(s.preset()),
       loadPreset: (preset: unknown) => s.loadPreset(JSON.stringify(preset)),
       // A setup in the preset's shape over the current preset, so the format and version stay ours.

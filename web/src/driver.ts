@@ -1,7 +1,7 @@
 // The run loop of spec 2026-10-12-gui-design section 5: pulls frames from one engine run and
 // posts them as events, throttled, yielding so commands such as a new `start` get their turn.
 import type { Run, Session } from "../pkg/plotline_wasm.js";
-import type { EndEvent, Event, FrameEvent, Layer, ResultEvent } from "./events";
+import type { EndEvent, Event, FitResult, FrameEvent, Layer, ResultEvent } from "./events";
 
 export type Post = (event: Event, transfer: Transferable[]) => void;
 
@@ -27,7 +27,7 @@ export function macrotask(): Promise<void> {
 const buffers = (arrays: Array<ArrayBufferView | undefined>): Transferable[] =>
   arrays.flatMap((a) => (a ? [a.buffer as ArrayBuffer] : []));
 
-function postResult(session: Session, id: number, post: Post): void {
+export function postResult(session: Session, id: number, post: Post): void {
   const drawing = session.drawing();
   if (!drawing) return;
   try {
@@ -79,11 +79,22 @@ export async function drive(
     }
     const state = run.state() as EndEvent["state"];
     if (state === "done") postResult(session, id, post);
-    const stats = session.stats();
     const fit = run.result();
-    const lint = session.lint();
-    post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, fit: fit ? JSON.parse(fit) : null, lint: lint ? JSON.parse(lint) : [] }, []);
+    postEnd(session, id, post, state, run.error() ?? null, fit ? JSON.parse(fit) : null);
   } finally {
     run.free();
   }
+}
+
+function postEnd(session: Session, id: number, post: Post, state: EndEvent["state"], error: string | null, fit: FitResult | null): void {
+  const stats = session.stats();
+  const lint = session.lint();
+  post({ type: "end", id, state, error, stats: stats ? JSON.parse(stats) : null, fit, lint: lint ? JSON.parse(lint) : [] }, []);
+}
+
+// Posts the events of a run that is already done, such as the test chart's: `run`, `result` and `end`.
+export function postDone(session: Session, id: number, post: Post): void {
+  post({ type: "run", id }, []);
+  postResult(session, id, post);
+  postEnd(session, id, post, "done", null, null);
 }

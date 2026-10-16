@@ -147,6 +147,46 @@ test("cancel stops the current run", async () => {
   expect(posted.filter((m) => m.type === "end")).toEqual([expect.objectContaining({ id: 1, state: "cancelled" })]);
 });
 
+test("testchart posts the events of a finished run, and the next run replaces the chart", async () => {
+  const { posted, ok, ended } = setup();
+  const { state } = ok("testchart"); // no image is needed
+  expect(state.run).toEqual({ id: 1, state: "done", error: null });
+  expect(state.stats!.path_count).toBeGreaterThan(0);
+  expect(state.lint.map((f) => f.code)).toContain("overdraw");
+  expect(state.layers).toHaveLength(1);
+  await ended(1);
+  expect(posted.filter((m) => "type" in m).map((m) => m.type)).toEqual(["run", "result", "end"]);
+  expect(posted.find((m) => m.type === "end")).toEqual(expect.objectContaining({ id: 1, state: "done", fit: null }));
+  expect(ok("svg").value as string).toContain("<svg");
+  ok("setImage", ...image());
+  await ended(2);
+  expect(posted.some((m) => m.type === "result" && m.id === 2)).toBe(true);
+});
+
+test("a testchart in the middle of a run cancels it", async () => {
+  let sent = false;
+  const { posted, ok, ended } = setup((m, call) => { if (m.type === "frame" && !sent) { sent = true; expect(call("testchart").ok).toBe(true); } });
+  ok("setImage", ...image());
+  await ended(1);
+  expect(posted.find((m) => m.type === "end" && m.id === 1)).toEqual(expect.objectContaining({ state: "cancelled" }));
+  expect(posted.some((m) => m.type === "result" && m.id === 2)).toBe(true);
+  expect(posted.some((m) => m.type === "result" && m.id === 1)).toBe(false);
+});
+
+test("a test chart that does not fit is refused and the drawing stays", () => {
+  const { posted, call, ok } = setup();
+  ok("testchart");
+  const stats = ok("preset").state.stats;
+  ok("setCanvas", { width_mm: 74, height_mm: 105, margin_mm: 10, fit: "fit" });
+  ok("setPens", [{ name: "Fat", width_mm: 2, color: "#000000" }]);
+  const before = posted.length;
+  const refused = call("testchart");
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toContain("the page is too small for the test chart");
+  expect(posted.length).toBe(before + 1); // the refusal, and no run events
+  expect(ok("preset").state.stats).toEqual(stats);
+});
+
 test("listPens gives the bank", () => {
   const { ok } = setup();
   const pens = ok("listPens").value as Pen[];
