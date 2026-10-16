@@ -210,3 +210,27 @@ fn golden_grid_lint_matches_native() {
     let dark = all.iter().find(|f| f.code == "dark").unwrap();
     assert_eq!(dark.value, 0.015042735042735043);
 }
+#[wasm_bindgen_test]
+fn the_tone_match_and_the_response_match_native() {
+    // The same setup and literals are pinned in crates/core/src/session.rs on the native target.
+    use serde_json::json;
+    let drain = |s: &mut plotline_core::Session| {
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+    };
+    let mut s = plotline_core::Session::new(1 << 24);
+    s.set_image(plotline_core::synthetic::gradient(64, 48));
+    let canvas = plotline_core::Canvas::new(100.0, 75.0, 5.0, plotline_core::Fit::Fit).unwrap();
+    s.set_canvas(canvas);
+    s.set_style("waves").unwrap();
+    s.update("tone", &json!({"resolution": 64})).unwrap();
+    drain(&mut s);
+    let off = s.tone_match().unwrap();
+    assert_eq!(
+        (off.error, off.ssim),
+        (0.08399718265758667, 0.730502253480983)
+    );
+    s.update("tone", &json!({"response": "auto"})).unwrap();
+    drain(&mut s);
+    assert_eq!(s.tone_match().unwrap().error, 0.09068600548308096);
+}
