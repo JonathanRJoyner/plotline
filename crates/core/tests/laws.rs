@@ -30,7 +30,7 @@ use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
-use plotline_core::stages::tone::flatten;
+use plotline_core::stages::tone::{flatten, guided};
 use plotline_core::style::Style;
 use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session};
@@ -752,6 +752,25 @@ fn flattening_ignores_uniform_lighting() {
             Ok(())
         },
     );
+}
+
+#[test]
+fn smoothing_stays_within_the_tone_range() {
+    // The output averages mixes of a pixel and window means, so it never leaves the picture's range.
+    check("smooth", 256, (picture(), 1usize..=40), |(picture, r)| {
+        let image = picture.image();
+        let (w, h) = (image.width as usize, image.height as usize);
+        let lum = image.luminance();
+        let lo = lum.iter().copied().fold(f32::INFINITY, f32::min) - 1e-5;
+        let hi = lum.iter().copied().fold(f32::NEG_INFINITY, f32::max) + 1e-5;
+        for (i, q) in guided(&lum, w, h, r).iter().enumerate() {
+            prop_assert!(
+                (lo..=hi).contains(q),
+                "pixel {i} of {w} x {h} is {q}, outside {lo} to {hi} at r {r}"
+            );
+        }
+        Ok(())
+    });
 }
 
 /// The lint findings whose number is a share inked, which rises as the drawing improves; every

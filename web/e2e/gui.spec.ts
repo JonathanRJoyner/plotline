@@ -289,6 +289,19 @@ test("Flatten paper changes the drawing", async ({ page }) => {
   await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
 });
 
+test("Smooth, keep edges changes the drawing", async ({ page }) => {
+  const id = await pick(page, "contours", await sample(page));
+  const stats = await page.locator(".stats").textContent();
+  const image = page.locator("[data-tour=image-settings]");
+  await image.locator("summary", { hasText: /^Image$/ }).click();
+  await image.locator("summary", { hasText: /^Advanced$/ }).click();
+  const smooth = image.getByRole("spinbutton", { name: /^smooth, keep edges$/i });
+  await smooth.fill("1");
+  await smooth.blur();
+  await ran(page, id);
+  await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
+});
+
 test("the thumbnail grid picks a style", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);
