@@ -179,6 +179,20 @@ async def test_refused_setting_changes_nothing():
             assert (after["style"], after["settings"]) == (before["style"], before["settings"])
 
 
+async def test_a_new_style_keeps_changed_settings():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(8, 8))
+    async with Client(build_server(session)) as c:
+        changed = {"tone": {"resolution": 64}, "split": {"mode": "light_to_dark"}}
+        assert not (await call(c, "run", settings=changed)).is_error
+        assert not (await call(c, "run", style="waves")).is_error
+        after = data(await call(c, "get_session"))
+        assert after["style"] == "waves"
+        assert after["settings"]["tone"]["resolution"] == 64
+        assert after["settings"]["split"]["mode"] == "light_to_dark"
+        assert after["settings"]["tone"]["gamma"] == 1.9  # still at grid's default, so waves'
+
+
 async def test_run_without_an_image_is_an_error():
     async with Client(build_server(Session())) as c:
         r = await call(c, "run")

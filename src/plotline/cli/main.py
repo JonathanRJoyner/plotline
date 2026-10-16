@@ -229,9 +229,8 @@ def run(
         session.load_image(image)
         if preset is not None:
             session.load_preset(preset)
-        # A preset of the same style keeps its settings, which set_style would reset.
-        if session.style.name != style:
-            session.set_style(style)
+        # The preset's changed settings carry into STYLE where it has the same stages.
+        session.set_style(style)
         set_page(session, width, height, margin, fit)
         if pens:
             session.set_pens(pens)

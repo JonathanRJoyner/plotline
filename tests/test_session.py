@@ -86,7 +86,7 @@ def test_load_image_reads_a_file(tmp_path):
     assert s.image.shape == (4, 6, 3) and s.image.dtype == np.float32 and s.image.min() == 1.0
 
 
-def test_update_validates_and_set_style_resets():
+def test_update_validates_and_set_style_keeps_changes():
     s = Session()
     s.update("order", min_length_mm=1.5)
     assert s.settings["order"]["min_length_mm"] == 1.5
@@ -94,8 +94,10 @@ def test_update_validates_and_set_style_resets():
         s.update("order", min_length_mm="abc")
     with pytest.raises(ValueError, match="ghost"):
         s.update("ghost", x=1)
-    s.set_style("grid")
-    assert s.settings["order"]["min_length_mm"] == 0.0
+    # A changed value carries; one at grid's default takes the new style's default.
+    s.set_style("waves")
+    assert s.settings["order"]["min_length_mm"] == 1.5
+    assert s.settings["tone"]["gamma"] == 1.9
     with pytest.raises(ValueError):
         s.set_pens(())
 

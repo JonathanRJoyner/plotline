@@ -11,7 +11,7 @@ export type Step = { target?: string; title: string; text: string };
 export const STEPS: Step[] = [
   { title: "Welcome to plotline", text: "plotline turns an image into lines a pen plotter can draw. This tour shows where everything is. Tour in the toolbar opens it again." },
   { target: "image", title: "Open an image", text: "Open a PNG, JPEG or WebP, or drop or paste one anywhere on the page. Sample image opens a still life to try things on." },
-  { target: "style", title: "Pick a style", text: "Each style turns the image's tone into a different kind of mark. The line under the menu says what the chosen one does." },
+  { target: "style", title: "Pick a style", text: "Each style turns the image's tone into a different kind of mark. The line under the menu says what the chosen one does. A switch keeps the settings you changed wherever the new style has them, so the Voronoi styles reuse their points without placing them again." },
   { target: "settings", title: "Shape the drawing", text: "The style's own settings come first. Path order and Image, with the levels, gamma and blur, are collapsed below. A change reruns only the stages after it." },
   { target: "run", title: "Run it", text: "Run draws the image with these settings. Stop ends a run after its current step." },
   { target: "status", title: "Follow the run", text: "Each stage shows its progress here. Under it are the path count, the pen-down and pen-up lengths and an estimate of the plot time." },
