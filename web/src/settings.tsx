@@ -62,10 +62,19 @@ export function Settings({ stages, values, errors, help, part = "style", onChang
     if (controls.length === 0 && !errors[s.name]) return null;
     const field = (c: Control) => <Field c={c} value={values[s.name]?.[c.key] ?? c.default} help={help} set={(v) => onChange(s.name, c.key, v)} />;
     const advanced = controls.filter((c) => c.advanced);
+    // The tone stage's focus points have no control of their own; their count and a way to clear
+    // them stand above the radius and blur that go with them.
+    const points = s.name === "tone" ? ((values.tone?.focus as unknown[] | undefined)?.length ?? 0) : 0;
+    const count = points > 0 && (
+      <p class="focus-line">
+        {points} focus {points === 1 ? "point" : "points"}{" "}
+        <button type="button" onClick={() => onChange("tone", "focus", [])}>Clear</button>
+      </p>
+    );
     const body = (
       <>
         {errors[s.name] && <p class="error">{errors[s.name]}</p>}
-        {controls.filter((c) => !c.advanced).map(field)}
+        {controls.filter((c) => !c.advanced).flatMap((c) => (c.key === "focus_mm" ? [count, field(c)] : [field(c)]))}
         {advanced.length > 0 && <details><summary>Advanced</summary>{advanced.map(field)}</details>}
       </>
     );

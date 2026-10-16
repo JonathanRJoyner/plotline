@@ -228,6 +228,56 @@ test("Response auto corrects the tone map for the style", async ({ page }) => {
   await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
 });
 
+test("Focus marks points on the preview, a click on one removes it, and Undo brings it back", async ({ page }) => {
+  let id = await sample(page);
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  const rings = page.locator(".focus-rings .ring");
+  const count = page.locator(".focus-line");
+  await expect(rings).toHaveCount(0);
+  await expect(count).toHaveCount(0);
+  // Focus mode: a click on the drawn image, the middle of the page, marks a point there.
+  await page.locator("label.chip", { hasText: "Focus" }).click();
+  await page.locator(".preview canvas").click();
+  await expect(count).toContainText("1 focus point");
+  await expect(rings).toHaveCount(1);
+  id = await ran(page, id);
+  // A second point, off the first and away from its removal target, and the count says so.
+  const box = (await page.locator(".preview canvas").boundingBox())!;
+  await page.locator(".preview canvas").click({ position: { x: box.width / 2 + 120, y: box.height / 2 - 80 } });
+  await expect(count).toContainText("2 focus points");
+  await expect(rings).toHaveCount(2);
+  id = await ran(page, id);
+  // A click on a point removes it; Clear takes the rest.
+  await page.getByRole("button", { name: "Remove focus point 1" }).click();
+  await expect(count).toContainText("1 focus point");
+  await expect(rings).toHaveCount(1);
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Remove focus point 1" }).click();
+  await expect(rings).toHaveCount(0);
+  await expect(count).toHaveCount(0);
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(rings).toHaveCount(1);
+  await expect(count).toContainText("1 focus point");
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(rings).toHaveCount(0);
+  await ran(page, id);
+});
+
+test("Two quick clicks in Focus mode both land", async ({ page }) => {
+  const id = await sample(page);
+  await page.locator("label.chip", { hasText: "Focus" }).click();
+  const box = (await page.locator(".preview canvas").boundingBox())!;
+  const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+  // Sent together, so the second press arrives before the engine has answered the first.
+  await Promise.all([page.mouse.click(x - 100, y), page.mouse.click(x + 100, y), page.mouse.click(x, y + 150)]);
+  await expect(page.locator(".focus-rings .ring")).toHaveCount(3);
+  await ran(page, id);
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  await expect(page.locator(".focus-line")).toContainText("3 focus points");
+});
+
 test("Flatten paper changes the drawing", async ({ page }) => {
   const id = await pick(page, "ink", await sample(page));
   const stats = await page.locator(".stats").textContent();
@@ -477,6 +527,48 @@ test("HPGL exports one file with a pen for the layer, at the resolution in Setti
   await ran(page, 0);
   await page.getByRole("button", { name: "HPGL", exact: true }).click();
   await expect(page.getByText("plotter units per mm must be above 0 and at most 1000, not 2000")).toBeVisible();
+});
+
+test("a saved pen comes back from My pens after a reload, and exports as a file", async ({ page }) => {
+  await open(page);
+  const edit = () => page.getByRole("button", { name: "Edit pens" }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Pens", exact: true }) });
+  const mine = dialog.locator('[data-tour="library"]');
+  const name = dialog.getByLabel("Name");
+  const width = dialog.getByLabel("Line width");
+  await edit();
+  // Each change waits for the engine's reply, which the list shows, as one made on the stale list would undo the last.
+  const list = dialog.locator("ol.pens");
+  await name.fill("Fine red");
+  await name.blur();
+  await expect(list).toContainText("Fine red");
+  await width.fill("0.25");
+  await width.blur();
+  await expect(list).toContainText("0.25");
+  const red = dialog.getByRole("button", { name: "red", exact: true });
+  await red.click();
+  await expect(red).toHaveAttribute("aria-pressed", "true");
+  await mine.getByRole("button", { name: "Save this pen" }).click();
+  await expect(mine.getByRole("button", { name: /^Fine red/ })).toHaveCount(1);
+  await expect(mine.getByRole("button", { name: "Save this pen" })).toBeDisabled();
+  // A second pen takes the saved one's name and width from the list.
+  await dialog.getByRole("button", { name: "Add pen" }).click();
+  await expect(dialog.getByRole("heading", { name: "Pen 2" })).toBeVisible();
+  await expect(name).toHaveValue("Pen 2");
+  await mine.getByRole("button", { name: /^Fine red/ }).click();
+  await expect(name).toHaveValue("Fine red");
+  await expect(width).toHaveValue("0.25");
+  // Kept in the browser, so a reload keeps it.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await edit();
+  await expect(mine.getByRole("button", { name: /^Fine red/ })).toHaveCount(1);
+  const [file] = await Promise.all([page.waitForEvent("download"), mine.getByRole("button", { name: "Export" }).click()]);
+  expect(file.suggestedFilename()).toBe("plotline-pens.json");
+  const saved = JSON.parse(readFileSync(await file.path(), "utf8"));
+  expect(saved.format).toBe("plotline-pens");
+  expect(saved.pens).toHaveLength(1);
+  expect(saved.pens[0]).toMatchObject({ name: "Fine red", width_mm: 0.25 });
 });
 
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.
