@@ -642,11 +642,12 @@ def test_hpgl_needs_a_result_and_a_resolution_above_zero(tmp_path):
     with pytest.raises(RuntimeError, match="no drawing"):
         Session().export_hpgl(file)
     s = drawn()
-    for bad in (0, -1, float("nan"), float("inf")):
-        with pytest.raises(ValueError, match="above 0"):
+    for bad in (0, -1, 1000.5, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="above 0 and at most 1000"):
             s.hpgl(bad)
-        with pytest.raises(ValueError, match="above 0"):
+        with pytest.raises(ValueError, match="above 0 and at most 1000"):
             s.export_hpgl(file, bad)
+    assert s.hpgl(1000)
     assert not file.exists()
 
 

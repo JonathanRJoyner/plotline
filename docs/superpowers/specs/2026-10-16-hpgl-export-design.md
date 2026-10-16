@@ -26,7 +26,7 @@ SP0;
 - `IN;` initializes the plotter. Each layer `i` that has paths selects pen `i + 1` with `SP{i+1};`, and an empty layer writes nothing. At the end, `PU;` and `SP0;` lift the pen and put it away.
 - Each path is `PU x,y;` to its first vertex, then `PD` with the rest of its vertices as one comma-separated list. A path of one vertex, a dot, is `PD;` with no coordinates, which lowers the pen where it stands.
 - Coordinates are whole plotter units: `x = round(x_mm * units_per_mm)` and `y = round((page_height_mm - y_mm) * units_per_mm)`. HPGL's y axis points up from the page's lower-left corner, while plotline's points down from the top-left.
-- `units_per_mm` is the plotter's resolution. It defaults to 40, which is HPGL's plotter unit of 0.025 mm. A value that is not finite, or not above 0, is refused.
+- `units_per_mm` is the plotter's resolution. It defaults to 40, which is HPGL's plotter unit of 0.025 mm. A value that is not above 0 and at most 1000, or is not a number, is refused, because larger values saturate the coordinates.
 - One instruction goes on each line, and every line ends with `;`. The text is ASCII with LF line ends.
 - No velocity, force or plotter-specific instructions are written. Plotters differ, so a pen number above a plotter's carousel and coordinates past its hard-clip limits are the user's to check.
 
@@ -43,7 +43,7 @@ SP0;
 - **MCP.** `export` gains the format `"hpgl"` and a `units_per_mm` parameter, default 40, which only `hpgl` reads.
 - **wasm and GUI.**
   - wasm gets `Session.hpgl(unitsPerMm)`, and the worker protocol gets a method for it.
-  - The Export panel gains an HPGL button that downloads `drawing.hpgl`.
+  - The Export panel gains an HPGL button that downloads `plotline-<style>.hpgl`, named like the SVG and JSON exports.
   - The Settings dialog gains an "HPGL" section with "Plotter units per mm", default 40. It is kept in the browser's storage like the theme, wrapped in try/catch because storage may be missing.
   - The tour's export step mentions HPGL.
   - `web/e2e/gui.spec.ts` gains a flow: export HPGL and check that the download starts with `IN;` and contains `SP1;`.

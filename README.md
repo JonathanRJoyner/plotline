@@ -135,7 +135,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Fail when the plot lint finds a warning or an error | `--strict` |
 | Draw for a machine: its drawable area becomes the page | `--machine my-printer.json`, a machine or a preset that has one |
 | Write one G-code file per pen for the machine | `--gcode plots/` |
-| Write the drawing as one HPGL file, with a pen selected for each layer | `--hpgl drawing.hpgl`; `--hpgl-units 40` sets the plotter units per mm, 40 by default |
+| Write the drawing as one HPGL file, with a pen selected for each layer | `--hpgl drawing.hpgl`; `--hpgl-units 40` sets the plotter units per mm, 40 by default and at most 1000 |
 | Write a test chart for a pen, to plot and check spacings, dot sizes, passes and the plot time | `plotline testchart --out chart.svg --pen 'Fine:0.3:blue'`, with `--preview chart.png` for a picture |
 | Open the live preview locally | `plotline gui` |
 

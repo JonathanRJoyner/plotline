@@ -19,6 +19,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use plotline_core::cache::StageCache;
+use plotline_core::export::hpgl::MAX_UNITS_PER_MM;
 use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
 use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
@@ -1166,7 +1167,7 @@ fn hpgl_pairs(args: &str) -> Vec<[i64; 2]> {
 
 #[test]
 fn hpgl_stays_on_the_page_and_keeps_every_vertex() {
-    let units = prop_oneof![Just(40.0), 0.01..2000.0f64];
+    let units = prop_oneof![Just(40.0), 0.01..=MAX_UNITS_PER_MM];
     check("hpgl", 12, (case(all_styles()), units), |(c, units)| {
         let mut s = c.session();
         run(&mut s)?;

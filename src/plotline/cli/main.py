@@ -317,10 +317,10 @@ def echo_stats(session: Session) -> None:
 )
 @click.option(
     "--hpgl-units",
-    type=click.FloatRange(min=0, min_open=True),
+    type=click.FloatRange(min=0, min_open=True, max=1000),
     default=40.0,
     show_default=True,
-    help="Plotter units per mm in the HPGL file.",
+    help="Plotter units per mm in the HPGL file, above 0 and at most 1000.",
 )
 @fit_options
 @click.option(

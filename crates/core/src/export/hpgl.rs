@@ -16,11 +16,16 @@ use thiserror::Error;
 
 use crate::types::Drawing;
 
+/// The most plotter units to the millimetre that [`to_hpgl`] accepts, 25 times finer than HPGL's
+/// plotter unit of 0.025 mm. Past it a coordinate has no use on a plotter, and a far larger value
+/// would saturate the 64-bit coordinates.
+pub const MAX_UNITS_PER_MM: f64 = 1000.0;
+
 /// Why a drawing could not be written.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum HpglError {
-    /// The resolution was not a finite number above 0.
-    #[error("plotter units per mm must be a number above 0, not {0}")]
+    /// The resolution was not a number above 0 and at most [`MAX_UNITS_PER_MM`].
+    #[error("plotter units per mm must be above 0 and at most 1000, not {0}")]
     UnitsPerMm(f64),
 }
 
@@ -30,10 +35,11 @@ pub enum HpglError {
 /// The program is `IN;`, then for each layer that has paths `SP{n};` (pen `layer + 1`) and, for
 /// each path, `PU x,y;` to its first vertex and `PD` with the rest as one comma-separated list;
 /// then `PU;` and `SP0;`, which lift the pen and put it away. A one-vertex path is a dot: `PD;`
-/// with no coordinates lowers the pen where it stands. A resolution that is not finite, or not
-/// above 0, is refused.
+/// with no coordinates lowers the pen where it stands. A resolution that is not a number above 0
+/// and at most [`MAX_UNITS_PER_MM`] is refused.
 pub fn to_hpgl(d: &Drawing, units_per_mm: f64) -> Result<String, HpglError> {
-    if !(units_per_mm.is_finite() && units_per_mm > 0.0) {
+    // A NaN fails both comparisons, and an infinity the second.
+    if !(units_per_mm > 0.0 && units_per_mm <= MAX_UNITS_PER_MM) {
         return Err(HpglError::UnitsPerMm(units_per_mm));
     }
     let h = d.canvas.height_mm;
@@ -142,11 +148,29 @@ mod tests {
     }
 
     #[test]
-    fn a_resolution_that_is_not_above_zero_is_refused() {
+    fn a_resolution_outside_zero_to_a_thousand_is_refused() {
         let d = drawing_100(vec![vec![[1.0, 1.0]]], 0.3, "#000000");
-        for bad in [0.0, -40.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for bad in [
+            0.0,
+            -40.0,
+            1000.5,
+            1e300,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
             let err = to_hpgl(&d, bad).unwrap_err();
-            assert!(err.to_string().contains("above 0"), "{bad}: {err}");
+            assert!(
+                err.to_string().contains("above 0 and at most 1000"),
+                "{bad}: {err}"
+            );
         }
+        let err = to_hpgl(&d, 1000.5).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "plotter units per mm must be above 0 and at most 1000, not 1000.5"
+        );
+        assert!(to_hpgl(&d, 1000.0).unwrap().contains("PU1000,99000;\n"));
+        assert!(to_hpgl(&d, 0.001).is_ok());
     }
 }

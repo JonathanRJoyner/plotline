@@ -465,7 +465,7 @@ export function App() {
 
   async function exportHpgl() {
     const text = await call<string>("hpgl", [hpglUnits]);
-    if (text !== undefined) download("drawing.hpgl", text, "text/plain");
+    if (text !== undefined) download(`plotline-${state?.style ?? "drawing"}.hpgl`, text, "text/plain");
   }
 
   async function exportGcode(layer: number) {

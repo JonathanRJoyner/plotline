@@ -166,8 +166,8 @@ impl Session {
     }
 
     /// The latest result as one HPGL program with `units_per_mm` plotter units to the millimetre.
-    /// Raises `RuntimeError` without a result and `ValueError` for a resolution that is not a
-    /// number above 0.
+    /// Raises `RuntimeError` without a result and `ValueError` for a resolution that is not above
+    /// 0 and at most 1000.
     fn hpgl(&self, units_per_mm: f64) -> PyResult<String> {
         self.inner.hpgl(units_per_mm).map_err(session_error)
     }

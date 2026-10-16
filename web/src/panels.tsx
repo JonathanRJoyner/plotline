@@ -634,7 +634,7 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
             }}
           />
         </label>
-        <p class="help">The resolution of the HPGL file, which needs no machine. HPGL's plotter unit is 0.025 mm, so 40 to the mm, which most plotters use; change it only if your plotter's manual gives another. It is kept in this browser.</p>
+        <p class="help">The resolution of the HPGL file, which needs no machine. HPGL's plotter unit is 0.025 mm, so 40 to the mm, which most plotters use; change it only if your plotter's manual gives another, up to 1000. It is kept in this browser.</p>
       </>
     ),
     "Plot time": (

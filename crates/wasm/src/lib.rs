@@ -127,7 +127,7 @@ impl Session {
     }
 
     /// The last finished drawing as one HPGL program with `unitsPerMm` plotter units to the
-    /// millimetre.
+    /// millimetre, above 0 and at most 1000.
     pub fn hpgl(&self, units_per_mm: f64) -> Result<String, JsError> {
         Ok(self.inner.hpgl(units_per_mm)?)
     }

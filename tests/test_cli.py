@@ -448,7 +448,7 @@ def test_hpgl_is_written_with_the_given_resolution(tmp_path, image):
     # A quarter of the units to the mm, so the first point is a quarter as far from the corner.
     assert all(abs(a - 4 * b) <= 2 for a, b in zip(first, coarser, strict=True))
     out.unlink()
-    for bad in ("0", "-5"):
+    for bad in ("0", "-5", "1000.5"):
         r = coarse(tmp_path, image, "--hpgl", str(out), "--hpgl-units", bad)
         assert r.exit_code == 2 and "--hpgl-units" in r.output
     assert not out.exists()

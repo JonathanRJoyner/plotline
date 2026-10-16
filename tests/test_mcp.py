@@ -193,9 +193,12 @@ async def test_export_hpgl(tmp_path):
         assert not r.is_error, text(r)
         assert out.read_text(encoding="ascii") == session.hpgl(10)
 
-        r = await call(c, "export", path=str(out), format="hpgl", units_per_mm=0, overwrite=True)
-        assert r.is_error
-        assert "above 0" in text(r)
+        for bad in (0, 1000.5):
+            r = await call(
+                c, "export", path=str(out), format="hpgl", units_per_mm=bad, overwrite=True
+            )
+            assert r.is_error
+            assert "above 0 and at most 1000" in text(r)
 
 
 async def test_file_paths(tmp_path, monkeypatch):

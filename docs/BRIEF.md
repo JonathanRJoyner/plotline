@@ -102,7 +102,7 @@ The session holds the state: the image, canvas and pens, the chosen style and se
 
 ### 6.3 Front ends
 
-- **CLI:** `plotline run <style> image.png --out drawing.svg [--look NAME] --set stage.key=value … [--strict]` (with `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots` to meet a budget, and `--machine FILE --gcode DIR` for G-code), `plotline styles`, `plotline describe <style>`, `plotline analyse IMAGE`, `plotline testchart --out chart.svg [--pen NAME:WIDTH_MM:COLOR] [--machine FILE]` (a calibration chart for the first pen, §14 "Test chart"), `plotline gui`, `plotline mcp`.
+- **CLI:** `plotline run <style> image.png --out drawing.svg [--look NAME] --set stage.key=value … [--strict]` (with `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots` to meet a budget, `--machine FILE --gcode DIR` for G-code, and `--hpgl FILE` for HPGL), `plotline styles`, `plotline describe <style>`, `plotline analyse IMAGE`, `plotline testchart --out chart.svg [--pen NAME:WIDTH_MM:COLOR] [--machine FILE]` (a calibration chart for the first pen, §14 "Test chart"), `plotline gui`, `plotline mcp`.
 - **GUI:** see §8.
 - **MCP:** see §9.
 - **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. The generic G-code writer is the first (§14), and an HPGL writer, which writes the whole drawing as one file for plotters that read that format ([HPGL export](decisions/2026-10-16-hpgl-export.md)), came next; which toolchains follow is open (§12).
@@ -174,7 +174,7 @@ The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D was chosen o
 - `get_session()`, which returns the style, its look, settings, page, pens, machine, image size, run state and stats
 - `analyse_image()`, which returns the loaded image's statistics and suggested changes; each suggestion's patch applies with `run(style=..., settings=...)` or `set_page`, and its `pens` with `set_pens`
 - `load_preset(path)`, which reads a preset, an exported SVG or an exported JSON drawing ([embedded presets](decisions/2026-10-16-embedded-presets.md)) and returns the style and the warnings for any settings it dropped
-- `export(path, format, overwrite)`, where the format is `svg`, `json`, `png`, `preset` or `gcode`; for `gcode` the path is a folder that gets one file per pen
+- `export(path, format, overwrite, units_per_mm)`, where the format is `svg`, `json`, `png`, `preset`, `gcode` or `hpgl`; for `gcode` the path is a folder that gets one file per pen; `units_per_mm` is the plotter units to the millimetre of `hpgl`, 40 by default and at most 1000, and no other format reads it
 
 Rules: no algorithm code in the MCP layer, every tool maps to a session method, and previews are returned as images so the assistant can judge the result visually.
 

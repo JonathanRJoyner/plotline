@@ -551,7 +551,7 @@ impl Session {
 
     /// The last finished drawing as one HPGL program with `units_per_mm` plotter units to the
     /// millimetre; see [`hpgl::to_hpgl`]. Fails without a drawing and for a resolution that is not
-    /// finite and above 0.
+    /// above 0 and at most [`hpgl::MAX_UNITS_PER_MM`].
     pub fn hpgl(&self, units_per_mm: f64) -> Result<String, SessionError> {
         let d = self.drawing().ok_or(SessionError::NoDrawing)?;
         Ok(hpgl::to_hpgl(&d, units_per_mm)?)

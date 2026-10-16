@@ -338,6 +338,7 @@ test("a machine lifted by G-code lines writes them, with long moves cut", async 
 test("HPGL exports one file with a pen for the layer, at the resolution in Settings", async ({ page }) => {
   await sample(page);
   const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "HPGL", exact: true }).click()]);
+  expect(file.suggestedFilename()).toMatch(/^plotline-[\w-]+\.hpgl$/);
   const text = readFileSync(await file.path(), "utf8");
   expect(text.startsWith("IN;\n")).toBe(true);
   expect(text).toContain("SP1;");
@@ -364,6 +365,15 @@ test("HPGL exports one file with a pen for the layer, at the resolution in Setti
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await dialog.getByRole("button", { name: "HPGL", exact: true }).click();
   await expect(units).toHaveValue("10");
+  // The engine refuses more than 1000, and the page shows its message instead of a download. The
+  // reload left no image, so the sample is drawn again first.
+  await units.fill("2000");
+  await units.blur();
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Sample image" }).click();
+  await ran(page, 0);
+  await page.getByRole("button", { name: "HPGL", exact: true }).click();
+  await expect(page.getByText("plotter units per mm must be above 0 and at most 1000, not 2000")).toBeVisible();
 });
 
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.
