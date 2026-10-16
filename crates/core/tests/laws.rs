@@ -944,3 +944,54 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         Ok(())
     });
 }
+
+#[test]
+fn a_test_chart_is_made_on_the_page_or_refused_with_a_message() {
+    check("testchart", 48, (page(), pens()), |(pg, pens)| {
+        let pens: Vec<Pen> = (pens.iter().enumerate())
+            .map(|(i, (width, [r, g, b]))| {
+                Pen::new(
+                    &format!("Pen {i}"),
+                    *width,
+                    &format!("#{r:02x}{g:02x}{b:02x}"),
+                )
+                .unwrap()
+            })
+            .collect();
+        let new = || {
+            let mut s = Session::new(1 << 20);
+            s.set_canvas(pg.canvas());
+            s.set_pens(pens.clone()).unwrap();
+            s
+        };
+        let mut s = new();
+        match s.testchart() {
+            Err(e) => {
+                let message = e.to_string();
+                prop_assert!(
+                    message.contains("too small") || message.contains("too thin"),
+                    "{message}"
+                );
+                prop_assert!(s.drawing().is_none() && s.state() == RunState::Idle);
+            }
+            Ok(()) => {
+                prop_assert_eq!(s.state(), RunState::Done);
+                let d = s.drawing().unwrap();
+                prop_assert_eq!(d.layers.len(), 1);
+                prop_assert_eq!(&d.layers[0].pen, &pens[0]);
+                let [x, y, w, h] = d.canvas.drawing_rect();
+                for p in d.layers[0].paths.coords() {
+                    let inside = x - 1e-9 <= p[0]
+                        && p[0] <= x + w + 1e-9
+                        && y - 1e-9 <= p[1]
+                        && p[1] <= y + h + 1e-9;
+                    prop_assert!(inside, "{p:?} is off {:?}", [x, y, w, h]);
+                }
+                let mut t = new();
+                t.testchart().unwrap();
+                prop_assert_eq!(digest(&d), digest(&t.drawing().unwrap()));
+            }
+        }
+        Ok(())
+    });
+}

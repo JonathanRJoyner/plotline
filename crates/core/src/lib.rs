@@ -23,6 +23,8 @@ pub mod stages;
 pub mod stats;
 pub mod style;
 pub mod synthetic;
+pub mod testchart;
+pub mod text;
 pub mod types;
 
 pub use cache::{CacheStats, DEFAULT_CACHE_BYTES};

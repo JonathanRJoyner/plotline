@@ -33,6 +33,7 @@ use crate::settings::{merge, validate, SettingsError};
 use crate::stage::Artifact;
 use crate::stats::{self, Speeds, Stats};
 use crate::style::{Style, StyleError};
+use crate::testchart;
 use crate::types::{Canvas, Drawing, Fit, Image, Pen, TypeError};
 
 /// Why a session refused a change or could not start a run; the message is shown to users.
@@ -84,6 +85,9 @@ pub enum SessionError {
     /// A fit was refused; the message says why.
     #[error("{0}")]
     Fit(String),
+    /// The test chart could not be made; the message says why.
+    #[error("{0}")]
+    Testchart(String),
 }
 
 /// One working context: an image, a canvas, pens, a style with its settings, the plot speeds, the
@@ -340,6 +344,19 @@ impl Session {
             metric,
             target,
         ))
+    }
+
+    /// Cancel the latest run and make the [test chart](testchart) for the canvas and the first pen
+    /// the latest drawing, in state [`RunState::Done`]. It needs no image. Fails, changing nothing,
+    /// when the chart does not fit the page or the pen is too thin.
+    pub fn testchart(&mut self) -> Result<(), SessionError> {
+        let drawing =
+            testchart::chart(&self.canvas, &self.pens[0]).map_err(SessionError::Testchart)?;
+        self.claim();
+        let mut shared = self.shared.lock().unwrap();
+        shared.drawing = Some(Arc::new(drawing));
+        shared.state = RunState::Done;
+        Ok(())
     }
 
     /// Cancel the latest run, give the next one a fresh cancel flag, and show the slot as running
@@ -780,6 +797,55 @@ mod tests {
         while latest.next_frame().is_some() {}
         assert_eq!(s.state(), RunState::Done); // the trial did not cancel it
     }
+    #[test]
+    fn the_test_chart_becomes_the_drawing() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.drawing().is_none());
+        s.testchart().unwrap(); // no image is needed
+        assert_eq!(s.state(), RunState::Done);
+        assert!(s.error().is_none());
+        assert!(s.svg().unwrap().starts_with("<svg"));
+        assert!(s.stats().unwrap().path_count > 0);
+        // The PASSES patches are drawn over by design.
+        let codes: Vec<&str> = s.lint().unwrap().iter().map(|f| f.code).collect();
+        assert!(codes.contains(&"overdraw"), "{codes:?}");
+    }
+    #[test]
+    fn a_refused_test_chart_keeps_the_old_drawing() {
+        let mut s = Session::new(1 << 20);
+        s.testchart().unwrap();
+        let before = s.drawing().unwrap();
+        s.set_image(gradient(8, 8));
+        s.set_style("_slow").unwrap();
+        s.update("b", &json!({"frames": 3, "delay_ms": 0})).unwrap();
+        let mut run = s.start().unwrap();
+        s.set_canvas(Canvas::new(74.0, 105.0, 10.0, Fit::Fit).unwrap());
+        s.set_pens(vec![Pen::new("fat", 2.0, "#000000").unwrap()])
+            .unwrap();
+        let e = s.testchart().unwrap_err();
+        assert!(matches!(e, SessionError::Testchart(_)));
+        assert!(e.to_string().contains("too small"), "{e}");
+        assert!(Arc::ptr_eq(&s.drawing().unwrap(), &before));
+        // The refusal did not claim the slot, so the run it would have cancelled still runs.
+        assert_eq!(s.state(), RunState::Running);
+        while run.next_frame().is_some() {}
+        assert_eq!(s.state(), RunState::Done);
+    }
+    #[test]
+    fn a_test_chart_cancels_the_latest_run() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(gradient(8, 8));
+        s.set_style("_slow").unwrap();
+        s.update("b", &json!({"frames": 1000, "delay_ms": 0}))
+            .unwrap();
+        let mut run = s.start().unwrap();
+        run.next_frame();
+        s.testchart().unwrap();
+        assert!(run.next_frame().is_none());
+        assert_eq!(run.state(), RunState::Cancelled);
+        assert_eq!(s.state(), RunState::Done);
+    }
+
     #[test]
     fn preset_round_trip_and_warnings() {
         let mut s = Session::new(1 << 20);
