@@ -137,10 +137,22 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "used only when levels is auto, which is off by default",
     ),
     (
+        "scribble",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
         "line",
         "order",
         "min_length_mm",
         "the one line runs through every point, far longer than the 5 mm it is tested at",
+    ),
+    (
+        "scribble",
+        "order",
+        "min_length_mm",
+        "the one scribble runs along the line through every point, far longer than the 5 mm it is tested at",
     ),
     (
         "sketch",

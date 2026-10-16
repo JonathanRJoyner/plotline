@@ -1,4 +1,4 @@
-//! Golden files: the grid and stipple styles' output on small synthetic images, compared to files
+//! Golden files: the grid, stipple and scribble styles' output on small synthetic images, compared to files
 //! in `crates/core/golden`.
 //!
 //! Only the coordinates are compared with a tolerance (1e-3 mm). Everything else must match
@@ -87,6 +87,17 @@ fn styles_match_golden_files() {
                 "tone": {"resolution": 64},
                 "voronoi": {"count": 300, "iterations": 10},
                 "stipple": {"shape": "point"}
+            }),
+        ),
+        (
+            "scribble_gradient",
+            "scribble",
+            gradient(64, 48),
+            // Few points and wide spacings keep the file small; it pins the loops on the tour.
+            json!({
+                "tone": {"resolution": 64},
+                "voronoi": {"count": 100, "iterations": 10},
+                "scribble": {"radius_mm": 0.2, "white_radius_mm": 0.3, "spacing_mm": 10.0, "white_spacing_mm": 20.0, "flatten": 0.5, "tilt_deg": 30.0}
             }),
         ),
     ];
