@@ -8,9 +8,9 @@ import { Engine } from "./engine";
 import type { BankPen, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
 import { History, setupOf } from "./history";
-import { ExportPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, StylesDialog, SuggestionsPanel, type Thumb } from "./panels";
+import { ExportPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, StylesDialog, SuggestionsPanel, type Thumb } from "./panels";
 import { Preview } from "./preview";
-import type { State } from "./protocol";
+import type { Patch, State } from "./protocol";
 import { Settings } from "./settings";
 import { firstVisit, Tour } from "./tour";
 import { zoomPercent, type View } from "./view";
@@ -85,10 +85,10 @@ function ThemeButton() {
   return <button type="button" class="icon" title={label} aria-label={label} onClick={next}><Icon /></button>;
 }
 
-type Status =Pick<State, "run" | "stats" | "layers">;
+type Status = Pick<State, "run" | "stats" | "layers" | "lint">;
 
-// The run state, stats and layers, which both replies and run events change, for the parts that
-// show them.
+// The run state, stats, layers and lint findings, which both replies and run events change, for
+// the parts that show them.
 class StatusStore {
   readonly subs = new Set<(s: Status) => void>();
   constructor(public value: Status) {}
@@ -135,12 +135,13 @@ type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "r
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
   onSettings: () => void; onTour: () => void; onUndo?: () => void; onRedo?: () => void;
+  onApply: (patch: Patch) => void; lintError?: string;
 };
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, ...preview }: RunViewProps) {
-  const { run, stats } = useStatus(status);
+function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onApply, lintError, ...preview }: RunViewProps) {
+  const { run, stats, lint } = useStatus(status);
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
   const [result, setResult] = useState<ResultEvent | null>(null);
@@ -173,7 +174,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
         setResult(e);
         status.set({ ...status.value, layers: e.layers.map((l) => l.pen) });
       } else {
-        status.set({ run: { id: e.id, state: e.state, error: e.error }, stats: e.stats, layers: status.value.layers });
+        status.set({ run: { id: e.id, state: e.state, error: e.error }, stats: e.stats, layers: status.value.layers, lint: e.lint });
       }
     };
   }, []);
@@ -235,6 +236,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
       <footer data-tour="status">
         <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
         <StatsPanel stats={stats} />
+        <LintList findings={lint} error={lintError} onApply={onApply} />
       </footer>
     </>
   );
@@ -251,7 +253,7 @@ export function App() {
   const [bank, setBank] = useState<BankPen[]>([]);
   const [inks, setInks] = useState<Ink[]>([]);
   const [state, setState] = useState<State | null>(null);
-  const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [] }));
+  const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [], lint: [] }));
   const [stages, setStages] = useState<Stage[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({}); // per stage; "" for the rest
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -273,7 +275,7 @@ export function App() {
   const take = (s: State) => {
     setState(s);
     history.see(setupOf(s), restoring.current);
-    status.set({ run: s.run, stats: s.stats, layers: s.layers });
+    status.set({ run: s.run, stats: s.stats, layers: s.layers, lint: s.lint });
     clearTimeout(save.current);
     save.current = setTimeout(() => engine.call("preset").then((r) => remember(JSON.stringify(r.value)), () => {}), 500);
   };
@@ -465,13 +467,14 @@ export function App() {
           onTour={() => setTourOpens((n) => n + 1)}
           onUndo={history.past.length > 0 ? () => restore(history.undo()) : undefined}
           onRedo={history.future.length > 0 ? () => restore(history.redo()) : undefined}
+          onApply={(patch) => call("apply", [patch], "lint")} lintError={errors.lint}
         />
       </main>
       <aside>
         {state.suggestions.length > 0 && <SuggestionsPanel suggestions={state.suggestions} error={errors.suggestions} onApply={(patch) => call("apply", [patch], "suggestions")} />}
         <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
         <PensPanel
-          pens={state.pens} hidden={hidden} error={errors.pens} mode={settings.split?.mode as string | undefined}
+          pens={state.pens} hidden={hidden} error={errors.pens}
           onEdit={() => {
             setErrors((es) => ({ ...es, pens: "" })); // as for the settings dialog
             setPensOpens((n) => n + 1);

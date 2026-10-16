@@ -210,6 +210,16 @@ summary:hover { color: var(--text); }
 .suggestions li + li { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .suggestions p { margin: 0 0 6px; }
 .suggestions button { margin: 0; }
+/* The lint findings under the stats: the severity as a small label before each message, the
+   Apply button at the row's end, and a scroll past a fifth of the window so the preview keeps
+   its room. */
+.lint { max-height: 20vh; margin-top: 6px; overflow-y: auto; }
+.lint li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lint li + li { margin-top: 4px; padding-top: 4px; }
+.lint p { margin: 0; }
+.lint button { flex: none; }
+.lint .severity { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.lint [data-severity="error"] .severity { color: var(--danger); }
 
 /* The page: two columns of label over control. */
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }

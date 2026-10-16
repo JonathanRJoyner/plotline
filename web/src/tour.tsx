@@ -18,6 +18,7 @@ export const STEPS: Step[] = [
   { target: "run", title: "Run it", text: "Run draws the image with these settings. Stop ends a run after its current step." },
   { target: "undo", title: "Undo a change", text: "Undo and Redo step back and forth through changes to the style, its settings, the page and the pens, so trying something costs nothing. Ctrl+Z and Ctrl+Shift+Z do the same, except while you type in a field." },
   { target: "status", title: "Follow the run", text: "Each stage shows its progress here. Under it are the path count, the pen-down and pen-up lengths and an estimate of the plot time." },
+  { target: "lint", title: "Check the plot", text: "After each run plotline checks the drawing for trouble on paper: marks drawn over each other, specks, many pen lifts, a drawing too light for the image's darks, marks off the page. Apply changes the setting that fixes one." },
   { target: "preview", title: "Look closely", text: "The preview draws every mark at the pen's real width and colour. Drag to pan and scroll to zoom. With the preview focused, the arrow keys pan, plus and minus zoom and 0 fits the page." },
   { target: "view", title: "Check the drawing", text: "Source shows the image under the drawing. Travel shows the pen-up moves between paths. Fit shows the whole page again." },
   { target: "page", title: "Set the page", text: "The paper size, orientation and margin. Fit keeps the whole image on the page; fill covers the drawing area and crops the rest." },

@@ -79,7 +79,8 @@ export async function drive(
     const state = run.state() as EndEvent["state"];
     if (state === "done") postResult(session, id, post);
     const stats = session.stats();
-    post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null }, []);
+    const lint = session.lint();
+    post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, lint: lint ? JSON.parse(lint) : [] }, []);
   } finally {
     run.free();
   }

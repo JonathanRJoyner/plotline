@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenL
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
-import type { Area, BankPen, Canvas, Ink, Machine, Pen, Stats } from "./events";
+import type { Area, BankPen, Canvas, Finding, Ink, Machine, Pen, Stats } from "./events";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 
 const SIZES: [string, number, number][] = [
@@ -84,15 +84,13 @@ export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions:
 
 type PensProps = {
   pens: Pen[]; hidden: Set<number>; error?: string;
-  // The Pen use setting as the page shows it; unset means one pen.
-  mode?: string;
   onEdit: () => void; onToggle: (index: number) => void;
   // Shown right after the pen list: the Pen use setting.
   children?: ComponentChildren;
 };
 
 // The pens as a short list with their preview toggles; they are edited in the pens dialog.
-export function PensPanel({ pens, hidden, error, mode, onEdit, onToggle, children }: PensProps): JSX.Element {
+export function PensPanel({ pens, hidden, error, onEdit, onToggle, children }: PensProps): JSX.Element {
   return (
     <fieldset data-tour="pens">
       <legend>Pens</legend>
@@ -106,7 +104,6 @@ export function PensPanel({ pens, hidden, error, mode, onEdit, onToggle, childre
       ))}
       {error && <p class="error">{error}</p>}
       {children}
-      {(mode ?? "one_pen") === "one_pen" && pens.length > 1 && <p class="help">Pen use is set to one pen, so only the first pen draws.</p>}
       {hidden.size > 0 && <p class="help">A hidden pen is only hidden in the preview: it still exports.</p>}
       <button type="button" onClick={onEdit}><PenLine /> Edit pens</button>
     </fieldset>
@@ -261,14 +258,36 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
 export function StatsPanel({ stats }: { stats: Stats | null }): JSX.Element {
   const t = Math.round(stats?.estimated_seconds ?? 0);
   if (!stats) return <p class="stats">No drawing yet</p>;
-  if (stats.path_count === 0) {
-    return <p class="stats">No marks at these settings. Try a lower threshold, or the black, white and gamma settings under Image.</p>;
-  }
+  // The plot lint's empty finding says what to try.
+  if (stats.path_count === 0) return <p class="stats">No marks at these settings.</p>;
   return (
     <p class="stats">
       {stats.path_count} paths · pen down {stats.pen_down_mm.toFixed(1)} mm · pen up {stats.pen_up_mm.toFixed(1)} mm
       · about {Math.floor(t / 60)} min {t % 60} s to plot
     </p>
+  );
+}
+
+// The plot lint's findings for the last drawing, each with an Apply button when a setting fixes it.
+export function LintList({ findings, error, onApply }: { findings: Finding[]; error?: string; onApply: (patch: Patch) => void }): JSX.Element {
+  return (
+    <div data-tour="lint">
+      {findings.length > 0 && (
+        <ul class="suggestions lint">
+          {findings.map((f) => {
+            const p = f.patch;
+            // Keyed as the suggestions are: a code appears at most once.
+            return (
+              <li key={f.code} data-severity={f.severity}>
+                <p><span class="severity">{f.severity}</span> {f.message}</p>
+                {p && <button type="button" aria-label={`Apply: ${f.message}`} onClick={() => onApply(p)}><Check /> Apply</button>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {error && <p class="error">{error}</p>}
+    </div>
   );
 }
 
