@@ -48,13 +48,13 @@ function postResult(session: Session, id: number, post: Post): void {
 }
 
 // Posts `run`, every throttled `frame`, the `result` when the run is done, and one `end`, which
-// carries what a fit chose.
+// carries the tone match and what a fit chose or a search found, as `kind` says the run is.
 // Frees the run on every path. A later `session.start()` ends this loop with `cancelled`.
 export async function drive(
   session: Session, run: Run, id: number, post: Post,
-  opts: { frameMs?: number; yieldMs?: number; now?: () => number; yieldFn?: () => Promise<void> } = {},
+  opts: { frameMs?: number; yieldMs?: number; now?: () => number; yieldFn?: () => Promise<void>; kind?: "run" | "fit" | "optimize" } = {},
 ): Promise<void> {
-  const { frameMs = 33, yieldMs = 50, now = () => performance.now(), yieldFn = macrotask } = opts;
+  const { frameMs = 33, yieldMs = 50, now = () => performance.now(), yieldFn = macrotask, kind = "run" } = opts;
   try {
     post({ type: "run", id }, []);
     let lastPost = -Infinity;
@@ -80,9 +80,14 @@ export async function drive(
     const state = run.state() as EndEvent["state"];
     if (state === "done") postResult(session, id, post);
     const stats = session.stats();
-    const fit = run.result();
+    const found = run.result();
+    const tone = session.toneMatch();
     const lint = session.lint();
-    post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, fit: fit ? JSON.parse(fit) : null, lint: lint ? JSON.parse(lint) : [] }, []);
+    post({
+      type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, tone: tone ? JSON.parse(tone) : null,
+      fit: kind === "fit" && found ? JSON.parse(found) : null, optimum: kind === "optimize" && found ? JSON.parse(found) : null,
+      lint: lint ? JSON.parse(lint) : [],
+    }, []);
   } finally {
     run.free();
   }

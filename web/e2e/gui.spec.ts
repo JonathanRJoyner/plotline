@@ -130,6 +130,39 @@ test("a plot lint finding's Apply clears it", async ({ page }) => {
   await expect(apply).toHaveCount(0);
 });
 
+test("the stats show the tone match", async ({ page }) => {
+  await sample(page);
+  await expect(page.locator(".stats")).toContainText(/tone error \d\.\d{3} · SSIM -?\d\.\d{2}/);
+});
+
+test("Optimize suggests a spacing and changes nothing until Apply", async ({ page }) => {
+  test.setTimeout(120_000);
+  const id = await pick(page, "hatch", await sample(page));
+  const spacing = page.getByRole("spinbutton", { name: /^spacing( mm)?$/i });
+  const before = await spacing.inputValue();
+  await page.getByRole("button", { name: "Optimize" }).click();
+  // The search is a run of its own, which ends with the suggestion.
+  const searched = await ran(page, id);
+  const found = page.locator("form.fit span");
+  await expect(found).toContainText("follows the image's tones best");
+  await expect(spacing).toHaveValue(before);
+  // The still life's best hatch spacing is wider than the default (brief §14, "Optimize").
+  const [, value] = /^Spacing at ([\d.]+) mm follows/.exec((await found.textContent()) ?? "") ?? [];
+  expect(Number(value)).toBeGreaterThan(Number(before));
+  await page.getByRole("button", { name: /^Apply: Spacing at/ }).click();
+  await ran(page, searched);
+  await expect(spacing).toHaveValue(value);
+});
+
+test("Response auto corrects the tone map for the style", async ({ page }) => {
+  const id = await pick(page, "hatch", await sample(page));
+  const stats = await page.locator(".stats").textContent();
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  await page.getByRole("combobox", { name: /^response$/i }).selectOption("auto");
+  await ran(page, id);
+  await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
+});
+
 test("the thumbnail grid picks a style", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);

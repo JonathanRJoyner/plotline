@@ -3,7 +3,7 @@
 // `worker.ts` only connects it to `self`.
 import { describe, listInks, listPens, listStyles, presetFromText, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
 import { drive, macrotask } from "./driver";
-import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent } from "./events";
+import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `settings` apply after `style`. */
 export type Patch = { style?: string; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
@@ -19,6 +19,8 @@ export type State = {
   suggestions: Suggestion[];
   /** The plot lint's findings for the last drawing, from the current settings; empty without one. */
   lint: Finding[];
+  /** How the last drawing's tones follow its tone map; null without one or with nothing to compare. */
+  tone: ToneMatch | null;
 };
 export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
@@ -64,7 +66,9 @@ export class Protocol {
       setSpeeds: (speeds: Speeds) => s.setSpeeds(JSON.stringify(speeds)),
       run: () => this.start(),
       // The settings stay as they are: the page applies the value the run's end carries.
-      fit: (metric: string, target: number) => this.start(() => s.fit(metric, target)),
+      fit: (metric: string, target: number) => this.start(() => s.fit(metric, target), "fit"),
+      // The settings stay as they are, and the page only offers what the search found.
+      optimize: (metric?: string, target?: number) => this.start(() => s.optimize(metric ?? null, target ?? null), "optimize"),
       cancel: () => this.current?.cancel(),
       preset: () => JSON.parse(s.preset()),
       loadPreset: (preset: unknown) => s.loadPreset(JSON.stringify(preset)),
@@ -101,13 +105,13 @@ export class Protocol {
   // Starts a run; `handle` lets it go after the reply, which reports it running. `drive` would
   // finish a small drawing before its first await. `drive` posts the run's events and frees it,
   // and the catch gives it its one `end` even if it throws.
-  private start(begin = () => this.session.start()): void {
+  private start(begin = () => this.session.start(), kind: "run" | "fit" | "optimize" = "run"): void {
     const run = begin();
     const id = ++this.counter;
     this.current = run;
     this.go = () => {
-      drive(this.session, run, id, this.post)
-        .catch((e) => this.post({ type: "end", id, state: "error", error: message(e), stats: null, lint: [] }, []))
+      drive(this.session, run, id, this.post, { kind })
+        .catch((e) => this.post({ type: "end", id, state: "error", error: message(e), stats: null, tone: null, lint: [] }, []))
         .finally(() => { if (this.current === run) this.current = null; }); // `drive` freed it
     };
   }
@@ -159,10 +163,12 @@ export class Protocol {
     }
     const analysis = s.analysis();
     const lint = s.lint();
+    const tone = s.toneMatch();
     return {
       image: this.image, style, canvas, pens, machine, settings, speeds: JSON.parse(s.speeds()), layers,
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
+      tone: tone ? JSON.parse(tone) : null,
       run: { id: this.counter, state: s.state(), error: s.error() ?? null },
       stats: stats ? JSON.parse(stats) : null,
     };

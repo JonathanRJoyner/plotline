@@ -5,7 +5,7 @@
 import { CircleHelp, Download, Image as ImageIcon, ImageUp, LayoutGrid, Maximize, Monitor, Moon, Play, Redo2, RotateCcw, Route, Settings as Gear, Sparkles, Square, Sun, Undo2 } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
-import type { BankPen, FitResult, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
+import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
 import { History, setupOf } from "./history";
 import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, StylesDialog, SuggestionsPanel, type Thumb } from "./panels";
@@ -87,10 +87,10 @@ function ThemeButton() {
   return <button type="button" class="icon" title={label} aria-label={label} onClick={next}><Icon /></button>;
 }
 
-type Status = Pick<State, "run" | "stats" | "layers" | "lint">;
+type Status = Pick<State, "run" | "stats" | "layers" | "lint" | "tone">;
 
-// The run state, stats, layers and lint findings, which both replies and run events change, for
-// the parts that show them.
+// The run state, stats, layers, lint findings and tone match, which both replies and run events
+// change, for the parts that show them.
 class StatusStore {
   readonly subs = new Set<(s: Status) => void>();
   constructor(public value: Status) {}
@@ -139,12 +139,13 @@ type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "r
   onSettings: () => void; onTour: () => void; onUndo?: () => void; onRedo?: () => void;
   onApply: (patch: Patch) => void; lintError?: string;
   onFit: (metric: string, target: number) => void; onFitted: (fit: FitResult) => void;
+  onOptimize: (metric?: string, target?: number) => void;
 };
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onApply, lintError, ...preview }: RunViewProps) {
-  const { run, stats, lint } = useStatus(status);
+function RunView({ engine, status, stages, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onOptimize, onApply, lintError, ...preview }: RunViewProps) {
+  const { run, stats, lint, tone } = useStatus(status);
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
   const [result, setResult] = useState<ResultEvent | null>(null);
@@ -154,6 +155,7 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [fits, setFits] = useState(0);
   const [fitted, setFitted] = useState<FitResult | null>(null);
+  const [optimum, setOptimum] = useState<Optimum | null>(null);
   // The run Stop was pressed for: a stage stops between steps, so the run can stay running a while.
   const [stopFor, setStopFor] = useState(0);
   const stopping = run.state === "running" && stopFor === run.id;
@@ -173,18 +175,19 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
         // A new array each time: the preview redraws on its identity. A frame without geometry,
         // such as the tone's, leaves the held ones.
         if (e.points || e.coords) setFrames((fs) => { const next = [...fs]; next[e.pen] = e; return next; });
-        // A fit's trial has ended, so the stages start over for the next one.
-        if (e.stage === "fit") setProgress({ fit: { label: e.label, progress: e.progress } });
+        // A fit's or a search's trial has ended, so the stages start over for the next one.
+        if (e.stage === "fit" || e.stage === "optimize") setProgress({ [e.stage]: { label: e.label, progress: e.progress } });
         else setProgress((p) => ({ ...p, [e.stage]: { label: e.label, progress: e.progress } }));
       } else if (e.type === "result") {
         setResult(e);
         status.set({ ...status.value, layers: e.layers.map((l) => l.pen) });
       } else {
-        status.set({ run: { id: e.id, state: e.state, error: e.error }, stats: e.stats, layers: status.value.layers, lint: e.lint });
+        status.set({ run: { id: e.id, state: e.state, error: e.error }, stats: e.stats, layers: status.value.layers, lint: e.lint, tone: e.tone });
         if (e.fit) {
           setFitted(e.fit);
           onFitted(e.fit);
         }
+        if (e.optimum) setOptimum(e.optimum);
       }
     };
   }, []);
@@ -245,9 +248,14 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
       </div>
       <footer data-tour="status">
         <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
-        <StatsPanel stats={stats} />
+        <StatsPanel stats={stats} tone={tone} />
         <LintList findings={lint} error={lintError} onApply={onApply} />
-        <FitPanel disabled={!preview.hasImage} error={fitError} fitted={fitted} stages={stages} onFit={(metric, target) => { setFitted(null); onFit(metric, target); }} />
+        <FitPanel
+          disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} stages={stages}
+          onFit={(metric, target) => { setFitted(null); setOptimum(null); onFit(metric, target); }}
+          onOptimize={(metric, target) => { setFitted(null); setOptimum(null); onOptimize(metric, target); }}
+          onApply={(patch) => { setOptimum(null); onApply(patch); }}
+        />
       </footer>
     </>
   );
@@ -264,7 +272,7 @@ export function App() {
   const [bank, setBank] = useState<BankPen[]>([]);
   const [inks, setInks] = useState<Ink[]>([]);
   const [state, setState] = useState<State | null>(null);
-  const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [], lint: [] }));
+  const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [], lint: [], tone: null }));
   const [stages, setStages] = useState<Stage[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({}); // per stage; "" for the rest
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -286,7 +294,7 @@ export function App() {
   const take = (s: State) => {
     setState(s);
     history.see(setupOf(s), restoring.current);
-    status.set({ run: s.run, stats: s.stats, layers: s.layers, lint: s.lint });
+    status.set({ run: s.run, stats: s.stats, layers: s.layers, lint: s.lint, tone: s.tone });
     clearTimeout(save.current);
     save.current = setTimeout(() => engine.call("preset").then((r) => remember(JSON.stringify(r.value)), () => {}), 500);
   };
@@ -492,6 +500,7 @@ export function App() {
           onRedo={history.future.length > 0 ? () => restore(history.redo()) : undefined}
           onApply={(patch) => call("apply", [patch], "lint")} lintError={errors.lint}
           fitError={errors.fit} onFit={(metric, target) => call("fit", [metric, target], "fit")} onFitted={applyFit}
+          onOptimize={(metric, target) => call("optimize", metric === undefined ? [] : [metric, target], "fit")}
         />
       </main>
       <aside>

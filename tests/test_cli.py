@@ -152,6 +152,21 @@ def test_lint_findings_go_to_stderr_and_strict_fails_on_a_warning(tmp_path, imag
     assert run(*args[:-2], "--strict").exit_code == 0
 
 
+def test_run_prints_the_tone_match_and_an_optimize_suggestion(tmp_path, image):
+    args = ["run", "hatch", image, "--out", str(tmp_path / "o.svg"), "--quiet"]
+    args += ["--width", "100", "--height", "75", "--set", "tone.resolution=64"]
+    r = run(*args)
+    assert r.exit_code == 0, r.output
+    assert any(x.startswith("tone error: ") and "ssim: " in x for x in r.stdout.splitlines())
+    r = run(*args, "--optimize")
+    assert r.exit_code == 0, r.output
+    line = next(x for x in r.stdout.splitlines() if x.startswith("optimize: "))
+    assert "spacing_mm" in line
+    lines = r.stdout.splitlines()
+    apply = [x for x in lines if x.startswith("  apply: --set hatch.spacing_mm=")]
+    assert len(apply) == ("already follows" not in line)
+
+
 def test_run_rejects_bad_inputs(tmp_path, image):
     out = str(tmp_path / "o.svg")
     r = run("run", "grid", image, "--out", out, "--set", "order.min_length_mm=abc")
