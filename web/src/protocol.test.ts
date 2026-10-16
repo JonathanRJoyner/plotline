@@ -54,6 +54,33 @@ test("setImage starts a run", async () => {
   expect(posted.some((m) => m.type === "result" && m.id === 1)).toBe(true);
 });
 
+test("focus points: the engine places a page point in the image and the state says where each is drawn", async () => {
+  const { ok, ended } = setup();
+  expect(ok("imagePoint", 105, 148.5).value).toBeNull(); // no image yet
+  expect(ok("preset").state.focus).toEqual([]);
+  ok("setImage", ...image());
+  await ended(1);
+  // The 64 by 48 image fits the A4 drawing area 190 mm wide and sits centred on the page.
+  expect(ok("imagePoint", 105, 148.5).value).toEqual([0.5, 0.5]);
+  expect(ok("imagePoint", 10, 77.25).value).toEqual([0, 0]);
+  expect(ok("imagePoint", 105, 20).value).toBeNull();
+  const { state } = ok("update", "tone", { focus: [[0.5, 0.5], [0.25, 0.75]] });
+  expect(state.focus).toEqual([[105, 148.5], [57.5, 184.125]]);
+  await ended(2);
+  expect(ok("update", "tone", { focus: [] }).state.focus).toEqual([]);
+});
+
+test("a focus point outside 0 to 1 ends the run with a message naming it", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("update", "tone", { focus: [[0.5, 0.5], [2, 0]] });
+  await ended(2);
+  const end = posted.find((m) => m.type === "end" && m.id === 2) as { state: string; error: string };
+  expect(end.state).toBe("error");
+  expect(end.error).toContain("point 2 is [2.0, 0.0]");
+});
+
 test("bad image bytes are refused", () => {
   const { posted, call, ok } = setup();
   const reply = call("setImageBytes", new Uint8Array([1, 2, 3]));

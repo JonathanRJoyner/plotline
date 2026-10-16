@@ -78,9 +78,13 @@ function controlFor(key: string, prop: Json, root: Json): Control {
   return { ...base, kind: "text", default: str(def) };
 }
 
+// A property marked `x-hidden` has no control: the page sets it through its own, as the preview's
+// focus mode does the tone stage's focus points.
 export function controlsFor(schema: Record<string, unknown>): Control[] {
   const props = (schema.properties ?? {}) as Record<string, Json>;
-  return Object.entries(props).map(([key, prop]) => controlFor(key, prop, schema));
+  return Object.entries(props)
+    .filter(([, prop]) => prop["x-hidden"] !== true)
+    .map(([key, prop]) => controlFor(key, prop, schema));
 }
 
 // The stages every style shares, in the order the form shows them after the style's own, each
