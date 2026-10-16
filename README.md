@@ -97,6 +97,8 @@ Open **[jonathanrjoyner.github.io/plotline](https://jonathanrjoyner.github.io/pl
 
 For a new image the Suggestions panel, at the top of the right column, lists what would suit it, each with an Apply button. Nothing changes until you click. Under the stats, the plot lint lists what it found in the last drawing, with an Apply button where a setting fixes it. Optimize, beside Fit to target, suggests the density that makes the drawing's tones follow the image best, with an Apply button too.
 
+To check a pen and a page on paper, Test chart in the export panel replaces the drawing with a page of labelled patches: lines at growing spacings, dots of growing sizes, and a solid fill drawn over one to eight times. Plot it and see where lines merge, how big dots come out and how many passes the paper takes, and time the plot against the estimate. It needs no image.
+
 For G-code, enter your machine in the Settings dialog: the drawable area, pen heights, feeds, and start and end G-code. The export panel then writes one G-code file per pen. The preset carries the machine, so save a preset to keep it. A short tour of the page opens on your first visit, and Tour in the toolbar opens it again.
 
 ## Command line
@@ -133,6 +135,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Fail when the plot lint finds a warning or an error | `--strict` |
 | Draw for a machine: its drawable area becomes the page | `--machine my-printer.json`, a machine or a preset that has one |
 | Write one G-code file per pen for the machine | `--gcode plots/` |
+| Write a test chart for a pen, to plot and check spacings, dot sizes, passes and the plot time | `plotline testchart --out chart.svg --pen 'Fine:0.3:blue'`, with `--preview chart.png` for a picture |
 | Open the live preview locally | `plotline gui` |
 
 A machine file holds the same object as a preset's `machine`: `name`, `area` (`x`, `y`, `width` and `height` in the machine's mm), `z_down_mm`, `z_up_mm`, `z_safe_mm`, `draw_feed`, `travel_feed` and `z_feed` in mm per minute, `settle_ms`, `start_gcode` and `end_gcode`. A pen lifted by a servo or a solenoid instead of Z takes `"pen_lift": "gcode"` with `pen_down_gcode` and `pen_up_gcode`, the lines written in place of each Z move. `max_segment_mm` cuts every move into pieces no longer than it, for firmware that would draw a long straight move as a curve. The easiest way to make one is to enter the machine in the GUI's Settings dialog and save a preset, which `--machine` also reads.
@@ -141,7 +144,7 @@ A machine file holds the same object as a preset's `machine`: `name`, `area` (`x
 
 ## With an AI assistant
 
-`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, starting from one of their looks if it likes, and read the tone match and the plot lint's findings in each result, `fit` one to a budget, ask `optimize` for the density that matches the image's tones best, look at previews, also zoomed in on a part of the page, and export the result, as G-code too once `set_machine` has described the plotter.
+`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, starting from one of their looks if it likes, and read the tone match and the plot lint's findings in each result, `fit` one to a budget, ask `optimize` for the density that matches the image's tones best, draw a `testchart` for the pen, look at previews, also zoomed in on a part of the page, and export the result, as G-code too once `set_machine` has described the plotter.
 
 ## Roadmap
 
