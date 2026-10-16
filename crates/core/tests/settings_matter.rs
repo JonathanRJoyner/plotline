@@ -158,13 +158,19 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "hilbert",
         "hilbert",
         "max_cell_mm",
-        "on the noise image every large cell averages mid-grey, so the ink rule folds to the smallest cell before the largest fold is reached; over white it acts, as a white A4 page shows",
+        "on the noise image every large block averages mid-grey, so the ink rule folds to about the smallest cell before the largest fold is reached; over white it acts, as a white A4 page shows",
     ),
     (
         "hilbert",
         "order",
         "min_length_mm",
-        "every path of the curve on the noise image is over 9 mm long; on a black A4 page the 0.6 mm fragments at the map's edge are dropped, 216 paths becoming 75",
+        "at its defaults the curve is one path, far longer than the 5 mm it is tested at; split between pens, a lane lifts over empty areas and leaves fragments, and then it drops the short ones",
+    ),
+    (
+        "hilbert",
+        "order",
+        "optimize",
+        "at its defaults the curve is one path that starts at the corner the pen starts from, so there is nothing to reorder; split between pens, a lane lifts over empty areas and gives many paths, and then it reorders them",
     ),
 ];
 

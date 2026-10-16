@@ -843,7 +843,7 @@ fn a_density_setting_moves_its_metrics_one_way() {
         // The time, the pen-down length and the points of the denser drawing are at least those
         // of the sparser one, give or take 1 percent: lines and grids land on whole steps, which
         // wobble a little. The path count is left out, because it follows where lines break,
-        // such as where the Hilbert curve leaves the image, as much as the density.
+        // such as where a pen's share of the image runs out, as much as the density.
         let (sparse, dense) = if d.direct { (a, b) } else { (b, a) };
         for (i, name) in [(0, "minutes"), (2, "metres"), (3, "dots")] {
             prop_assert!(
