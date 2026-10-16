@@ -15,6 +15,12 @@ New entries go under Unreleased until the next release.
 - **Pen lift by G-code lines:** a machine whose pen is lifted by a servo or a solenoid sets `pen_lift` to `gcode` and gives its own pen-down and pen-up lines, which the G-code writer puts where it would move Z. In the GUI, Settings > Pen lift > Lift by.
 - **Split moves:** a machine's `max_segment_mm` cuts every move into pieces no longer than it, for firmware that would draw a long straight move as a curve, as on a hanging plotter. In the GUI, Settings > G-code > Longest move.
 - Both are off by default: existing machines, presets and G-code are unchanged, and the preset version stays 3.
+Pending entries are files in [changelog.d/](changelog.d/README.md); they move here at the next release.
+
+### Front ends
+
+- **Enlarged style pictures:** in Try all styles, pointing at a picture or tabbing to it shows it 2.5 times larger beside its cell. The pictures are drawn 600 px wide so the enlargement stays sharp.
+- **Engine failures recover:** a panic in the browser engine shows its message, and the worker rebuilds its session, so one failure cannot stall Try all styles or the page. The `ink` style no longer panics in the browser on a large drawing with many rings.
 
 ## 0.1.0 (2026-10-16)
 

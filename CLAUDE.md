@@ -1,6 +1,6 @@
 # plotline
 
-Read [docs/BRIEF.md](docs/BRIEF.md) before doing anything. It holds the goals, architecture, decisions and open questions. When you settle an open question, record the decision and the reason in the brief's decision log.
+Read [docs/BRIEF.md](docs/BRIEF.md) before doing anything. It holds the goals, architecture, decisions and open questions. When you settle an open question, record the decision and the reason as a file in [docs/decisions/](docs/decisions/README.md) (the brief's table holds the decisions made before 2026-10-16). A user-visible change adds an entry file in [changelog.d/](changelog.d/README.md) instead of editing CHANGELOG.md.
 
 Rules (the repo will become public, so treat every commit as public):
 - Every runtime dependency must be permissively licensed (MIT/BSD/Apache-2.0). Check before adding one.
