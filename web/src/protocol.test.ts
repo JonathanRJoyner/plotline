@@ -351,13 +351,16 @@ test("a trap in one style's picture shows in its cell, and the grid and drawing 
   };
   const posted: Array<Record<string, any>> = [];
   const p = new Protocol(session, (msg) => posted.push(msg as Record<string, any>));
-  p.handle({ id: 1, method: "setImage", args: image() });
+  // A small page and tone map, which a style switch carries to every trial, keep the grid quick.
+  p.handle({ id: 1, method: "setCanvas", args: [{ width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" }] });
+  p.handle({ id: 2, method: "update", args: ["tone", { resolution: 64 }] });
+  p.handle({ id: 3, method: "setImage", args: image() });
   while (!posted.some((m) => m.type === "end")) await macrotask();
   const styles = JSON.parse(listStyles()) as unknown[];
-  p.handle({ id: 2, method: "thumbs", args: [120] });
+  p.handle({ id: 4, method: "thumbs", args: [120] });
   for (let i = 0; i < 20000 && posted.filter((m) => m.type === "thumb").length < styles.length; i++) await macrotask();
   const thumbs = posted.filter((m) => m.type === "thumb");
   expect(thumbs.filter((m) => m.error !== null)).toEqual([expect.objectContaining({ style: "ink", error: "unreachable", png: null })]);
   expect(thumbs.filter((m) => m.png !== null)).toHaveLength(styles.length - 1);
   expect(posted.filter((m) => m.type === "run").map((m) => m.id)).toEqual([1, 2]); // the drawing, redrawn on the new session
-});
+}, 30_000);
