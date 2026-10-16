@@ -10,6 +10,7 @@
   - with no paths, a threshold lowered to the ink of the map's darkest pixels where enough of them lie to draw;
   - with paths, the density setting one step denser where the marks' pixels have room.
   It offers none for a blank tone map, a minimum length above 0, Pen use by colour or a held tone response. Auto levels is no longer offered: the drawing keeps the tone map after levels, so nothing in it shows whether auto levels would act.
+- **`vertices`** offers `order.simplify_mm` only from 0 and only when simplifying the drawing's own paths, as the order stage would, lowers its number or clears the finding. The prediction is exact from 0. From a value already above 0 the drawing holds simplified paths, and simplifying again can differ from simplifying the originals.
 - **`dark`** offers closer spacing only where the dark parts have room for it. It caps a raised `voronoi.count` at a quarter of the inked pixels, with at least 16 new points in the dark parts, and raises `sketch.max_lines` only when a layer drew its limit. It offers no patch with a minimum length above 0, or with a pen thinner than a raster cell.
 
 **Reason:** Issue #32 listed the misses the law found:
