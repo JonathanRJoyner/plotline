@@ -465,7 +465,7 @@ mod tests {
     use crate::registry::get_style;
     use crate::session::Session;
     use crate::synthetic::still_life;
-    use crate::test_util::{drawing_100, drawing_100_with_tone, drawing_with, machine};
+    use crate::test_util::{black, drawing_100, drawing_100_with_tone, drawing_with, machine};
     use crate::types::{Canvas, Fit, Layer, ToneMap};
 
     /// The findings for `d` under `style` at its defaults changed by `change`, the drawing's pens,
@@ -796,5 +796,89 @@ mod tests {
         while run.next_frame().is_some() {}
         let all = s.lint().unwrap();
         assert_eq!(find(&all, "dark").unwrap().value, 0.015042735042735043);
+    }
+
+    /// Run `s` to the end.
+    fn draw(s: &mut Session) {
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+    }
+
+    /// Run `s`, apply the patch of its `code` finding through the session, run again, and check
+    /// the finding is gone.
+    fn fixes(mut s: Session, code: &str) {
+        draw(&mut s);
+        let found = s.lint().unwrap();
+        let finding = find(&found, code).unwrap_or_else(|| panic!("no {code} in {found:?}"));
+        let patch = finding
+            .patch
+            .clone()
+            .unwrap_or_else(|| panic!("{code} has no patch"));
+        for (stage, values) in patch["settings"].as_object().into_iter().flatten() {
+            s.update(stage, values).unwrap();
+        }
+        if let Some(page) = patch.get("page") {
+            let c = s.canvas().clone();
+            let [w, h] = ["width_mm", "height_mm"].map(|k| page[k].as_f64().unwrap());
+            s.set_canvas(Canvas::new(w, h, c.margin_mm, c.fit).unwrap());
+        }
+        draw(&mut s);
+        let after = s.lint().unwrap();
+        assert!(
+            find(&after, code).is_none(),
+            "{code} after {patch}: {after:?}"
+        );
+    }
+
+    /// A session over a small still life, or over noise, with `style` at its defaults changed by
+    /// `changes`, `{stage: {key: value}}`.
+    fn session(noise: bool, style: &str, changes: Value) -> Session {
+        let mut s = Session::new(256 << 20);
+        s.set_image(if noise {
+            crate::synthetic::flat_noise(300, 437, 0.5, 0.2, 3)
+        } else {
+            still_life(300, 437)
+        });
+        s.set_style(style).unwrap();
+        for (stage, values) in changes.as_object().unwrap() {
+            s.update(stage, values).unwrap();
+        }
+        s
+    }
+
+    #[test]
+    fn every_patch_fixes_its_finding() {
+        fixes(
+            session(false, "grid", json!({"points": {"threshold": 1.0}})),
+            "empty",
+        );
+        fixes(
+            session(false, "hatch", json!({"hatch": {"spacing_mm": 0.2}})),
+            "close_lines",
+        );
+        fixes(
+            session(true, "hatch", json!({"hatch": {"threshold": 0.5}})),
+            "specks",
+        );
+        fixes(session(false, "grid", json!({})), "dark");
+        fixes(
+            session(false, "hatch", json!({"order": {"optimize": false}})),
+            "travel",
+        );
+        // Three levels of lines a pen apart pass the darkest parts three times.
+        let mut thick = session(false, "hatch", json!({}));
+        thick
+            .set_pens(vec![Pen::new("Wide", 1.0, "#000000").unwrap()])
+            .unwrap();
+        fixes(thick, "overdraw");
+        let mut two = session(false, "hatch", json!({}));
+        let red = Pen::new("Red", 0.3, "#ff0000").unwrap();
+        two.set_pens(vec![black(), red]).unwrap();
+        fixes(two, "unused_pens");
+        // The test machine's area is 200 by 174 mm; the page fits it once turned.
+        let mut big = session(false, "hatch", json!({}));
+        big.set_machine(Some(machine())).unwrap();
+        big.set_canvas(Canvas::new(150.0, 190.0, 10.0, Fit::Fit).unwrap());
+        fixes(big, "off_machine");
     }
 }
