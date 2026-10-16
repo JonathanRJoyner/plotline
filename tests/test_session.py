@@ -366,6 +366,45 @@ def test_a_failed_run_keeps_the_previous_result():
     assert s.state == RunState.error and s.result is first
 
 
+def test_testchart_is_the_result_and_needs_no_image():
+    s = Session()
+    assert s.state is RunState.idle
+    drawing = s.testchart()
+    assert s.state is RunState.done
+    assert s.result is drawing and len(drawing.layers) == 1 and drawing.tone is None
+    assert drawing.layers[0].pen == s.pens[0]
+    assert s.stats().path_count == len(drawing.layers[0].paths) > 0
+    assert s.svg().startswith("<svg")
+    assert "overdraw" in [f["code"] for f in s.lint()]
+    assert s.preview_png(200).startswith(b"\x89PNG")
+
+
+def test_testchart_cancels_a_run_and_a_small_page_leaves_the_result():
+    s = slow(Session(), frames=1000)
+    s.update("b", delay_ms=5)  # slow enough that the run is still going when the chart is made
+    handle = s.run()
+    assert s.state is RunState.running
+    chart = s.testchart()
+    assert handle.wait() is RunState.cancelled and s.result is chart
+    assert s.state is RunState.done
+    s.set_canvas(Canvas(74, 105, 10))
+    s.set_pens([Pen("Fat", 2.0, "#000000")])
+    with pytest.raises(ValueError, match="the page is too small for the test chart"):
+        s.testchart()
+    assert s.result is chart and s.state is RunState.done
+    # A later run takes the state back, and a refused chart leaves a run under way alone.
+    s.update("b", frames=1000)
+    handle = s.run()
+    with pytest.raises(ValueError, match="the page is too small for the test chart"):
+        s.testchart()
+    assert s.state is RunState.running and handle.state is RunState.running
+    handle.cancel()
+    assert handle.wait() is RunState.cancelled and s.state is RunState.cancelled
+    s.update("b", frames=2)
+    s.run_blocking()
+    assert s.state is RunState.done and s.result is not chart
+
+
 def test_cancelled_state_on_cancelled_run():
     s = slow(Session(), frames=5)
     s.subscribe(lambda frame: s.cancel())
