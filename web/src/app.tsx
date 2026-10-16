@@ -31,6 +31,8 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
 
 // The styles dialog's pictures are this many pixels wide, about twice their size on screen.
 const THUMB_PX = 300;
+// The style a first visit starts on: its lines read as the picture at the fit zoom, where grid's dots barely show.
+const FIRST_STYLE = "waves";
 // Where Ctrl+Z belongs to the browser's own undo of typing.
 const TYPING = "textarea, [contenteditable], input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file], [type=button])";
 
@@ -245,7 +247,7 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
         <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
         <StatsPanel stats={stats} />
         <LintList findings={lint} error={lintError} onApply={onApply} />
-        <FitPanel disabled={!preview.hasImage} error={fitError} fitted={fitted} onFit={(metric, target) => { setFitted(null); onFit(metric, target); }} />
+        <FitPanel disabled={!preview.hasImage} error={fitError} fitted={fitted} stages={stages} onFit={(metric, target) => { setFitted(null); onFit(metric, target); }} />
       </footer>
     </>
   );
@@ -315,10 +317,14 @@ export function App() {
         } catch {
           remember(null); // a preset this build refuses would block every start
         }
+      } else {
+        try {
+          state = (await engine.call("setStyle", [FIRST_STYLE])).state;
+        } catch { /* keeps the grid state */ }
       }
       take(state);
     }, (e) => setFatal(message(e)));
-    const paste = (e: ClipboardEvent) => openImage(imageFile(e.clipboardData));
+    const paste = (e: ClipboardEvent) => openDropped(e.clipboardData);
     document.addEventListener("paste", paste);
     // Ctrl+Z undoes and Ctrl+Shift+Z redoes, except while typing or with a dialog open.
     const keys = (e: KeyboardEvent) => {
@@ -393,6 +399,14 @@ export function App() {
     }
   }
 
+  // Dropped or pasted data: a file of another type says so, where text pasted stays silent.
+  function openDropped(dt: DataTransfer | null) {
+    const file = imageFile(dt);
+    const other = dt?.files[0];
+    if (!file && other) setErrors((es) => ({ ...es, image: `${other.name} is not a PNG, JPEG or WebP image` }));
+    else openImage(file);
+  }
+
   async function savePreset() {
     const preset = await call("preset");
     if (preset) download("preset.json", JSON.stringify(preset, null, 2), "application/json");
@@ -443,7 +457,7 @@ export function App() {
     <div
       class="app"
       onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => { e.preventDefault(); openImage(imageFile(e.dataTransfer)); }}
+      onDrop={(e) => { e.preventDefault(); openDropped(e.dataTransfer); }}
     >
       <a class="skip" href="#toolbar">Skip to the toolbar</a>
       <aside>
