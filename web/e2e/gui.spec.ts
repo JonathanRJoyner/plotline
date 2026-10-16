@@ -228,6 +228,17 @@ test("Response auto corrects the tone map for the style", async ({ page }) => {
   await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
 });
 
+test("Flatten paper changes the drawing", async ({ page }) => {
+  const id = await pick(page, "ink", await sample(page));
+  const stats = await page.locator(".stats").textContent();
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  const flatten = page.getByRole("spinbutton", { name: /^flatten paper$/i });
+  await flatten.fill("10");
+  await flatten.blur();
+  await ran(page, id);
+  await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
+});
+
 test("the thumbnail grid picks a style", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);
