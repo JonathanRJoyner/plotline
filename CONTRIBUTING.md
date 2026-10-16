@@ -53,6 +53,16 @@ npx playwright install chromium
 npm run e2e
 ```
 
+## Property laws
+
+`crates/core/tests/laws.rs` checks laws that every style and setting keeps, on random cases that proptest draws from the registry and the settings schemas: a run ends with a drawing or a message, the same inputs give the same bytes, every mark stays on the drawing area, a cancel ends a run, and the laws of features with a contract, such as the budget fit and the style switch. `cargo test` runs a fixed, seeded number of cases, and a new style or setting is covered with no edit. A failing law prints the shrunk case. To run more cases, or other ones:
+
+```sh
+PLOTLINE_LAWS_SCALE=10 PLOTLINE_LAWS_SEED=7 cargo test -p plotline-core --test laws
+```
+
+A weekly workflow runs 25 times as many cases and opens an issue when a law breaks. The GUI's undo laws live in `web/src/history.test.ts` and use fast-check.
+
 ## Regression gallery
 
 When a change can move a drawing (a stage, a style's defaults, the tone map, the pens or the preview), compare the gallery before and after:
@@ -84,3 +94,4 @@ The repository is public, so every commit is public.
 - **Layers.** Algorithm code lives in the core crate. The CLI, GUI and MCP only call the session layer.
 - **Tour.** A user-visible GUI feature adds or updates its step in the tour (`STEPS` in `web/src/tour.tsx`).
 - **Browser flows.** A user-visible GUI feature also adds its flow in `web/e2e/gui.spec.ts`, which runs it in a real browser.
+- **Laws.** A feature with a contract, a promise about what it does on any input, adds its law to `crates/core/tests/laws.rs`, or for the GUI to a fast-check test beside its code.

@@ -117,41 +117,79 @@ impl Stage for SplitStage {
         let settings = validate::<SplitSettings>(self.name(), &self.schema(), settings)?;
         Ok(Box::new(SplitRun {
             input: Some((inputs, settings.mode)),
+            colour: None,
             maps: None,
         }))
     }
 }
 
-/// The work happens in the first step, which reports one frame; the second gives the maps.
+/// The most pixels one band of the colour lookup covers, so that Stop stays responsive on a large
+/// map. A step ends at a row boundary, so it holds whole rows.
+const PIXELS_PER_STEP: usize = 200_000;
+
+/// `one_pen` and `light_to_dark` do their work in the first step, which reports one frame; the
+/// second gives the maps. `by_colour` spends its first steps on preparation, one piece each: a
+/// colour plane, then the next, then the third, then the table. Then each step looks up a band of
+/// rows and reports how many are done, and the step after the last band gives the maps.
 struct SplitRun {
     /// What the first step reads: the inputs and the mode; `None` once it has run.
     input: Option<(Inputs, SplitMode)>,
-    /// The finished maps, between the first step and the second.
+    /// The colour lookup in progress, from the first step to the last band.
+    colour: Option<ColourSplit>,
+    /// The finished maps, before the step that gives them.
     maps: Option<Vec<Arc<ToneMap>>>,
+}
+
+/// A frame with no points or paths to show.
+fn frame(progress: f32, label: impl Into<String>) -> Frame {
+    Frame {
+        stage: String::new(),
+        progress,
+        label: label.into(),
+        points: None,
+        paths: None,
+        pen: 0,
+    }
 }
 
 impl StageRun for SplitRun {
     fn step(&mut self) -> Result<Step, StageError> {
         if let Some((inputs, mode)) = self.input.take() {
             let (tone, pens) = (inputs.tone(), inputs.pens());
-            self.maps = Some(match mode {
-                SplitMode::OnePen => vec![tone.clone()],
+            match mode {
+                SplitMode::OnePen => self.maps = Some(vec![tone.clone()]),
                 SplitMode::LightToDark => {
-                    bands(tone, pens.len()).into_iter().map(Arc::new).collect()
+                    let maps = bands(tone, pens.len());
+                    self.maps = Some(maps.into_iter().map(Arc::new).collect());
                 }
-                SplitMode::ByColour => by_colour(inputs.image(), inputs.canvas(), pens, tone)?
-                    .into_iter()
-                    .map(Arc::new)
-                    .collect(),
-            });
-            return Ok(Step::Frame(Frame {
-                stage: String::new(),
-                progress: 1.0,
-                label: "pen use".into(),
-                points: None,
-                paths: None,
-                pen: 0,
-            }));
+                SplitMode::ByColour => {
+                    let (image, canvas) = (inputs.image(), inputs.canvas());
+                    self.colour = Some(ColourSplit::new(image, canvas, pens, tone));
+                }
+            }
+            if self.maps.is_some() {
+                return Ok(Step::Frame(frame(1.0, "pen use")));
+            }
+        }
+        if let Some(split) = &mut self.colour {
+            if !split.ready() {
+                split.prepare()?;
+                return Ok(Step::Frame(frame(0.0, "pen use: colour")));
+            }
+            let h = split.tone.height as usize;
+            split.look_up((split.next_row + split.rows_per_step).min(h));
+            let done = split.next_row;
+            let progress = if done == h {
+                1.0
+            } else {
+                done as f32 / h as f32
+            };
+            let label = format!("pen use: {done}/{h} rows");
+            if done == h {
+                let split = self.colour.take().expect("the colour lookup is running");
+                self.maps = Some(split.into_maps().into_iter().map(Arc::new).collect());
+            }
+            return Ok(Step::Frame(frame(progress, label)));
         }
         let maps = self
             .maps
@@ -180,53 +218,122 @@ pub(crate) fn bands(tone: &ToneMap, n: usize) -> Vec<ToneMap> {
         .collect()
 }
 
-/// One map per pen holding that pen's coverage of each pixel's colour, with the size and
-/// transform of `tone`. The colour is sampled on the tone map's grid with the tone stage's own
-/// crop and resize, and rescaled to the tone map's ink before the table lookup.
-fn by_colour(
-    image: &Image,
-    canvas: &Canvas,
-    pens: &[Pen],
-    tone: &ToneMap,
-) -> Result<Vec<ToneMap>, StageError> {
-    let (w, h) = (image.width as usize, image.height as usize);
-    let long_edge = tone.width.max(tone.height) as usize;
-    let sample = |k: usize| {
+/// The colour lookup for the by-colour mode: for each pixel of the tone map, every pen's coverage
+/// of the pixel's colour. The colour is sampled on the tone map's grid with the tone stage's own
+/// crop and resize, and rescaled to the tone map's ink before the table lookup. [`prepare`]
+/// samples the planes and solves the table one piece at a time, and [`look_up`] then covers a band
+/// of rows at a time.
+///
+/// [`prepare`]: ColourSplit::prepare
+/// [`look_up`]: ColourSplit::look_up
+struct ColourSplit {
+    image: Arc<Image>,
+    canvas: Arc<Canvas>,
+    /// How much of each channel each pen absorbs.
+    absorb: Vec<[f64; 3]>,
+    tone: Arc<ToneMap>,
+    /// The image's red, green and blue on the tone map's grid, row-major, as far as sampled.
+    planes: Vec<Vec<f32>>,
+    /// The table, once solved, after the planes.
+    table: Option<Table>,
+    /// Per pen, the coverage of the pixels looked up so far, row-major.
+    inks: Vec<Vec<f32>>,
+    /// The coverages of the pixel in hand, one per pen.
+    a: Vec<f64>,
+    /// The rows a band holds at most.
+    rows_per_step: usize,
+    /// The first row not looked up yet.
+    next_row: usize,
+}
+
+impl ColourSplit {
+    fn new(
+        image: &Arc<Image>,
+        canvas: &Arc<Canvas>,
+        pens: &[Pen],
+        tone: &Arc<ToneMap>,
+    ) -> ColourSplit {
+        ColourSplit {
+            image: image.clone(),
+            canvas: canvas.clone(),
+            absorb: pens.iter().map(absorption).collect(),
+            planes: Vec::new(),
+            table: None,
+            inks: vec![Vec::with_capacity(tone.ink.len()); pens.len()],
+            a: vec![0.0; pens.len()],
+            rows_per_step: (PIXELS_PER_STEP / tone.width as usize).max(1),
+            next_row: 0,
+            tone: tone.clone(),
+        }
+    }
+
+    /// Whether the planes are sampled and the table is solved.
+    fn ready(&self) -> bool {
+        self.table.is_some()
+    }
+
+    /// The next piece of preparation: the next of the red, green and blue planes, sampled on the
+    /// tone map's grid, and after them the table. Fails if the colour grid and the tone map differ
+    /// in size.
+    fn prepare(&mut self) -> Result<(), StageError> {
+        let k = self.planes.len();
+        if k == 3 {
+            self.table = Some(Table::new(&self.absorb));
+            return Ok(());
+        }
+        let (image, canvas) = (&self.image, &self.canvas);
+        let (w, h) = (image.width as usize, image.height as usize);
+        let long_edge = self.tone.width.max(self.tone.height) as usize;
         let plane: Vec<f32> = image.rgb.iter().skip(k).step_by(3).copied().collect();
-        if canvas.fit == Fit::Fill {
+        let (plane, cw, ch) = if canvas.fit == Fit::Fill {
             let [_, _, dw, dh] = canvas.drawing_rect();
-            let (crop, cw, ch) = crop_to_aspect(&plane, w, h, dw / dh);
-            return resize(&crop, cw, ch, long_edge);
+            crop_to_aspect(&plane, w, h, dw / dh)
+        } else {
+            (plane, w, h)
+        };
+        let (plane, cw, ch) = resize(&plane, cw, ch, long_edge);
+        if (cw, ch) != (self.tone.width as usize, self.tone.height as usize) {
+            return Err(StageError::Failed(format!(
+                "the colour grid is {cw} x {ch} pixels but the tone map is {} x {}",
+                self.tone.width, self.tone.height
+            )));
         }
-        resize(&plane, w, h, long_edge)
-    };
-    let [(r, cw, ch), (g, _, _), (b, _, _)] = [0, 1, 2].map(sample);
-    if (cw, ch) != (tone.width as usize, tone.height as usize) {
-        return Err(StageError::Failed(format!(
-            "the colour grid is {cw} x {ch} pixels but the tone map is {} x {}",
-            tone.width, tone.height
-        )));
+        self.planes.push(plane);
+        Ok(())
     }
-    let absorb: Vec<[f64; 3]> = pens.iter().map(absorption).collect();
-    let table = Table::new(&absorb);
-    let mut inks = vec![Vec::with_capacity(tone.ink.len()); pens.len()];
-    let mut a = vec![0.0; pens.len()];
-    for (p, &t) in tone.ink.iter().enumerate() {
-        table.lookup(rescale([r[p], g[p], b[p]], t), &mut a);
-        for (ink, &a) in inks.iter_mut().zip(&a) {
-            ink.push((a as f32).clamp(0.0, 1.0));
+
+    /// Look up the rows from `next_row` up to row `end`, not including it. Needs [`ready`].
+    ///
+    /// [`ready`]: ColourSplit::ready
+    fn look_up(&mut self, end: usize) {
+        let w = self.tone.width as usize;
+        let [r, g, b] = &self.planes[..] else {
+            unreachable!("the planes are sampled");
+        };
+        let table = self.table.as_ref().expect("the table is solved");
+        for p in self.next_row * w..end * w {
+            table.lookup(rescale([r[p], g[p], b[p]], self.tone.ink[p]), &mut self.a);
+            for (ink, &a) in self.inks.iter_mut().zip(&self.a) {
+                ink.push((a as f32).clamp(0.0, 1.0));
+            }
         }
+        self.next_row = end;
     }
-    Ok(inks
-        .into_iter()
-        .map(|ink| ToneMap {
-            width: tone.width,
-            height: tone.height,
-            ink,
-            mm_per_px: tone.mm_per_px,
-            origin_mm: tone.origin_mm,
-        })
-        .collect())
+
+    /// One map per pen, with the size and transform of the tone map.
+    fn into_maps(self) -> Vec<ToneMap> {
+        let tone = &self.tone;
+        self.inks
+            .into_iter()
+            .map(|ink| ToneMap {
+                width: tone.width,
+                height: tone.height,
+                ink,
+                mm_per_px: tone.mm_per_px,
+                origin_mm: tone.origin_mm,
+            })
+            .collect()
+    }
 }
 
 /// The ink penalty: small, so it only picks one of several coverages that match the colour.
@@ -493,14 +600,9 @@ mod tests {
             .collect()
     }
 
-    /// The tone stage at resolution 64 on `image`, then the split by colour. Returns the tone map
-    /// and the lanes.
-    fn split_image(
-        image: Image,
-        canvas: Canvas,
-        pens: Vec<Pen>,
-    ) -> (Arc<ToneMap>, Vec<Arc<ToneMap>>) {
-        let settings = merge(&ToneStage.defaults(), &json!({"resolution": 64}));
+    /// The tone stage at `resolution` on `image`.
+    fn tone_of(image: &Image, canvas: &Canvas, resolution: u32) -> Arc<ToneMap> {
+        let settings = merge(&ToneStage.defaults(), &json!({"resolution": resolution}));
         let inputs = Inputs::new(HashMap::from([
             (Kind::Image, Artifact::Image(Arc::new(image.clone()))),
             (Kind::Canvas, Artifact::Canvas(Arc::new(canvas.clone()))),
@@ -508,11 +610,21 @@ mod tests {
         let mut run = ToneStage
             .start(inputs, &settings, RunContext::new(Arc::default()))
             .unwrap();
-        let tone = loop {
+        loop {
             if let Step::Done(Artifact::Tone(t)) = run.step().unwrap() {
-                break t;
+                return t;
             }
-        };
+        }
+    }
+
+    /// The tone stage at resolution 64 on `image`, then the split by colour. Returns the tone map
+    /// and the lanes.
+    fn split_image(
+        image: Image,
+        canvas: Canvas,
+        pens: Vec<Pen>,
+    ) -> (Arc<ToneMap>, Vec<Arc<ToneMap>>) {
+        let tone = tone_of(&image, &canvas, 64);
         let patch = json!({"mode": "by_colour"});
         let maps = run_split(image, canvas, pens, (*tone).clone(), patch)
             .unwrap()
@@ -703,6 +815,113 @@ mod tests {
         assert_eq!(
             (frames[0].progress, frames[0].label.as_str()),
             (1.0, "pen use")
+        );
+    }
+
+    #[test]
+    fn by_colour_reports_the_colour_then_each_band_of_rows() {
+        // 40 000 pixels wide, so a band holds 5 rows and the 12 rows take 3 bands.
+        let canvas = Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap();
+        let tone = tone_map(40_000, 12, |x, _| (x % 7) as f32 / 7.0);
+        let patch = json!({"mode": "by_colour"});
+        let pens = pens(&["#000000", "#ff0000"]);
+        let (frames, maps) = run_split(scene(10_000, 3), canvas, pens, tone, patch).unwrap();
+        let steps: Vec<_> = frames
+            .iter()
+            .map(|f| (f.label.as_str(), f.progress))
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                // Three colour planes, then the table.
+                ("pen use: colour", 0.0),
+                ("pen use: colour", 0.0),
+                ("pen use: colour", 0.0),
+                ("pen use: colour", 0.0),
+                ("pen use: 5/12 rows", 5.0 / 12.0),
+                ("pen use: 10/12 rows", 10.0 / 12.0),
+                ("pen use: 12/12 rows", 1.0),
+            ]
+        );
+        assert_eq!(maps.len(), 2);
+        assert!(maps.iter().all(|m| m.ink.len() == 40_000 * 12));
+    }
+
+    /// A colour split of `image` that has done its preparation.
+    fn prepared(image: &Image, canvas: &Canvas, pens: &[Pen], tone: &Arc<ToneMap>) -> ColourSplit {
+        let (image, canvas) = (Arc::new(image.clone()), Arc::new(canvas.clone()));
+        let mut split = ColourSplit::new(&image, &canvas, pens, tone);
+        while !split.ready() {
+            split.prepare().unwrap();
+        }
+        split
+    }
+
+    #[test]
+    fn bands_of_one_row_give_the_maps_of_one_band() {
+        let canvas = Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap();
+        let (image, pens) = (scene(64, 48), pens(&CMYK));
+        let tone = tone_of(&image, &canvas, 64);
+        let mut one_band = prepared(&image, &canvas, &pens, &tone);
+        one_band.look_up(tone.height as usize);
+        let whole = one_band.into_maps();
+        let mut split = prepared(&image, &canvas, &pens, &tone);
+        for end in 1..=tone.height as usize {
+            split.look_up(end);
+        }
+        let by_row = split.into_maps();
+        assert_eq!(whole.len(), 4);
+        for (a, b) in whole.iter().zip(&by_row) {
+            let bits = |m: &ToneMap| m.ink.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(a), bits(b));
+        }
+    }
+
+    /// Time each step of a by-colour run at a 4000-pixel map with eight pens, for the brief. Run
+    /// it in a release build: `cargo test --release -p plotline-core --lib by_colour_step_timings
+    /// -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "a timing, for release builds"]
+    fn by_colour_step_timings() {
+        use std::time::Instant;
+        let canvas = a4();
+        let image = scene(4000, 2800);
+        let tone = tone_of(&image, &canvas, 4000);
+        let colors = [
+            "#000000", "#00ffff", "#ff00ff", "#ffff00", "#ff0000", "#00ff00", "#0000ff", "#8b4513",
+        ];
+        let settings = merge(&SplitStage.defaults(), &json!({"mode": "by_colour"}));
+        let inputs = Inputs::new(HashMap::from([
+            (Kind::Image, Artifact::Image(Arc::new(image))),
+            (Kind::Canvas, Artifact::Canvas(Arc::new(canvas))),
+            (Kind::Pens, Artifact::Pens(Arc::new(pens(&colors)))),
+            (Kind::Tone, Artifact::Tone(tone.clone())),
+        ]));
+        let mut run = SplitStage
+            .start(inputs, &settings, RunContext::new(Arc::default()))
+            .unwrap();
+        let mut times = Vec::new();
+        loop {
+            let started = Instant::now();
+            let step = run.step().unwrap();
+            let took = started.elapsed();
+            match step {
+                Step::Frame(f) => times.push((took, f.label)),
+                Step::Done(_) => break,
+            }
+        }
+        let total: std::time::Duration = times.iter().map(|(t, _)| *t).sum();
+        let (longest, label) = times.iter().max_by_key(|(t, _)| *t).unwrap();
+        let prepare: Vec<_> = times
+            .iter()
+            .filter(|(_, label)| label == "pen use: colour")
+            .map(|(t, _)| *t)
+            .collect();
+        println!(
+            "tone map {} x {}: {} steps, total {total:?}, preparation {prepare:?}, longest {longest:?} ({label})",
+            tone.width,
+            tone.height,
+            times.len(),
         );
     }
 

@@ -71,7 +71,7 @@ fn resolve(d: f64, pen_w: f64, shape: DotShape) -> DotShape {
 
 /// The spacing of arc samples at radius `r`: a quarter pen width, or a 64th of the turn on a wide
 /// arc, so a dot's vertex count grows with its turns rather than its area.
-fn arc_step(r: f64, pen_w: f64) -> f64 {
+pub(crate) fn arc_step(r: f64, pen_w: f64) -> f64 {
     (pen_w / 4.0).max(2.0 * PI * r / 64.0)
 }
 
