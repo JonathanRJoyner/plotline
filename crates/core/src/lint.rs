@@ -7,6 +7,8 @@
 //! ([`crate::analysis::Suggestion`]), so the front ends apply both the same way. The thresholds
 //! are hand-set taste defaults, recorded in the brief.
 
+use std::f64::consts::PI;
+
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -24,7 +26,7 @@ const OVERDRAW_SHARE: f64 = 0.05;
 /// Short paths are specks when there are at least this many and this share of the paths.
 const SPECKS: usize = 10;
 const SPECK_SHARE: f64 = 0.01;
-/// Below this share of the drawing area inked, a drawing is nearly empty.
+/// Below this share of the drawing area laid with ink, a drawing is nearly empty.
 const NEARLY_EMPTY: f64 = 0.001;
 /// Tone at least this dark counts as the image's dark parts; under this share of the map they are
 /// too small to judge.
@@ -66,8 +68,10 @@ pub struct Measure {
     pub cell_mm: f64,
     /// One entry per layer, in drawing order.
     pub layers: Vec<LayerMeasure>,
-    /// The share of the drawing area any layer inks.
-    pub inked_share: f64,
+    /// The ink laid as a share of the drawing area: each path's length times its pen width, plus a
+    /// pen-width disc at the path, summed over every layer. Unlike the raster it counts a thin
+    /// pen's marks in full, and every mark added raises it.
+    pub laid_share: f64,
     /// The share any layer inks of the cells whose nearest tone-map pixel holds [`DARK_TONE`] or
     /// more; `None` without a tone map or when such cells are under [`DARK_AREA`] of its area.
     pub dark_coverage: Option<f64>,
@@ -89,6 +93,7 @@ pub fn measure(d: &Drawing) -> Measure {
     let mut grid = Coverage::new(page, cell);
     let mut union = vec![false; grid.count.len()];
     let (mut off_page, mut off_area) = (0, 0);
+    let mut laid = 0.0;
     let mut layers = Vec::new();
     for layer in &d.layers {
         let w = layer.pen.width_mm;
@@ -111,7 +116,9 @@ pub fn measure(d: &Drawing) -> Measure {
         let (mut dots, mut short, mut segments, mut fine_segments) = (0, 0, 0, 0);
         for p in layer.paths.iter() {
             dots += usize::from(p.len() == 1);
-            short += usize::from(Paths::path_length(p) < w);
+            let length = Paths::path_length(p);
+            laid += length * w + PI * half * half;
+            short += usize::from(length < w);
             for s in p.windows(2) {
                 segments += 1;
                 fine_segments += usize::from(Paths::path_length(s) < w * FINE);
@@ -128,11 +135,10 @@ pub fn measure(d: &Drawing) -> Measure {
             fine_segments,
         });
     }
-    let inked_area = union.iter().filter(|&&b| b).count() as f64 * cell * cell;
     Measure {
         cell_mm: cell,
         layers,
-        inked_share: inked_area / (aw * ah),
+        laid_share: laid / (aw * ah),
         dark_coverage: d.tone.as_deref().and_then(|t| {
             // The tone-map column or row under each cell centre's, if any.
             let under = |cells: usize, origin: f64, pixels: u32| -> Vec<Option<usize>> {
@@ -271,7 +277,7 @@ pub fn check(
     let paths: usize = m.layers.iter().map(|l| l.paths).sum();
     let percent = |share: f64| (share * 100.0).round();
 
-    let empty = paths == 0 || m.inked_share < NEARLY_EMPTY;
+    let empty = m.laid_share < NEARLY_EMPTY;
     if empty {
         let threshold = cx.find(&["threshold"]);
         let patch = threshold
@@ -290,7 +296,7 @@ pub fn check(
         };
         let message =
             format!("{what} Try a lower threshold, or the tone's black, white and gamma settings.");
-        add("empty", Severity::Warning, message, m.inked_share, patch);
+        add("empty", Severity::Warning, message, m.laid_share, patch);
     }
     if m.off_page > 0 {
         let message = format!(
@@ -554,6 +560,28 @@ mod tests {
             .message
             .starts_with("The drawing inks under 0.1 % of"));
         assert!(!finds(&page(lines(1.0)), "hatch", "empty"));
+    }
+
+    #[test]
+    fn a_thin_pens_dots_are_ink() {
+        // 4000 dots of a 0.03 mm pen: the raster counts about none of them, the ink laid is
+        // pi (0.015 mm)^2 for each, and the more dots the more ink.
+        let dots = |n: usize| -> Vec<Vec<[f64; 2]>> {
+            let at = |i: usize| [1.0 + (i % 60) as f64 * 1.5, 1.0 + (i / 60) as f64 * 1.4];
+            (0..n).map(|i| vec![at(i)]).collect()
+        };
+        let thin = |n| drawing_100(dots(n), 0.03, "#000000");
+        let laid = |n| measure(&thin(n)).laid_share;
+        assert!((laid(4000) - 4000.0 * PI * 0.015 * 0.015 / 10000.0).abs() < 1e-12);
+        assert!(laid(4000) > laid(2000) && laid(2000) > 0.0);
+        let all = lint(&thin(4000), "grid", |_| {});
+        let empty = find(&all, "empty").unwrap();
+        assert_eq!(empty.value, laid(4000));
+        assert!(empty.message.starts_with("The drawing inks under 0.1 % of"));
+        // A line adds its length times the pen width to the disc at its end.
+        let line = drawing_100(vec![vec![[0.0, 0.0], [10.0, 0.0]]], 0.5, "#000000");
+        let want = (10.0 * 0.5 + PI * 0.25 * 0.25) / 10000.0;
+        assert!((measure(&line).laid_share - want).abs() < 1e-12);
     }
 
     #[test]
