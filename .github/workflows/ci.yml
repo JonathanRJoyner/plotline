@@ -152,7 +152,9 @@ jobs:
       - name: Draw the gallery on the base branch
         if: github.event_name == 'pull_request'
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          # Its own target directory: cargo hashes a workspace crate without its path, so in a
+          # shared one the branch's build would take the base's gallery binary as up to date.
+          CARGO_TARGET_DIR: ${{ runner.temp }}/base-target
         run: |
           git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
           cd "$RUNNER_TEMP/base"

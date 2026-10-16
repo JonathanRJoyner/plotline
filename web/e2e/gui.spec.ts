@@ -95,6 +95,21 @@ test("Fit to target meets its target", async ({ page }) => {
   expect(Math.abs(Number(achieved) / target - 1)).toBeLessThanOrEqual(0.02);
 });
 
+test("a plot lint finding's Apply clears it", async ({ page }) => {
+  let id = await pick(page, "hatch", await sample(page));
+  // Lines closer than the 0.3 mm default pen overlap; Apply sets the spacing to the pen's width.
+  const spacing = page.getByRole("spinbutton", { name: "spacing mm", exact: true });
+  await spacing.fill("0.2");
+  await spacing.blur();
+  id = await ran(page, id);
+  const apply = page.getByRole("button", { name: /^Apply: Marks .* closer than/ });
+  await expect(apply).toBeVisible();
+  await apply.click();
+  await ran(page, id);
+  await expect(spacing).toHaveValue("0.3");
+  await expect(apply).toHaveCount(0);
+});
+
 test("the thumbnail grid picks a style", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);
@@ -140,8 +155,10 @@ test("every tour step rings its element", async ({ page }) => {
   for (const [i, { target, title }] of STEPS.entries()) {
     await expect(card.locator("h2")).toHaveText(title);
     if (target) {
+      // Attached, not visible: a target may be empty until there is something to show, such as
+      // the lint list, and the card then sits in the middle of the window.
       const el = page.locator(`[data-tour="${target}"]`);
-      await expect(el, title).toBeVisible();
+      await expect(el, title).toBeAttached();
       await expect(el, title).toHaveAttribute("data-tour-active", "");
     } else {
       await expect(page.locator("[data-tour-active]"), title).toHaveCount(0);

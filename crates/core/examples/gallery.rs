@@ -12,7 +12,8 @@
 //! lands in the repository.
 //!
 //! `--snapshot <file>` also writes the stats as the committed snapshot,
-//! `tests/snapshots/gallery-stats.json`: one cell per line, lengths and times rounded to 0.001.
+//! `tests/snapshots/gallery-stats.json`: one cell per line, lengths and times rounded to 0.001,
+//! with the codes of the cell's plot lint findings.
 //! CI draws the gallery again and fails when the snapshot it writes differs from the committed
 //! one, so a change that moves a drawing shows in review as a diff of numbers.
 
@@ -93,7 +94,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     session.error(),
                     session.preview_png(WIDTH_PX, false, false, None),
                 ) {
-                    (None, Some(png)) => (png?, serde_json::to_value(session.stats())?),
+                    (None, Some(png)) => {
+                        let mut cell_stats = serde_json::to_value(session.stats())?;
+                        let lint = session.lint().unwrap_or_default();
+                        cell_stats["lint"] = json!(lint.iter().map(|f| f.code).collect::<Vec<_>>());
+                        (png?, cell_stats)
+                    }
                     (error, _) => {
                         let error = error.unwrap_or_else(|| "the run left no drawing".into());
                         (Vec::new(), json!({ "error": error }))
