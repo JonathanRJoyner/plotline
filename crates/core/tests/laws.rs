@@ -24,6 +24,8 @@ use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
 use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
+use plotline_core::optimize::{LONGEST, SLOWER, TRIALS};
+use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
@@ -1011,6 +1013,55 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
     });
 }
 
+/// The plot lint warnings and errors of the session's drawing, by code.
+fn warned(s: &Session) -> Vec<&'static str> {
+    (s.lint().unwrap_or_default().into_iter())
+        .filter(|f| matches!(f.severity, Severity::Warning | Severity::Error))
+        .map(|f| f.code)
+        .collect()
+}
+
+#[test]
+fn an_optimize_suggestion_keeps_the_limits() {
+    check("optimize", 8, case(dense_styles()), |c| {
+        let mut s = c.session();
+        run(&mut s)?;
+        if s.state() != RunState::Done {
+            return Ok(());
+        }
+        let minutes = s.stats().unwrap().estimated_seconds / 60.0;
+        let known = warned(&s);
+        let mut job = s.optimize(None).unwrap();
+        while job.next_frame().is_some() {}
+        if job.state() == RunState::Error {
+            prop_assert!(job.error().is_some_and(|e| !e.trim().is_empty()));
+            return Ok(());
+        }
+        prop_assert_eq!(job.state(), RunState::Done);
+        let Some(found) = job.result() else {
+            return Ok(());
+        };
+        prop_assert!(found.trials.len() <= TRIALS);
+        prop_assert_eq!(found.current_minutes, minutes);
+        // The suggestion, applied, plots in the time it reports, within the limit, and with no
+        // warning the current settings' drawing does not have.
+        s.update(&found.stage, &json!({ &found.key: found.value.clone() }))
+            .unwrap();
+        run(&mut s)?;
+        let after = s.stats().unwrap().estimated_seconds / 60.0;
+        prop_assert_eq!(after, found.minutes);
+        prop_assert!(
+            after <= (SLOWER * minutes).max(LONGEST),
+            "{after} min against {minutes}"
+        );
+        let new: Vec<_> = (warned(&s).into_iter())
+            .filter(|w| !known.contains(w))
+            .collect();
+        prop_assert!(new.is_empty(), "{} = {}: {new:?}", found.key, found.value);
+        Ok(())
+    });
+}
+
 #[test]
 fn a_test_chart_is_made_on_the_page_or_refused_with_a_message() {
     check("testchart", 48, (page(), pens()), |(pg, pens)| {
@@ -1200,6 +1251,56 @@ fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
             }
             prop_assert_eq!(j, p.len().max(1));
         }
+        Ok(())
+    });
+}
+
+/// A polyline of up to 40 vertices, a tolerance, and whether no three of its vertices are
+/// collinear: points on a coarse grid, which makes collinear and repeated vertices likely; free
+/// points; or an arc, which has none collinear, with a tolerance of 0.
+fn polyline() -> impl Strategy<Value = (Vec<[f64; 2]>, f64, bool)> {
+    let point = (-50.0..50.0f64, -50.0..50.0f64).prop_map(|(x, y)| [x, y]);
+    let grid = (-5..=5i32, -5..=5i32).prop_map(|(x, y)| [f64::from(x), f64::from(y)]);
+    let tolerance = prop_oneof![Just(0.0), 0.0..0.1f64, 0.0..5.0f64];
+    let arc = (1.0..100.0f64, 0.3..3.0f64, 3..40usize).prop_map(|(r, sweep, n)| {
+        let angle = |i: usize| sweep * i as f64 / (n - 1) as f64;
+        let line = (0..n).map(|i| [r * angle(i).cos(), r * angle(i).sin()]);
+        (line.collect(), 0.0, true)
+    });
+    prop_oneof![
+        (prop::collection::vec(grid, 0..40), tolerance.clone()).prop_map(|(l, t)| (l, t, false)),
+        (prop::collection::vec(point, 0..40), tolerance).prop_map(|(l, t)| (l, t, false)),
+        arc,
+    ]
+}
+
+#[test]
+fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero() {
+    check("simplify", 512, polyline(), |(line, tol, no_collinear)| {
+        let out = simplify(&line, tol);
+        prop_assert_eq!(out.first(), line.first());
+        prop_assert_eq!(out.last(), line.last());
+        // The output is the input with some vertices removed.
+        let mut rest = line.iter();
+        prop_assert!(
+            out.iter().all(|p| rest.any(|q| q == p)),
+            "{out:?} is not a subsequence"
+        );
+        prop_assert!(out.len() <= line.len());
+        // Every input vertex is within the tolerance of the output line.
+        for p in &line {
+            let off = (out.iter().zip(out.iter().skip(1)))
+                .map(|(a, b)| off_segment(*p, *a, *b))
+                .fold(f64::INFINITY, f64::min);
+            let off = if out.len() == 1 {
+                off_segment(*p, out[0], out[0])
+            } else {
+                off
+            };
+            prop_assert!(off <= tol + 1e-9, "{p:?} is {off} from {out:?}, over {tol}");
+        }
+        // Nothing is collinear, so a tolerance of 0 drops nothing.
+        prop_assert!(!no_collinear || out == line, "{out:?} lost vertices");
         Ok(())
     });
 }
