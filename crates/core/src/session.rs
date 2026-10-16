@@ -10,6 +10,7 @@
 //! own, and reads and writes files itself, passing the session bytes and taking text and bytes
 //! back. The CLI, the GUI and the MCP server call this layer and nothing below it.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -102,6 +103,9 @@ pub struct Session {
     style: Arc<Style>,
     /// Every stage's full settings object, keyed by stage name.
     settings: Value,
+    /// The settings, as `(stage, key)`, that the user set to something other than the style's
+    /// default; a style switch keeps these.
+    changed: BTreeSet<(String, String)>,
     speeds: Speeds,
     cache: Arc<Mutex<StageCache>>,
     shared: Arc<Mutex<Shared>>,
@@ -124,6 +128,7 @@ impl Session {
             pens: vec![Pen::new("Black 0.3", 0.3, "#000000").expect("the default pen is valid")],
             machine: None,
             settings: style.defaults(),
+            changed: BTreeSet::new(),
             style,
             speeds: Speeds::default(),
             cache: Arc::new(Mutex::new(StageCache::new(cache_bytes))),
@@ -206,25 +211,19 @@ impl Session {
     }
 
     /// Switch to the built-in style called `name`. Every stage starts from the new style's
-    /// defaults, and a stage the old style also has keeps each value that differs from the old
-    /// style's default, so a style's own defaults still apply where the user changed nothing. A
-    /// stage name means one schema, so the kept values stay valid. The cache is kept, so a shared
-    /// stage with the same settings and inputs, such as the Voronoi points, is not run again.
+    /// defaults, and a stage the old style also has keeps each value the user set to something
+    /// other than a default, so a style's own defaults still apply where the user changed nothing.
+    /// A value stays set until the user sets it back to the style's default, even when it equals
+    /// the default of a style switched through, so switching away and back returns it. A stage
+    /// name means one schema, so the kept values stay valid. The cache is kept, so a shared stage
+    /// with the same settings and inputs, such as the Voronoi points, is not run again.
     pub fn set_style(&mut self, name: &str) -> Result<(), SessionError> {
         let style = get_style(name).ok_or_else(|| SessionError::UnknownStyle(name.to_string()))?;
-        let old = self.style.defaults();
         let mut settings = style.defaults();
-        for (stage, values) in settings.as_object_mut().expect("defaults are an object") {
-            let (Some(Value::Object(current)), Some(Value::Object(defaults))) =
-                (self.settings.get(stage), old.get(stage))
-            else {
-                continue;
-            };
-            for (key, value) in current {
-                if !defaults.get(key).is_some_and(|d| same(d, value)) {
-                    values[key] = value.clone();
-                }
-            }
+        self.changed
+            .retain(|(stage, _)| style.stage_index(stage).is_some());
+        for (stage, key) in &self.changed {
+            settings[stage][key] = self.settings[stage][key].clone();
         }
         self.settings = settings;
         self.style = style;
@@ -234,6 +233,7 @@ impl Session {
     /// Put every stage of the style, Pen use included, back to the style's defaults.
     pub fn reset_settings(&mut self) {
         self.settings = self.style.defaults();
+        self.changed.clear();
     }
 
     /// Every stage's full settings object, keyed by stage name.
@@ -254,6 +254,15 @@ impl Session {
         };
         let merged = merge(&self.settings[stage], patch);
         validate::<Value>(stage, &self.style.stages[index].schema(), &merged)?;
+        let defaults = self.style.defaults();
+        for (key, value) in patch.as_object().into_iter().flatten() {
+            let mark = (stage.to_string(), key.clone());
+            if same(value, &defaults[stage][key]) {
+                self.changed.remove(&mark);
+            } else {
+                self.changed.insert(mark);
+            }
+        }
         self.settings[stage] = merged;
         Ok(())
     }
@@ -355,7 +364,9 @@ impl Session {
         let image = self.image.clone().ok_or(SessionError::NoImage)?;
         // Switch and switch back, so a trial gets whatever settings a real switch would.
         let (style, settings) = (self.style.clone(), self.settings.clone());
+        let changed = self.changed.clone();
         self.set_style(name)?;
+        self.changed = changed;
         let style = std::mem::replace(&mut self.style, style);
         let settings = std::mem::replace(&mut self.settings, settings);
         let slot = Arc::<Mutex<Shared>>::default();
@@ -619,6 +630,17 @@ mod tests {
         s.set_style("hatch").unwrap();
         assert_eq!(s.settings()["tone"]["gamma"], 1.4);
         assert_eq!(s.settings()["split"]["mode"], "light_to_dark");
+        // A value the user set comes back after a switch away and back, even when it is the
+        // default of the style in between: 1 is hatch's gamma.
+        s.set_style("waves").unwrap();
+        s.update("tone", &json!({"gamma": 1.0})).unwrap();
+        s.set_style("hatch").unwrap();
+        s.set_style("waves").unwrap();
+        assert_eq!(s.settings()["tone"]["gamma"], 1.0);
+        // Set back to the style's default, it is no longer the user's.
+        s.update("tone", &json!({"gamma": 1.9})).unwrap();
+        s.set_style("hatch").unwrap();
+        assert_eq!(s.settings()["tone"]["gamma"], 1.0);
         // A preset starts from its style's defaults, whatever the session held.
         let mut v = Session::new(1 << 20).preset();
         let stages = v["settings"].as_object_mut().unwrap();

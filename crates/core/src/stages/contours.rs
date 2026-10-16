@@ -118,20 +118,30 @@ impl Stage for ContourStage {
                 }
             }),
         );
-        Ok(Box::new(Budgeted::new(run, VERTEX_BUDGET)))
+        Ok(Box::new(Budgeted::new(run, VERTEX_BUDGET, TOO_BIG)))
     }
 }
 
-/// A run that fails once its paths pass `limit` vertices. Contour lines cannot be counted before
-/// they are traced, so each frame's paths, which are all the paths so far, are counted instead.
-struct Budgeted {
+/// What the run fails with once it passes [`VERTEX_BUDGET`].
+const TOO_BIG: &str =
+    "these contours need over 20 million vertices; raise smooth mm or use fewer levels";
+
+/// A run that fails with `message` once its paths pass `limit` vertices. Contour lines and
+/// scribbles cannot be counted before they are made, so each frame's paths, which are all the
+/// paths so far, are counted instead.
+pub(crate) struct Budgeted {
     run: ChunkRun,
     limit: usize,
+    message: &'static str,
 }
 
 impl Budgeted {
-    fn new(run: ChunkRun, limit: usize) -> Budgeted {
-        Budgeted { run, limit }
+    pub(crate) fn new(run: ChunkRun, limit: usize, message: &'static str) -> Budgeted {
+        Budgeted {
+            run,
+            limit,
+            message,
+        }
     }
 }
 
@@ -144,10 +154,7 @@ impl StageRun for Budgeted {
             Step::Done(_) => 0,
         };
         if made > self.limit {
-            return Err(StageError::Failed(format!(
-                "these contours need over {} million vertices; raise smooth mm or use fewer levels",
-                self.limit / 1_000_000
-            )));
+            return Err(StageError::Failed(self.message.to_string()));
         }
         Ok(step)
     }
@@ -330,7 +337,7 @@ mod tests {
             "levels",
             Box::new(|_, paths, _| paths.push(&[[0.0, 0.0]; 10])),
         );
-        let mut run = Budgeted::new(run, 25);
+        let mut run = Budgeted::new(run, 25, TOO_BIG);
         let results: Vec<_> = std::iter::from_fn(|| match run.step() {
             Ok(Step::Done(_)) => None,
             other => Some(other),

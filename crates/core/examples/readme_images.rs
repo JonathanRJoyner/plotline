@@ -20,7 +20,9 @@ const W: u32 = 600;
 const H: u32 = 875;
 
 /// The styles in the README's picture table, in its order.
-const STYLES: [&str; 6] = ["grid", "hatch", "waves", "spiral", "ink", "truchet"];
+const STYLES: [&str; 8] = [
+    "grid", "hatch", "waves", "spiral", "ink", "scribble", "mosaic", "truchet",
+];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = Path::new("docs/images");

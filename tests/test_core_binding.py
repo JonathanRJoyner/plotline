@@ -50,6 +50,8 @@ def test_styles_and_schema():
         "contours",
         "flow",
         "hilbert",
+        "scribble",
+        "mosaic",
         "truchet",
     ]
     assert (
