@@ -23,6 +23,7 @@ use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
 use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
+use plotline_core::preview::render_rgba;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
@@ -1104,3 +1105,48 @@ fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
         Ok(())
     });
 }
+
+/// How far, per channel, a picture on coloured paper may differ from the white-paper picture
+/// multiplied by the paper. tiny-skia blends in 8-bit fixed point and rounds at every step, and a
+/// pixel is blended once for the outline and once for each layer's lines and dots, at most seven
+/// times for three pens; `DEV_MAX` measured the real difference.
+const PAPER_SLACK: u32 = 16;
+
+#[test]
+fn the_paper_multiplies_under_the_drawing() {
+    let strategy = (case(all_styles()), any::<[u8; 3]>());
+    check("paper", 24, strategy, |(c, rgb)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let paper = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
+        let (w, h, white) = render_rgba(&d, 200, "#ffffff", false, false, None);
+        let (w2, h2, tinted) = render_rgba(&d, 200, &paper, false, false, None);
+        prop_assert_eq!((w, h), (w2, h2));
+        prop_assert_eq!(white.len(), 4 * (w * h) as usize);
+        prop_assert_eq!(tinted.len(), white.len());
+        for (i, (a, b)) in white.chunks(4).zip(tinted.chunks(4)).enumerate() {
+            prop_assert!(a[3] == 255 && b[3] == 255, "pixel {i} is not opaque");
+            for k in 0..3 {
+                let want = (u32::from(a[k]) * u32::from(rgb[k]) + 127) / 255;
+                let off = u32::from(b[k]).abs_diff(want);
+                DEV_MAX.fetch_max(off, std::sync::atomic::Ordering::Relaxed);
+                prop_assert!(
+                    off <= PAPER_SLACK,
+                    "pixel {i} channel {k}: {} on {paper}, white gave {}, expected {want}",
+                    b[k],
+                    a[k]
+                );
+            }
+        }
+        Ok(())
+    });
+    eprintln!(
+        "DEV_MAX {}",
+        DEV_MAX.load(std::sync::atomic::Ordering::Relaxed)
+    );
+}
+
+static DEV_MAX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

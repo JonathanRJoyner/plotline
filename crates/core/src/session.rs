@@ -1,9 +1,10 @@
 //! The session: one working context that holds the state a front end edits and the latest result.
 //!
-//! A [`Session`] holds the source image, the canvas, the pens, the chosen style with the settings
-//! of each of its stages, the plot speeds, the stage cache its runs share, and the result slot
-//! its runs write: the latest drawing, the run state and the error. [`Session::start`] hands back
-//! a [`Run`] for the host to drive a frame at a time, and the outputs are read from the slot.
+//! A [`Session`] holds the source image, the canvas, the pens, the paper colour, the chosen style
+//! with the settings of each of its stages, the plot speeds, the stage cache its runs share, and
+//! the result slot its runs write: the latest drawing, the run state and the error.
+//! [`Session::start`] hands back a [`Run`] for the host to drive a frame at a time, and the
+//! outputs are read from the slot.
 //!
 //! The session holds no threads, files or network code, so it runs the same natively and in
 //! WebAssembly. Hosts add those: a host drives the [`Run`] on a worker thread or in a loop of its
@@ -35,7 +36,7 @@ use crate::stage::Artifact;
 use crate::stats::{self, Speeds, Stats};
 use crate::style::{same, Look, Style, StyleError};
 use crate::tone_match::ToneMatch;
-use crate::types::{Canvas, Drawing, Fit, Image, Pen, TypeError};
+use crate::types::{check_color, Canvas, Drawing, Fit, Image, Pen, TypeError, DEFAULT_PAPER};
 
 /// Why a session refused a change or could not start a run; the message is shown to users.
 #[derive(Debug, Error)]
@@ -107,6 +108,9 @@ pub struct Session {
     image_stats: Option<ImageStats>,
     canvas: Canvas,
     pens: Vec<Pen>,
+    /// The colour of the paper, written as `#rrggbb`. Only the preview and the preset read it,
+    /// so no stage's cache key holds it and changing it reruns nothing.
+    paper: String,
     /// The machine the G-code export writes for, if one is set.
     machine: Option<Machine>,
     style: Arc<Style>,
@@ -126,8 +130,8 @@ pub struct Session {
 
 impl Session {
     /// A session with a stage cache of `cache_bytes`, no image, an A4 page with a 10 mm margin
-    /// that fits the image, the pen "Black 0.3", the `grid` style at its defaults, the default
-    /// speeds and no run.
+    /// that fits the image, white paper, the pen "Black 0.3", the `grid` style at its defaults,
+    /// the default speeds and no run.
     pub fn new(cache_bytes: usize) -> Session {
         let style = get_style("grid").expect("the grid style is built in");
         Session {
@@ -135,6 +139,7 @@ impl Session {
             image_stats: None,
             canvas: Canvas::new(210.0, 297.0, 10.0, Fit::Fit).expect("A4 is a valid canvas"),
             pens: vec![Pen::new("Black 0.3", 0.3, "#000000").expect("the default pen is valid")],
+            paper: DEFAULT_PAPER.to_string(),
             machine: None,
             settings: style.defaults(),
             changed: BTreeSet::new(),
@@ -201,6 +206,20 @@ impl Session {
             return Err(SessionError::NoPens);
         }
         self.pens = pens;
+        Ok(())
+    }
+
+    /// The colour of the paper, written as `#rrggbb`: [`DEFAULT_PAPER`] until it is set.
+    pub fn paper(&self) -> &str {
+        &self.paper
+    }
+
+    /// Use `color`, written as `#rrggbb`, as the paper the preview shows. Fails, changing
+    /// nothing, for anything else. The paper is no input of any stage, so a run in progress and
+    /// the cache are not touched.
+    pub fn set_paper(&mut self, color: &str) -> Result<(), SessionError> {
+        check_color("paper", color)?;
+        self.paper = color.to_string();
         Ok(())
     }
 
@@ -511,11 +530,13 @@ impl Session {
             .map(|d| json::to_value(&d, self.embedded_preset(&d).as_ref()))
     }
 
-    /// The preset of the run that made `d` with the session's machine in place of the run's null
-    /// one, so loading an export later keeps the user's machine. `None` for a drawing no run made.
+    /// The preset of the run that made `d` with the session's machine and paper in place of the
+    /// run's null one and white, so loading an export later keeps the user's machine and paper.
+    /// `None` for a drawing no run made.
     fn embedded_preset(&self, d: &Drawing) -> Option<Value> {
         let mut preset = d.preset.clone()?;
         preset["machine"] = json!(self.machine);
+        preset["paper"] = json!(self.paper);
         Some(preset)
     }
 
@@ -573,8 +594,8 @@ impl Session {
         Some((drawing, measure))
     }
 
-    /// The last finished drawing as PNG bytes `width_px` wide, of the page or of `region`, in page
-    /// mm as `[x, y, width, height]`; see [`preview::render_png`].
+    /// The last finished drawing as PNG bytes `width_px` wide on the session's paper, of the page
+    /// or of `region`, in page mm as `[x, y, width, height]`; see [`preview::render_png`].
     pub fn preview_png(
         &self,
         width_px: u32,
@@ -583,23 +604,24 @@ impl Session {
         region: Option<[f64; 4]>,
     ) -> Option<Result<Vec<u8>, PreviewError>> {
         self.drawing()
-            .map(|d| preview::render_png(&d, width_px, travel, source, region))
+            .map(|d| preview::render_png(&d, width_px, &self.paper, travel, source, region))
     }
 
-    /// The style, canvas, pens and settings as a preset.
+    /// The style, canvas, pens, machine, paper and settings as a preset.
     pub fn preset(&self) -> Value {
         presets::to_value(
             &self.style.name,
             &self.canvas,
             &self.pens,
             self.machine.as_ref(),
+            &self.paper,
             &self.settings,
         )
     }
 
-    /// Apply the preset `v`: its style with every stage at its defaults, its canvas, its pens,
-    /// then its settings stage by stage in the style's order, so a key the preset leaves out
-    /// takes its default. Returns one warning for each setting a stage does not have, then one for
+    /// Apply the preset `v`: its style with every stage at its defaults, its canvas, its paper
+    /// (white when it has none), its pens, then its settings stage by stage in the style's order,
+    /// so a key the preset leaves out takes its default. Returns one warning for each setting a stage does not have, then one for
     /// each stage the style does not have, sorted by name; all of them are dropped.
     ///
     /// Fails before anything changes when [`presets::parse`] rejects `v`. An unknown style or a
@@ -610,6 +632,7 @@ impl Session {
         self.set_style(&data.style)?;
         self.reset_settings();
         self.set_canvas(data.canvas);
+        self.set_paper(&data.paper)?;
         self.set_pens(data.pens)?;
         self.set_machine(data.machine)?;
         let mut warnings = Vec::new();
@@ -936,6 +959,57 @@ mod tests {
         assert_eq!(s.cache_stats().hits, 5);
     }
     #[test]
+    fn the_paper_is_white_until_set_and_takes_only_rrggbb() {
+        let mut s = Session::new(1 << 20);
+        assert_eq!(s.paper(), "#ffffff");
+        assert_eq!(s.paper(), DEFAULT_PAPER);
+        s.set_paper("#f5f0e1").unwrap();
+        assert_eq!(s.paper(), "#f5f0e1");
+        for bad in ["cream", "#fff"] {
+            let e = s.set_paper(bad).unwrap_err().to_string();
+            assert_eq!(e, format!("paper must be written as #rrggbb, got {bad:?}"));
+            assert_eq!(s.paper(), "#f5f0e1");
+        }
+    }
+    #[test]
+    fn a_new_paper_reruns_nothing_and_repaints() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(gradient(64, 48));
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        let mut r = s.start().unwrap();
+        while r.next_frame().is_some() {}
+        let white = s.preview_png(100, false, false, None).unwrap().unwrap();
+        s.set_paper("#000000").unwrap();
+        let black = s.preview_png(100, false, false, None).unwrap().unwrap();
+        assert_ne!(white, black);
+        let mut r = s.start().unwrap();
+        let mut labels = vec![];
+        while let Some(f) = r.next_frame() {
+            labels.push(f.label);
+        }
+        assert_eq!(labels, vec!["cached"; 5]);
+    }
+    #[test]
+    fn the_paper_rides_in_the_preset() {
+        let mut s = Session::new(1 << 20);
+        assert_eq!(s.preset()["paper"], "#ffffff");
+        s.set_paper("#f5f0e1").unwrap();
+        assert_eq!(s.preset()["paper"], "#f5f0e1");
+        let mut t = Session::new(1 << 20);
+        assert!(t.load_preset(&s.preset()).unwrap().is_empty());
+        assert_eq!(t.paper(), "#f5f0e1");
+        // A preset without the key is white paper.
+        let mut v = s.preset();
+        v.as_object_mut().unwrap().remove("paper");
+        assert!(t.load_preset(&v).unwrap().is_empty());
+        assert_eq!(t.paper(), DEFAULT_PAPER);
+        // A bad paper is refused before anything changes.
+        t.set_paper("#112233").unwrap();
+        v["paper"] = json!("cream");
+        assert!(t.load_preset(&v).is_err());
+        assert_eq!(t.paper(), "#112233");
+    }
+    #[test]
     fn switching_voronoi_style_at_the_defaults_reuses_the_points() {
         let mut s = Session::new(256 << 20);
         s.set_image(gradient(64, 48));
@@ -1185,9 +1259,10 @@ mod tests {
     }
 
     #[test]
-    fn exports_load_back_as_the_runs_own_preset_with_the_sessions_machine() {
+    fn exports_load_back_as_the_runs_own_preset_with_the_sessions_machine_and_paper() {
         let mut s = Session::new(1 << 20);
         s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.set_paper("#f5f0e1").unwrap();
         s.set_pens(vec![Pen::new("A & <B>", 0.4, "#112233").unwrap()])
             .unwrap();
         s.update("tone", &json!({"resolution": 64})).unwrap();
@@ -1202,12 +1277,15 @@ mod tests {
             assert!(t.load_preset(&v).unwrap().is_empty());
             assert_eq!(t.preset(), sent);
         }
-        // Later changes do not reach the drawing's own preset, but the machine is the session's.
+        // Later changes do not reach the drawing's own preset, but the machine and the paper are
+        // the session's.
         s.update("points", &json!({"spacing_mm": 4.0})).unwrap();
         s.set_machine(Some(crate::test_util::machine())).unwrap();
+        s.set_paper("#202020").unwrap();
         let v = presets::from_text(&s.svg().unwrap()).unwrap();
         assert_eq!(v["settings"]["points"]["spacing_mm"], 3.0);
         assert_eq!(v["machine"], s.preset()["machine"]);
+        assert_eq!(v["paper"], "#202020");
         assert_eq!(s.json().unwrap()["preset"], v);
     }
 

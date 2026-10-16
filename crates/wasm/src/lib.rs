@@ -97,6 +97,18 @@ impl Session {
         Ok(())
     }
 
+    /// The colour of the paper the preview shows, written as `#rrggbb`; white until it is set.
+    pub fn paper(&self) -> String {
+        self.inner.paper().to_string()
+    }
+
+    /// Use `color`, written as `#rrggbb`, as the paper the preview shows. Anything else is
+    /// refused and changes nothing. No run is touched, so only the next preview differs.
+    #[wasm_bindgen(js_name = setPaper)]
+    pub fn set_paper(&mut self, color: &str) -> Result<(), JsError> {
+        Ok(self.inner.set_paper(color)?)
+    }
+
     /// Use a list of `{"name", "width_mm", "color"}` as the pens, in drawing order.
     #[wasm_bindgen(js_name = setPens)]
     pub fn set_pens(&mut self, json: &str) -> Result<(), JsError> {
@@ -211,11 +223,12 @@ impl Session {
     }
 
     /// A run of the style `name` at the settings a switch to it would give, which shares the
-    /// cache but leaves the session's style, settings, latest run and drawing alone. Fails for an
-    /// unknown style or when no image is set.
+    /// cache but leaves the session's style, settings, latest run and drawing alone. Its preview
+    /// is on the session's paper as it is now. Fails for an unknown style or when no image is set.
     pub fn trial(&mut self, name: &str) -> Result<Trial, JsError> {
         let (run, slot) = self.inner.trial(name)?;
-        Ok(Trial { run, slot })
+        let paper = self.inner.paper().to_string();
+        Ok(Trial { run, slot, paper })
     }
 
     /// `idle`, `running`, `done`, `cancelled` or `error`, for the latest run.
@@ -262,8 +275,8 @@ impl Session {
         self.inner.analysis().map(|a| json!(a).to_string())
     }
 
-    /// The last finished drawing as PNG bytes `width` pixels wide, with the travel moves and the
-    /// source image when asked.
+    /// The last finished drawing as PNG bytes `width` pixels wide on the session's paper, with the
+    /// travel moves and the source image when asked.
     #[wasm_bindgen(js_name = previewPng)]
     pub fn preview_png(
         &self,
@@ -277,7 +290,7 @@ impl Session {
             .transpose()?)
     }
 
-    /// The style, canvas, pens and settings as a JSON preset.
+    /// The style, canvas, pens, machine, paper and settings as a JSON preset.
     pub fn preset(&self) -> String {
         self.inner.preset().to_string()
     }
@@ -342,6 +355,8 @@ impl Run {
 pub struct Trial {
     run: plotline_core::Run,
     slot: Arc<Mutex<Shared>>,
+    /// The session's paper when the trial was made.
+    paper: String,
 }
 
 #[wasm_bindgen]
@@ -357,12 +372,13 @@ impl Trial {
         self.run.error()
     }
 
-    /// The drawing as PNG bytes `width` pixels wide, once the run is done.
+    /// The drawing as PNG bytes `width` pixels wide on the paper the session had when the trial
+    /// was made, once the run is done.
     #[wasm_bindgen(js_name = previewPng)]
     pub fn preview_png(&self, width: u32) -> Result<Option<Vec<u8>>, JsError> {
         let drawing = self.slot.lock().unwrap().drawing.clone();
         Ok(drawing
-            .map(|d| preview::render_png(&d, width, false, false, None))
+            .map(|d| preview::render_png(&d, width, &self.paper, false, false, None))
             .transpose()?)
     }
 }

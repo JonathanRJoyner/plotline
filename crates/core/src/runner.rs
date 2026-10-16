@@ -32,7 +32,7 @@ use crate::stage::{
     Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
 };
 use crate::style::{Source, Style};
-use crate::types::{Canvas, Drawing, Layer, Paths, Pen, ToneMap};
+use crate::types::{Canvas, Drawing, Layer, Paths, Pen, ToneMap, DEFAULT_PAPER};
 
 /// `v` as JSON with object keys sorted and no whitespace, so equal values give equal text.
 pub fn canonical_json(v: &Value) -> String {
@@ -518,8 +518,15 @@ impl Run {
                 _ => None,
             });
         // The run's own snapshot, not the session's state, which may have moved on; it holds no
-        // machine, so the session fills that in when it exports.
-        let preset = presets::to_value(&self.style.name, canvas, pens, None, &self.settings);
+        // machine and no paper, so the session fills those in when it exports.
+        let preset = presets::to_value(
+            &self.style.name,
+            canvas,
+            pens,
+            None,
+            DEFAULT_PAPER,
+            &self.settings,
+        );
         Ok(Drawing {
             canvas: Canvas::clone(canvas),
             layers,
