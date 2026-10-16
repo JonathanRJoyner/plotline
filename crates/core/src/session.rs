@@ -25,6 +25,7 @@ use crate::fit::{places_points, Density, FitRun, Metric};
 use crate::image::{self, ImageError};
 use crate::lint::{self, Finding, Measure};
 use crate::machine::{Machine, MachineError};
+use crate::optimize::{Budget, OptimizeRun};
 use crate::presets::{self, PresetError};
 use crate::preview::{self, PreviewError};
 use crate::registry::get_style;
@@ -33,6 +34,7 @@ use crate::settings::{merge, validate, SettingsError};
 use crate::stage::Artifact;
 use crate::stats::{self, Speeds, Stats};
 use crate::style::{Style, StyleError};
+use crate::tone_match::ToneMatch;
 use crate::types::{Canvas, Drawing, Fit, Image, Pen, TypeError};
 
 /// Why a session refused a change or could not start a run; the message is shown to users.
@@ -306,26 +308,8 @@ impl Session {
     /// points.
     pub fn fit(&mut self, metric: &str, target: f64) -> Result<FitRun, SessionError> {
         let image = self.image.clone().ok_or(SessionError::NoImage)?;
-        let name = &self.style.name;
-        let refuse = |message: String| Err(SessionError::Fit(message));
-        let Some(metric) = Metric::parse(metric) else {
-            let names: Vec<&str> = Metric::ALL.iter().map(|m| m.name()).collect();
-            return refuse(format!(
-                "unknown metric {metric:?}; use {}",
-                names.join(", ")
-            ));
-        };
-        if !(target.is_finite() && target > 0.0) {
-            return refuse(format!("the target must be a number above 0, got {target}"));
-        }
-        let Some(density) = Density::of(&self.style) else {
-            return refuse(format!("style {name:?} has no density setting to fit"));
-        };
-        if metric == Metric::Dots && !places_points(&self.style) {
-            return refuse(format!(
-                "style {name:?} places no dots; fit minutes, paths or metres"
-            ));
-        }
+        let density = self.density()?;
+        let metric = self.metric(metric, target)?;
         let generation = self.claim();
         Ok(FitRun::new(
             self.style.clone(),
@@ -340,6 +324,67 @@ impl Session {
             metric,
             target,
         ))
+    }
+
+    /// Cancel the latest run and return a search of the style's density setting for the value
+    /// whose drawing follows the tone map most closely, with every trial's `metric` (as for
+    /// [`Session::fit`]) at most `target` when a budget is given; see
+    /// [`optimize`](crate::optimize). It works over a snapshot of the session and claims the result
+    /// slot as [`Session::start`] does, and ends with the drawing of the current settings. The
+    /// settings stay as they are: [`OptimizeRun::result`] suggests a patch, applied only with
+    /// [`Session::update`].
+    ///
+    /// Fails, changing nothing, as [`Session::fit`] does.
+    pub fn optimize(&mut self, budget: Option<(&str, f64)>) -> Result<OptimizeRun, SessionError> {
+        let image = self.image.clone().ok_or(SessionError::NoImage)?;
+        let density = self.density()?;
+        let budget = match budget {
+            Some((metric, target)) => Some(Budget {
+                metric: self.metric(metric, target)?,
+                target,
+            }),
+            None => None,
+        };
+        let generation = self.claim();
+        Ok(OptimizeRun::new(
+            self.style.clone(),
+            self.settings.clone(),
+            self.roots(image),
+            self.cache.clone(),
+            self.shared.clone(),
+            self.cancel.clone(),
+            generation,
+            self.speeds,
+            density,
+            budget,
+        ))
+    }
+
+    /// The style's density setting, or why it has none.
+    fn density(&self) -> Result<Density, SessionError> {
+        Density::of(&self.style).ok_or_else(|| {
+            let name = &self.style.name;
+            SessionError::Fit(format!("style {name:?} has no density setting to fit"))
+        })
+    }
+
+    /// The metric called `name` for a `target`, or why the pair is refused.
+    fn metric(&self, name: &str, target: f64) -> Result<Metric, SessionError> {
+        let refuse = |message: String| Err(SessionError::Fit(message));
+        let Some(metric) = Metric::parse(name) else {
+            let names: Vec<&str> = Metric::ALL.iter().map(|m| m.name()).collect();
+            return refuse(format!("unknown metric {name:?}; use {}", names.join(", ")));
+        };
+        if !(target.is_finite() && target > 0.0) {
+            return refuse(format!("the target must be a number above 0, got {target}"));
+        }
+        if metric == Metric::Dots && !places_points(&self.style) {
+            let style = &self.style.name;
+            return refuse(format!(
+                "style {style:?} places no dots; fit minutes, paths or metres"
+            ));
+        }
+        Ok(metric)
     }
 
     /// Cancel the latest run, give the next one a fresh cancel flag, and show the slot as running
@@ -435,18 +480,7 @@ impl Session {
     /// nothing; the findings are worked out on each call from the current style, settings, pens,
     /// speeds and machine, so their patches start from the current settings.
     pub fn lint(&self) -> Option<Vec<Finding>> {
-        let drawing = self.drawing()?;
-        let measure = {
-            let mut measured = self.measured.lock().unwrap();
-            match &*measured {
-                Some((d, m)) if Weak::ptr_eq(d, &Arc::downgrade(&drawing)) => m.clone(),
-                _ => {
-                    let m = Arc::new(lint::measure(&drawing));
-                    *measured = Some((Arc::downgrade(&drawing), m.clone()));
-                    m
-                }
-            }
-        };
+        let (drawing, measure) = self.measure()?;
         Some(lint::check(
             &drawing,
             &measure,
@@ -456,6 +490,29 @@ impl Session {
             self.speeds,
             self.machine.as_ref(),
         ))
+    }
+
+    /// How the last finished drawing's tones follow its tone map; see [`crate::tone_match`]. It
+    /// comes from the same measurement as [`Session::lint`]. `None` without a drawing, and when
+    /// there is nothing to compare.
+    pub fn tone_match(&self) -> Option<ToneMatch> {
+        self.measure()?.1.tone_match
+    }
+
+    /// The last finished drawing and its plot lint measurement, taken on the first call after
+    /// the drawing is made and kept until it changes.
+    fn measure(&self) -> Option<(Arc<Drawing>, Arc<Measure>)> {
+        let drawing = self.drawing()?;
+        let mut measured = self.measured.lock().unwrap();
+        let measure = match &*measured {
+            Some((d, m)) if Weak::ptr_eq(d, &Arc::downgrade(&drawing)) => m.clone(),
+            _ => {
+                let m = Arc::new(lint::measure(&drawing));
+                *measured = Some((Arc::downgrade(&drawing), m.clone()));
+                m
+            }
+        };
+        Some((drawing, measure))
     }
 
     /// The last finished drawing as PNG bytes `width_px` wide, of the page or of `region`, in page
@@ -780,6 +837,168 @@ mod tests {
         while latest.next_frame().is_some() {}
         assert_eq!(s.state(), RunState::Done); // the trial did not cancel it
     }
+    /// Run `s` to the end and return its frames' stages and labels.
+    fn drain(s: &mut Session) -> Vec<(String, String)> {
+        let mut run = s.start().unwrap();
+        let mut seen = vec![];
+        while let Some(f) = run.next_frame() {
+            seen.push((f.stage, f.label));
+        }
+        assert_eq!(s.state(), RunState::Done, "{:?}", s.error());
+        seen
+    }
+
+    #[test]
+    fn auto_response_runs_the_wedge_first_and_keeps_the_tone_map() {
+        let mut s = Session::new(256 << 20);
+        s.set_image(gradient(96, 64));
+        s.set_canvas(Canvas::new(120.0, 80.0, 0.0, Fit::Fit).unwrap());
+        s.set_style("circles").unwrap();
+        s.update("tone", &json!({"resolution": 96})).unwrap();
+        let off = drain(&mut s);
+        assert!(off.iter().all(|(_, label)| !label.starts_with("response")));
+        let plain = s.drawing().unwrap();
+        s.update("tone", &json!({"response": "auto"})).unwrap();
+        let auto = drain(&mut s);
+        let wedge: Vec<_> = auto
+            .iter()
+            .filter(|(_, l)| l.starts_with("response: "))
+            .collect();
+        assert!(!wedge.is_empty() && wedge.iter().all(|(stage, _)| stage == "tone"));
+        let drawn = s.drawing().unwrap();
+        // The drawing keeps the tone map as the tone stage made it, and its marks change.
+        assert_eq!(
+            drawn.tone.as_ref().unwrap().ink,
+            plain.tone.as_ref().unwrap().ink
+        );
+        assert_ne!(drawn.layers[0].paths, plain.layers[0].paths);
+        // A second run finds the wedge and every stage cached.
+        let again = drain(&mut s);
+        assert!(
+            again.iter().all(|(_, l)| l.ends_with("cached")),
+            "{again:?}"
+        );
+        assert_eq!(s.drawing().unwrap().layers[0].paths, drawn.layers[0].paths);
+        // Larger circles change the response, so the placer before them runs again, which with
+        // the response off it would not.
+        s.update("stipple", &json!({"size_mm": 2.0})).unwrap();
+        let larger = drain(&mut s);
+        assert!(larger
+            .iter()
+            .any(|(stage, l)| stage == "poisson" && l != "cached"));
+        s.update("tone", &json!({"response": "off"})).unwrap();
+        drain(&mut s);
+        s.update("stipple", &json!({"size_mm": 2.5})).unwrap();
+        let plain = drain(&mut s);
+        assert!(plain
+            .iter()
+            .any(|(stage, l)| stage == "poisson" && l == "cached"));
+    }
+
+    #[test]
+    fn a_cancel_during_the_wedge_cancels_the_run() {
+        let mut s = Session::new(256 << 20);
+        s.set_image(gradient(64, 48));
+        s.set_style("circles").unwrap();
+        s.update("tone", &json!({"resolution": 64, "response": "auto"}))
+            .unwrap();
+        let mut run = s.start().unwrap();
+        let first = run.next_frame().unwrap();
+        assert!(first.label.starts_with("response: "), "{}", first.label);
+        run.cancel();
+        assert!(run.next_frame().is_none());
+        assert_eq!(run.state(), RunState::Cancelled);
+    }
+
+    #[test]
+    fn auto_response_lowers_the_tone_error_of_the_joined_point_styles() {
+        // Joined points cover the paper as the square root of their density, the clearest bend
+        // a style has, so on a gradient the correction must pay off.
+        for style in ["line", "tree", "mesh"] {
+            let mut s = Session::new(256 << 20);
+            s.set_image(gradient(300, 200));
+            s.set_canvas(Canvas::new(150.0, 100.0, 0.0, Fit::Fit).unwrap());
+            s.set_style(style).unwrap();
+            s.update("voronoi", &json!({"count": 1500, "iterations": 10}))
+                .unwrap();
+            drain(&mut s);
+            let off = s.tone_match().unwrap();
+            s.update("tone", &json!({"response": "auto"})).unwrap();
+            drain(&mut s);
+            let auto = s.tone_match().unwrap();
+            assert!(auto.error < off.error, "{style}: {auto:?} against {off:?}");
+        }
+    }
+
+    #[test]
+    fn optimize_suggests_a_spacing_and_leaves_the_settings_alone() {
+        let mut s = Session::new(256 << 20);
+        s.set_image(still_life(120, 175));
+        s.set_canvas(Canvas::new(60.0, 87.5, 0.0, Fit::Fit).unwrap());
+        s.set_style("hatch").unwrap();
+        s.update("tone", &json!({"resolution": 175})).unwrap();
+        assert!(s.optimize(Some(("nope", 1.0))).is_err());
+        let settings = s.settings().clone();
+        let mut job = s.optimize(None).unwrap();
+        let mut labels = vec![];
+        while let Some(f) = job.next_frame() {
+            if f.stage == "optimize" {
+                labels.push(f.label);
+            }
+        }
+        assert_eq!(labels.len(), crate::optimize::TRIALS);
+        assert!(
+            labels[0].starts_with("try 1 of 8: spacing_mm 1: tone error"),
+            "{labels:?}"
+        );
+        let found = job.result().unwrap();
+        assert_eq!(s.settings(), &settings);
+        assert_eq!(s.state(), RunState::Done);
+        // The session shows the drawing of the current settings, which the first trial made.
+        drain(&mut s);
+        let drawn = s.drawing().unwrap();
+        assert_eq!(found.current, json!(1.0));
+        assert!(found.error <= found.current_error.unwrap());
+        assert_eq!(found.patch.is_some(), found.value != found.current);
+        assert!(!drawn.layers[0].paths.is_empty());
+        // A budget the first trial breaks keeps every chosen trial within it.
+        let minutes = s.stats().unwrap().estimated_seconds / 60.0;
+        let mut job = s.optimize(Some(("minutes", minutes * 0.7))).unwrap();
+        while job.next_frame().is_some() {}
+        let budgeted = job.result().unwrap();
+        assert_eq!(budgeted.current_error, None);
+        let best = budgeted
+            .trials
+            .iter()
+            .find(|t| json!(t.value) == budgeted.value)
+            .unwrap();
+        assert!(
+            !best.over && best.metric.unwrap() <= minutes * 0.7,
+            "{budgeted:?}"
+        );
+    }
+
+    #[test]
+    fn the_tone_match_and_the_response_are_pinned() {
+        // The same setup and literals are in crates/wasm/tests/smoke.rs, so CI proves both
+        // targets agree on the eye filter, the wedge and the lookup.
+        let mut s = Session::new(1 << 24);
+        s.set_image(gradient(64, 48));
+        s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.set_style("waves").unwrap();
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        drain(&mut s);
+        let off = s.tone_match().unwrap();
+        s.update("tone", &json!({"response": "auto"})).unwrap();
+        drain(&mut s);
+        let auto = s.tone_match().unwrap();
+        assert_eq!(
+            (off.error, off.ssim),
+            (0.08399718265758667, 0.730502253480983)
+        );
+        assert_eq!(auto.error, 0.09068600548308096);
+    }
+
     #[test]
     fn preset_round_trip_and_warnings() {
         let mut s = Session::new(1 << 20);

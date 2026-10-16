@@ -13,7 +13,7 @@
 //!
 //! `--snapshot <file>` also writes the stats as the committed snapshot,
 //! `tests/snapshots/gallery-stats.json`: one cell per line, lengths and times rounded to 0.001,
-//! with the codes of the cell's plot lint findings.
+//! with the codes of the cell's plot lint findings and its tone error, also rounded to 0.001.
 //! CI draws the gallery again and fails when the snapshot it writes differs from the committed
 //! one, so a change that moves a drawing shows in review as a diff of numbers.
 
@@ -98,6 +98,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut cell_stats = serde_json::to_value(session.stats())?;
                         let lint = session.lint().unwrap_or_default();
                         cell_stats["lint"] = json!(lint.iter().map(|f| f.code).collect::<Vec<_>>());
+                        let tone_error = session.tone_match().map(|m| m.error);
+                        cell_stats["tone_error"] = json!(tone_error);
                         (png?, cell_stats)
                     }
                     (error, _) => {
