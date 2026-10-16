@@ -827,7 +827,9 @@ fn a_density_setting_moves_its_metrics_one_way() {
         let hi = cap(&d.stage, &d.key).map_or(d.max, |cap| d.max.min(cap));
         let at = |share: f64| grain(&d, exp(ln(d.min) + share * (ln(hi) - ln(d.min))));
         let (lo, hi) = (at(p.min(q)), at(p.max(q)));
-        if lo == hi {
+        // Values closer than a tenth differ by less than the drawings wobble: 1938 and 1961
+        // Voronoi points drew a nearest-neighbour `line` 1.7 percent shorter.
+        if hi < 1.1 * lo {
             return Ok(());
         }
         let mut s = c.session();

@@ -1,5 +1,5 @@
-//! Golden files: the grid, stipple, Hilbert curve and scribble styles' output on small synthetic
-//! images, compared to files in `crates/core/golden`.
+//! Golden files: the grid, stipple, Hilbert curve, scribble and mosaic styles' output on small
+//! synthetic images, compared to files in `crates/core/golden`.
 //!
 //! Only the coordinates are compared with a tolerance (1e-3 mm). Everything else must match
 //! exactly: every top-level key except `layers`, the number of layers, and the pen and the path
@@ -105,6 +105,13 @@ fn styles_match_golden_files() {
                 "voronoi": {"count": 100, "iterations": 10},
                 "scribble": {"radius_mm": 0.2, "white_radius_mm": 0.3, "spacing_mm": 10.0, "white_spacing_mm": 20.0, "flatten": 0.5, "tilt_deg": 30.0}
             }),
+        ),
+        (
+            "mosaic_gradient",
+            "mosaic",
+            gradient(64, 48),
+            // A spacing of 0.8 mm keeps the file under 100 KB.
+            json!({"tone": {"resolution": 64}, "mosaic": {"spacing_mm": 0.8}}),
         ),
     ];
     for (name, style, image, patch) in cases {
