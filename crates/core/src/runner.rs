@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::cache::StageCache;
+use crate::lint::{self, Measure};
 use crate::settings::merge;
 use crate::stage::{
     Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
@@ -108,6 +109,8 @@ pub enum RunState {
 pub struct Shared {
     /// The last finished drawing; only a run that ends in [`RunState::Done`] replaces it.
     pub drawing: Option<Arc<Drawing>>,
+    /// The plot lint measurement of `drawing`, taken when it was made.
+    pub measure: Option<Arc<Measure>>,
     /// The state of the run that last wrote the slot.
     pub state: RunState,
     /// The error message when `state` is [`RunState::Error`].
@@ -201,7 +204,10 @@ impl Run {
             }
             let Some((index, lane)) = self.next_stage() else {
                 match self.drawing() {
-                    Ok(drawing) => self.write(RunState::Done, None, Some(drawing)),
+                    Ok(drawing) => {
+                        let measure = lint::measure(&drawing);
+                        self.write(RunState::Done, None, Some((drawing, measure)))
+                    }
                     Err(e) => self.write(RunState::Error, Some(e), None),
                 }
                 return None;
@@ -434,13 +440,19 @@ impl Run {
     }
 
     /// Set the run's state and error and, while the slot is still this run's generation, copy
-    /// them to it with the drawing if there is one, under one lock so readers never see a
-    /// half-written slot.
-    fn write(&mut self, state: RunState, error: Option<String>, drawing: Option<Drawing>) {
+    /// them to it with the drawing and its measurement if there is one, under one lock so readers
+    /// never see a half-written slot.
+    fn write(
+        &mut self,
+        state: RunState,
+        error: Option<String>,
+        drawing: Option<(Drawing, Measure)>,
+    ) {
         let mut shared = self.shared.lock().unwrap();
         if shared.generation == self.generation {
-            if let Some(drawing) = drawing {
+            if let Some((drawing, measure)) = drawing {
                 shared.drawing = Some(Arc::new(drawing));
+                shared.measure = Some(Arc::new(measure));
             }
             shared.state = state;
             shared.error = error.clone();

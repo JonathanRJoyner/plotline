@@ -21,6 +21,7 @@ use crate::cache::{CacheStats, StageCache};
 use crate::export::gcode::{self, GcodeError};
 use crate::export::{json, svg};
 use crate::image::{self, ImageError};
+use crate::lint::{self, Finding};
 use crate::machine::{Machine, MachineError};
 use crate::presets::{self, PresetError};
 use crate::preview::{self, PreviewError};
@@ -358,6 +359,25 @@ impl Session {
     /// The stats of the last finished drawing at the session's speeds.
     pub fn stats(&self) -> Option<Stats> {
         self.drawing().map(|d| stats::compute(&d, self.speeds))
+    }
+
+    /// The plot lint findings for the last finished drawing; see [`lint::check`]. The drawing was
+    /// measured when its run ended; the findings are worked out now from the current style,
+    /// settings, pens, speeds and machine, so their patches start from the current settings.
+    pub fn lint(&self) -> Option<Vec<Finding>> {
+        let (drawing, measure) = {
+            let shared = self.shared.lock().unwrap();
+            (shared.drawing.clone()?, shared.measure.clone()?)
+        };
+        Some(lint::check(
+            &drawing,
+            &measure,
+            &self.style,
+            &self.settings,
+            &self.pens,
+            self.speeds,
+            self.machine.as_ref(),
+        ))
     }
 
     /// The last finished drawing as PNG bytes `width_px` wide, of the page or of `region`, in page

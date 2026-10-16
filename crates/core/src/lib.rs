@@ -2,8 +2,10 @@
 
 pub mod analysis;
 pub mod cache;
+pub mod coverage;
 pub mod export;
 pub mod image;
+pub mod lint;
 pub mod machine;
 pub mod math;
 pub mod pens;
