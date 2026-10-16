@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
+from looks import off_look, style_with_looks
 from machines import MACHINE
 from pngs import write_png
 
@@ -107,6 +108,56 @@ def test_update_validates_and_set_style_keeps_changes():
     assert s.settings["tone"]["gamma"] == 1.9
     with pytest.raises(ValueError):
         s.set_pens(())
+
+
+def test_apply_look_sets_the_looks_settings_and_look_reports_it():
+    name, looks = style_with_looks()
+    s = Session()
+    s.set_style(name)
+    assert s.look == "balanced"
+    for look in looks:
+        s.apply_look(look["name"])
+        assert s.look == look["name"]
+        for stage, values in look["settings"].items():
+            for key, value in values.items():
+                assert s.settings[stage][key] == value
+
+
+def test_a_look_leaves_the_settings_no_look_sets_alone():
+    name, looks = style_with_looks()
+    s = Session()
+    s.set_style(name)
+    s.update("tone", invert=True)
+    s.update("split", mode="light_to_dark")
+    before = s.settings
+    s.apply_look(looks[-1]["name"])
+    assert s.settings != before
+    sets = {(stage, key) for look in looks for stage, v in look["settings"].items() for key in v}
+    for stage, values in before.items():
+        for key, value in values.items():
+            if (stage, key) not in sets:
+                assert s.settings[stage][key] == value
+
+
+def test_a_reset_gives_balanced_an_edit_gives_none_and_a_missing_look_is_refused():
+    name, looks = style_with_looks()
+    s = Session()
+    s.set_style(name)
+    s.apply_look(looks[-1]["name"])
+    s.reset_settings()
+    assert s.look == "balanced"
+    s.apply_look(looks[-1]["name"])
+    stage, key, value = off_look(name, looks)
+    s.update(stage, **{key: value})
+    assert s.look is None
+    # Only a look of this style applies, whatever the other styles have.
+    have = [look["name"] for look in looks]
+    missing = next(n for n in ("faithful", "quick", "fine", "nope") if n not in have)
+    before = s.settings
+    with pytest.raises(ValueError, match=f'no look "{missing}"') as refused:
+        s.apply_look(missing)
+    assert ", ".join(have) in str(refused.value)
+    assert s.settings == before and s.look is None
 
 
 def test_the_engine_checks_canvas_and_pens_and_a_refusal_changes_nothing():
