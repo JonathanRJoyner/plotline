@@ -9,6 +9,9 @@
 //! dropped once all 30 fail. When no point is active, the next seed is a dart drawn by ink with
 //! the weighted Voronoi placer's sampler, so a small dark area on a white page still gets a point.
 //! Neighbours are found through a bucket grid with cells of `spacing`.
+//!
+//! When the drawing is split between pens, each lane draws its packing from its own random stream
+//! ([`RunContext::rng`] cites why), so the pens' circles fall independently of each other.
 
 use std::f64::consts::TAU;
 use std::sync::Arc;
@@ -73,7 +76,7 @@ impl Stage for PoissonPlacer {
         "Poisson disk"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -318,7 +321,7 @@ mod tests {
                 PoissonPlacer.label(),
                 PoissonPlacer.version()
             ),
-            ("poisson", "Poisson disk", 1)
+            ("poisson", "Poisson disk", 2)
         );
         assert_eq!(
             (PoissonPlacer.requires(), PoissonPlacer.provides()),

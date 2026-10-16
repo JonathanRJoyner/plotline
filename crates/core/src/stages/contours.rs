@@ -6,6 +6,12 @@
 //! mapped to page mm and clamped to the map. Equally spaced levels of a smoothed field follow no
 //! published plotting algorithm, so there is nothing to cite for them; the iso-line tracer,
 //! [`raster::iso_lines`], cites its source in `raster.rs`, and so does the simplification.
+//!
+//! When the drawing is split between pens, each pen's levels move up by its share of a level step.
+//! Over a smooth change of tone the levels draw near-parallel lines, a line grating, and two
+//! gratings of one period superpose with no moiré whatever their offset (I. Amidror, *The Theory of
+//! the Moiré Phenomenon*, 2nd ed., Springer, 2009), so the shift puts one pen's lines between
+//! another's instead of on them.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -45,7 +51,8 @@ impl Default for ContourSettings {
 
 /// Draw the level lines of the tone map.
 ///
-/// Level `j` of `L` lies at ink `j / (L + 1)` for `j` from 1 to `L`. Each level is traced in its
+/// Level `j` of `L` lies at ink `j / (L + 1)` for `j` from 1 to `L`, and in lane `i` of `n` at
+/// `(j + i / n) / (L + 1)`. Each level is traced in its
 /// own step of the run, lowest first, and its lines come in the order the tracer finds them. Each
 /// line is one path, closed: its last vertex repeats the first. A line that simplifies to a single
 /// point is dropped.
@@ -59,7 +66,7 @@ impl Stage for ContourStage {
         "Contours"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -77,9 +84,10 @@ impl Stage for ContourStage {
         &self,
         inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<ContourSettings>(self.name(), &self.schema(), settings)?;
+        let lane = ctx.lane();
         let tone = inputs.tone().clone();
         let rect = tone.rect_mm();
         let (w, h) = (tone.width as usize, tone.height as usize);
@@ -90,12 +98,14 @@ impl Stage for ContourStage {
             padded[(y + 1) * pw + 1..(y + 1) * pw + 1 + w].copy_from_slice(row);
         }
         let step = 1.0 / (f64::from(s.levels) + 1.0);
+        // Each pen's levels move up by its share of a step; the first pen's stay where they were.
+        let shift = step * lane.index as f64 / lane.count as f64;
         let run = ChunkRun::new(
             s.levels as usize,
             "levels",
             Box::new(move |i, paths, _| {
-                // Level i + 1, summed as the tracer sums `first + j * step`.
-                let level = step + i as f64 * step;
+                // Level i + 1, summed as the tracer sums `first + j * step`, then the lane's shift.
+                let level = step + i as f64 * step + shift;
                 for line in raster::iso_lines(&padded, pw, ph, level, step, level) {
                     // Padded cell x is tone pixel x - 1, whose centre lies at x - 0.5.
                     let mm: Vec<[f64; 2]> = raster::simplify(&line, 0.5)
@@ -146,40 +156,25 @@ impl StageRun for Budgeted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
+    use crate::stage::Lane;
+    use crate::test_util::{
+        assert_inside, bounds, run_tone_stage, run_tone_stage_in_lane, tone_map,
+    };
+    use crate::types::{Paths, ToneMap};
     use serde_json::json;
     use std::sync::Arc;
 
-    #[test]
-    fn settings_schema() {
-        let s = ContourStage.schema();
-        assert_eq!(bounds(&s, "levels"), (1.0, 64.0, 12.0));
-        assert_eq!(bounds(&s, "smooth_mm"), (0.0, 10.0, 0.5));
-        assert_eq!(
-            (ContourStage.name(), ContourStage.label()),
-            ("contours", "Contours")
-        );
-        assert_eq!(ContourStage.version(), 1);
-        assert_eq!(
-            (ContourStage.requires(), ContourStage.provides()),
-            (&[Kind::Tone][..], Kind::Paths)
-        );
-    }
-
-    #[test]
-    fn a_radial_gradient_gives_nested_closed_loops() {
-        // The centre is the corner shared by pixels 19 and 20, so level l lies at 20 (1 - l)
-        // pixels: 16, 12, 8 and 4, or 32, 24, 16 and 8 mm from (50, 50).
-        let ink = |x: u32, y: u32| {
+    /// A 40 by 40 px cone of ink whose tip is the corner shared by pixels 19 and 20, (50, 50) mm,
+    /// falling to white 20 pixels out.
+    fn cone() -> ToneMap {
+        tone_map(40, 40, |x, y| {
             let r = math::hypot(f64::from(x) + 0.5 - 20.0, f64::from(y) + 0.5 - 20.0);
             (1.0 - r / 20.0).max(0.0) as f32
-        };
-        let (_, paths) = run_tone_stage(
-            &ContourStage,
-            tone_map(40, 40, ink),
-            json!({"levels": 4, "smooth_mm": 0.0}),
-        );
-        assert_eq!(paths.len(), 4);
+        })
+    }
+
+    /// The mean radius about (50, 50) of each of `paths`, which must be closed rings about it.
+    fn ring_radii(paths: &Paths) -> Vec<f64> {
         let mut radii = Vec::new();
         for path in paths.iter() {
             assert_eq!(path.first(), path.last(), "a contour closes");
@@ -195,9 +190,57 @@ mod tests {
             );
             radii.push(mean(&|p| math::hypot(p[0] - 50.0, p[1] - 50.0)));
         }
+        radii
+    }
+
+    #[test]
+    fn settings_schema() {
+        let s = ContourStage.schema();
+        assert_eq!(bounds(&s, "levels"), (1.0, 64.0, 12.0));
+        assert_eq!(bounds(&s, "smooth_mm"), (0.0, 10.0, 0.5));
+        assert_eq!(
+            (ContourStage.name(), ContourStage.label()),
+            ("contours", "Contours")
+        );
+        assert_eq!(ContourStage.version(), 2);
+        assert_eq!(
+            (ContourStage.requires(), ContourStage.provides()),
+            (&[Kind::Tone][..], Kind::Paths)
+        );
+    }
+
+    #[test]
+    fn a_radial_gradient_gives_nested_closed_loops() {
+        // Level l lies at 20 (1 - l) pixels from the tip: 16, 12, 8 and 4, or 32, 24, 16 and 8 mm.
+        let (_, paths) = run_tone_stage(
+            &ContourStage,
+            cone(),
+            json!({"levels": 4, "smooth_mm": 0.0}),
+        );
+        assert_eq!(paths.len(), 4);
+        let radii = ring_radii(&paths);
         for (r, want) in radii.iter().zip([32.0, 24.0, 16.0, 8.0]) {
             assert!((r - want).abs() < 1.0, "{radii:?}");
         }
+    }
+
+    #[test]
+    fn a_second_pen_draws_between_the_first_pens_levels() {
+        let run = |lane| {
+            let patch = json!({"levels": 4, "smooth_mm": 0.0});
+            run_tone_stage_in_lane(&ContourStage, cone(), patch, lane).1
+        };
+        let single = run(Lane::SINGLE);
+        assert_eq!(run(Lane { index: 0, count: 2 }).coords(), single.coords());
+        // Pen 1's levels move up half a step, to 0.3, 0.5, 0.7 and 0.9: rings of 28, 20, 12 and
+        // 4 mm, between pen 0's.
+        let second = run(Lane { index: 1, count: 2 });
+        assert_eq!(second.len(), 4);
+        let radii = ring_radii(&second);
+        for (r, want) in radii.iter().zip([28.0, 20.0, 12.0, 4.0]) {
+            assert!((r - want).abs() < 1.0, "{radii:?}");
+        }
+        assert_inside(&second, cone().rect_mm());
     }
 
     #[test]
