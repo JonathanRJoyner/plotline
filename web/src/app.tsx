@@ -573,7 +573,7 @@ export function App() {
       </aside>
       <main>
         <RunView
-          engine={engine} status={status} stages={stages} canvas={state.canvas} hidden={hidden}
+          engine={engine} status={status} stages={stages} canvas={state.canvas} paper={state.paper} hidden={hidden}
           pens={state.pens} hasImage={state.image} onOpen={openImage}
           focus={state.focus} radius={Number(settings.tone?.focus_mm ?? 40)}
           onFocusAt={addFocus} onFocusRemove={(i) => removeFocus((state.settings.tone?.focus as number[][] | undefined)?.[i])}
@@ -596,7 +596,7 @@ export function App() {
         <div data-tour="suggestions">
           {state.suggestions.length > 0 && <SuggestionsPanel suggestions={state.suggestions} error={errors.suggestions} onApply={(patch) => call("apply", [patch], "suggestions")} />}
         </div>
-        <PagePanel canvas={state.canvas} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} />
+        <PagePanel canvas={state.canvas} paper={state.paper} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} onPaper={(c) => call("setPaper", [c], "page")} />
         <PensPanel
           pens={state.pens} hidden={hidden} error={errors.pens}
           onEdit={() => {
@@ -626,7 +626,7 @@ export function App() {
         opens={pensOpens} pens={state.pens} bank={bank} inks={inks} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
       />
       <StylesDialog
-        opens={stylesOpens} styles={styles} style={state.style} canvas={state.canvas} thumbs={thumbs}
+        opens={stylesOpens} styles={styles} style={state.style} canvas={state.canvas} paper={state.paper} thumbs={thumbs}
         onPick={(name) => call("setStyle", [name])} onClose={() => call("cancelThumbs")}
       />
       <Tour opens={tourOpens} />

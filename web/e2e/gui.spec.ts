@@ -350,6 +350,34 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await ran(page, id);
 });
 
+// The preview canvas's pixel a little inside the page's corner: in the margin, where the engine
+// draws nothing, so it shows the paper. The page sits where fitView puts it, 20 px from the box.
+async function paperPixel(page: Page): Promise<number[]> {
+  const mm = async (name: RegExp) => Number(await page.getByRole("spinbutton", { name }).inputValue());
+  const size = [await mm(/^Width( mm)?$/), await mm(/^Height( mm)?$/), await mm(/^Margin( mm)?$/)];
+  return page.locator(".preview canvas").evaluate((c: HTMLCanvasElement, [pw, ph, m]) => {
+    const [w, h] = [c.clientWidth, c.clientHeight];
+    const scale = Math.min((w - 40) / pw, (h - 40) / ph);
+    const k = c.width / w; // the device pixel ratio
+    const x = ((w - pw * scale) / 2 + (m / 2) * scale) * k;
+    const y = ((h - ph * scale) / 2 + (m / 2) * scale) * k;
+    return Array.from(c.getContext("2d")!.getImageData(Math.round(x), Math.round(y), 1, 1).data);
+  }, size);
+}
+
+test("the paper colour shows in the preview and Undo takes it back", async ({ page }) => {
+  let id = await sample(page);
+  await expect.poll(() => paperPixel(page)).toEqual([255, 255, 255, 255]);
+  await page.getByLabel("Paper", { exact: true }).fill("#000000");
+  await expect.poll(() => paperPixel(page)).toEqual([0, 0, 0, 255]);
+  // The paper is no input of a run, so the change repaints and starts none.
+  await expect(status(page)).toHaveText(new RegExp(`^Run ${id}: done`));
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  id = await ran(page, id);
+  await expect(page.getByLabel("Paper", { exact: true })).toHaveValue("#ffffff");
+  await expect.poll(() => paperPixel(page)).toEqual([255, 255, 255, 255]);
+});
+
 // A hash of the canvas pixels from `from` to `to` of its width (fractions), once the canvas has
 // painted. Left out: the outer 8 px at the sides, where the divider sits at 0 and 100, and the
 // top 100 px, where its labels sit.

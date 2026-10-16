@@ -13,7 +13,10 @@ export type State = {
   image: boolean; style: string;
   /** The name of the style's look the settings match; null when they match none, which the page calls Custom. */
   look: string | null;
-  canvas: Canvas; pens: Pen[]; machine: Machine | null;
+  canvas: Canvas;
+  /** The paper's colour as `#rrggbb`: a setting beside the page that the preview and the style pictures draw onto. */
+  paper: string;
+  pens: Pen[]; machine: Machine | null;
   settings: Record<string, Record<string, unknown>>; speeds: Speeds;
   run: { id: number; state: string; error: string | null }; stats: Stats | null;
   /** The pens of the last drawing's layers; empty without a drawing. */
@@ -30,7 +33,8 @@ export type State = {
 export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
-// The commands that change what a drawing is made from: each one redraws once it succeeds.
+// The commands that change what a drawing is made from: each one redraws once it succeeds. `setPaper` is
+// not among them: the paper is no input of a run, so a change only repaints.
 const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
@@ -66,6 +70,7 @@ export class Protocol {
       // The default A4 drawing area's shape, 190 x 277 mm, so the sample fills it.
       sample: () => this.methods.setImage(600, 875, syntheticStillLife(600, 875)),
       setCanvas: (canvas: Canvas) => s().setCanvas(JSON.stringify(canvas)),
+      setPaper: (color: string) => s().setPaper(color),
       setPens: (pens: Pen[]) => s().setPens(JSON.stringify(pens)),
       setStyle: (name: string) => s().setStyle(name),
       applyLook: (name: string) => s().applyLook(name),
@@ -229,7 +234,7 @@ export class Protocol {
     const s = this.session;
     const preset = s.preset();
     this.saved = { preset, speeds: s.speeds() };
-    const { style, canvas, pens, machine, settings } = JSON.parse(preset);
+    const { style, canvas, paper, pens, machine, settings } = JSON.parse(preset);
     const stats = s.stats();
     const layers: Pen[] = [];
     const drawing = s.drawing();
@@ -249,7 +254,7 @@ export class Protocol {
       if (p) focus.push([p[0], p[1]]);
     }
     return {
-      image: this.image, style, look: s.look() ?? null, canvas, pens, machine, settings, speeds: JSON.parse(this.saved.speeds), layers,
+      image: this.image, style, look: s.look() ?? null, canvas, paper, pens, machine, settings, speeds: JSON.parse(this.saved.speeds), layers,
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
       tone: tone ? JSON.parse(tone) : null,

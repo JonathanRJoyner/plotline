@@ -62,9 +62,10 @@ async def test_setup_tools_and_session(tmp_path):
         r = await call(c, "load_image", path=str(path))
         assert data(r) == {"path": str(path), "width_px": 64, "height_px": 48}
         r = await call(c, "set_page", width_mm=100, height_mm=100, margin_mm=5)
-        assert data(r) == {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fit"}
+        page = {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fit", "paper": "#ffffff"}
+        assert data(r) == page
         r = await call(c, "set_page", fit="fill")
-        assert data(r) == {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fill"}
+        assert data(r) == {**page, "fit": "fill"}
         r = await call(c, "set_pens", pens=[{"name": "B", "width_mm": 0.5, "color": "Blue"}])
         assert data(r) == [{"name": "B", "width_mm": 0.5, "color": inks()["blue"]}]
         s = data(await call(c, "get_session"))
@@ -75,6 +76,27 @@ async def test_setup_tools_and_session(tmp_path):
         assert s["page"]["fit"] == "fill"
         assert s["pens"][0]["color"] == inks()["blue"]
         assert "tone" in s["settings"]
+
+
+async def test_set_page_sets_the_paper_and_get_session_reports_it():
+    async with Client(build_server(Session())) as c:
+        assert data(await call(c, "get_session"))["paper"] == "#ffffff"
+        r = await call(c, "set_page", paper="#f5f0e1")
+        assert data(r) == {
+            "width_mm": 210,
+            "height_mm": 297,
+            "margin_mm": 10,
+            "fit": "fit",
+            "paper": "#f5f0e1",
+        }
+        assert data(await call(c, "get_session"))["paper"] == "#f5f0e1"
+        r = await call(c, "set_page", paper="Blue")
+        assert data(r)["paper"] == inks()["blue"]
+        # A refused paper is a tool error, and the page that came with it does not change.
+        r = await call(c, "set_page", width_mm=50, paper="cream")
+        assert r.is_error and "paper" in text(r)
+        s = data(await call(c, "get_session"))
+        assert (s["paper"], s["page"]["width_mm"]) == (inks()["blue"], 210)
 
 
 async def test_refused_values_are_tool_errors():

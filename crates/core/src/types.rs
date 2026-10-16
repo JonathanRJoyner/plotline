@@ -19,6 +19,20 @@ pub enum TypeError {
     Invalid(String),
 }
 
+/// The colour of the paper before a session or a preset names one: white.
+pub const DEFAULT_PAPER: &str = "#ffffff";
+
+/// Fail unless `color` is written as `#rrggbb`; `what` names the value in the message.
+pub(crate) fn check_color(what: &str, color: &str) -> Result<(), TypeError> {
+    let hex = color.strip_prefix('#').unwrap_or("");
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(TypeError::Invalid(format!(
+            "{what} must be written as #rrggbb, got {color:?}"
+        )));
+    }
+    Ok(())
+}
+
 /// A physical pen: a name, a stroke width in mm and a colour written as `#rrggbb`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pen {
@@ -40,12 +54,7 @@ impl Pen {
                 "width_mm must be positive, got {width_mm:?}"
             )));
         }
-        let hex = color.strip_prefix('#').unwrap_or("");
-        if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(TypeError::Invalid(format!(
-                "color must be written as #rrggbb, got {color:?}"
-            )));
-        }
+        check_color("color", color)?;
         Ok(Pen {
             name: name.to_string(),
             width_mm,
