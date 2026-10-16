@@ -126,7 +126,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   }
 
   if (!s.hasImage) {
-    ctx.fillStyle = "#888";
+    ctx.fillStyle = "#6b7280"; // 4.8:1 on the white paper
     ctx.font = "6px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
