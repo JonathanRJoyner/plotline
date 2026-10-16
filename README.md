@@ -133,7 +133,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Write one G-code file per pen for the machine | `--gcode plots/` |
 | Open the live preview locally | `plotline gui` |
 
-A machine file holds the same object as a preset's `machine`: `name`, `area` (`x`, `y`, `width` and `height` in the machine's mm), `z_down_mm`, `z_up_mm`, `z_safe_mm`, `draw_feed`, `travel_feed` and `z_feed` in mm per minute, `settle_ms`, `start_gcode` and `end_gcode`. The easiest way to make one is to enter the machine in the GUI's Settings dialog and save a preset, which `--machine` also reads.
+A machine file holds the same object as a preset's `machine`: `name`, `area` (`x`, `y`, `width` and `height` in the machine's mm), `z_down_mm`, `z_up_mm`, `z_safe_mm`, `draw_feed`, `travel_feed` and `z_feed` in mm per minute, `settle_ms`, `start_gcode` and `end_gcode`. A pen lifted by a servo or a solenoid instead of Z takes `"pen_lift": "gcode"` with `pen_down_gcode` and `pen_up_gcode`, the lines written in place of each Z move. `max_segment_mm` cuts every move into pieces no longer than it, for firmware that would draw a long straight move as a curve. The easiest way to make one is to enter the machine in the GUI's Settings dialog and save a preset, which `--machine` also reads.
 
 `plotline gui` serves the browser GUI from your machine. Building it needs Node, wasm-pack and the `wasm32-unknown-unknown` Rust target: run `npm run wasm`, `npm ci` and `npm run build` in `web/`.
 

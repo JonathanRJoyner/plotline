@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, NotRequired, cast
 
 import anyio
 from mcp.server.mcpserver import Context, Image, MCPServer
@@ -83,6 +83,10 @@ class MachineSpec(TypedDict):
     settle_ms: int
     start_gcode: str
     end_gcode: str
+    pen_lift: NotRequired[Literal["z", "gcode"]]
+    pen_down_gcode: NotRequired[str]
+    pen_up_gcode: NotRequired[str]
+    max_segment_mm: NotRequired[float | None]
 
 
 @contextmanager
@@ -226,13 +230,18 @@ def build_server(session: Session | None = None) -> MCPServer:
         height} in mm. z_down_mm is the height of the pen when it draws, z_up_mm its height when
         it travels between paths and z_safe_mm the height it lifts to before the first move and
         before end_gcode, all in mm. draw_feed, travel_feed and z_feed are the speeds for drawing,
-        travelling and Z moves, in mm per minute. settle_ms is the pause after each Z move.
+        travelling and Z moves, in mm per minute. settle_ms is the pause after each pen move.
         start_gcode and end_gcode are lines written as they are after the setup and after the last
-        lift. The page becomes the area's width and height, with the margin and fit kept, so that
-        the drawing fits the machine; set_page can change it afterwards. The machine also sets
-        the plot speeds that the stats and the lint use. export with format gcode needs a
-        machine, and a result drawn before the page changed must run again first. When any part
-        is refused, nothing changes. Returns the machine and the page."""
+        lift. For a pen lifted by a servo or a solenoid, set pen_lift to "gcode" and give
+        pen_down_gcode and pen_up_gcode, the lines written as they are in place of each Z move;
+        the Z heights and z_feed are then unused. max_segment_mm, for a machine whose firmware
+        draws a long straight move as a curve (a hanging plotter, say), cuts every move into
+        pieces no longer than it; leave it out to keep moves whole. The page becomes the area's
+        width and height, with the margin and fit kept, so that the drawing fits the machine;
+        set_page can change it afterwards. The machine also sets the plot speeds that the stats
+        and the lint use. export with format gcode needs a machine, and a result drawn before the
+        page changed must run again first. When any part is refused, nothing changes. Returns the
+        machine and the page."""
         with _errors():
             old_machine, old_speeds = session.machine, session.speeds
             try:
