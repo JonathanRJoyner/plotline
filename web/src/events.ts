@@ -20,8 +20,20 @@ export type FitResult = {
   stage: string; key: string; metric: string; target: number; value: unknown; achieved: number;
   samples: { value: number; metric: number }[];
 };
-/** `fit` is set when a fit ends done; the page applies its value with `update`. */
-export type EndEvent = { type: "end"; id: number; state: "done" | "cancelled" | "error"; error: string | null; stats: Stats | null; fit?: FitResult | null; lint: Finding[] };
+/** How the drawing's tones follow its tone map, in the shape of the engine's `ToneMatch`. */
+export type ToneMatch = { error: number; ssim: number; floor: number; reach: number };
+/** What an optimize search found, in the shape of the engine's `Optimum`; nothing is applied. */
+export type Optimum = {
+  stage: string; key: string; value: unknown; error: number; current: unknown; current_error: number | null;
+  budget: { metric: string; target: number } | null;
+  trials: { value: number; error: number | null; metric: number | null; over: boolean }[];
+  reason: string; patch: Finding["patch"];
+};
+/** `fit` is set when a fit ends done, which the page applies with `update`, and `optimum` when a search does, which it only offers. */
+export type EndEvent = {
+  type: "end"; id: number; state: "done" | "cancelled" | "error"; error: string | null; stats: Stats | null;
+  tone: ToneMatch | null; fit?: FitResult | null; optimum?: Optimum | null; lint: Finding[];
+};
 export type Event = RunEvent | FrameEvent | ResultEvent | EndEvent;
 /** One style drawn for the styles dialog: its preview as PNG bytes, or why it failed. */
 export type ThumbEvent = { type: "thumb"; id: number; style: string; png: Uint8Array | null; error: string | null };

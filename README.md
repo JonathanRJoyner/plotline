@@ -51,6 +51,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Suggestions.** The engine measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
 - **Plot lint.** After every run the engine checks the drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, and marks off the page or the machine. Where a setting fixes one, it says which.
 - **Budgets.** Give a plot time, a path count, metres of pen-down line or a dot count, and plotline finds the value of the style's density setting, such as its line spacing, that meets it in up to eight runs.
+- **Tone match.** Every run scores how closely the drawing's tones follow the image, seen from a metre or two, as a tone error and an SSIM. Optimize searches the style's density setting for the value that brings them closest, within a budget if you give one, and suggests it; nothing changes until you apply it. The tone stage's Response can also be Auto, which measures how much paper the style covers at each grey on a small test wedge and corrects the image for it.
 - **Short pen travel.** Every run orders its paths to keep the pen's travel short, and the line styles lift the pen far less often than `grid`.
 - **Plotter-ready output.** An SVG in millimetres holds one layer per pen that draws, each labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI, the command line and the MCP server write one G-code file per pen.
 - **Several pens.** Pen use shares a drawing between your pens: light to dark in list order, or each pen by its colour, so cyan, magenta, yellow and black pens can draw a colour image. By default the first pen draws alone.
@@ -93,7 +94,7 @@ Open **[jonathanrjoyner.github.io/plotline](https://jonathanrjoyner.github.io/pl
 3. Set up your pens in the Pens dialog, and choose how they share the drawing under Pen use. The page remembers your setup between visits.
 4. Click Export SVG in the toolbar, ready for a pen plotter's own software.
 
-For a new image the Suggestions panel, at the top of the right column, lists what would suit it, each with an Apply button. Nothing changes until you click. Under the stats, the plot lint lists what it found in the last drawing, with an Apply button where a setting fixes it.
+For a new image the Suggestions panel, at the top of the right column, lists what would suit it, each with an Apply button. Nothing changes until you click. Under the stats, the plot lint lists what it found in the last drawing, with an Apply button where a setting fixes it. Optimize, beside Fit to target, suggests the density that makes the drawing's tones follow the image best, with an Apply button too.
 
 For G-code, enter your machine in the Settings dialog: the drawable area, pen heights, feeds, and start and end G-code. The export panel then writes one G-code file per pen. The preset carries the machine, so save a preset to keep it. A short tour of the page opens on your first visit, and Tour in the toolbar opens it again.
 
@@ -112,7 +113,7 @@ Then draw an image of your own:
 uv run plotline run grid your-photo.jpg --out drawing.svg --preview preview.png
 ```
 
-This writes `drawing.svg` and `preview.png`, and prints a one-line summary with the path count and an estimated plot time. The plot lint's findings follow on stderr, each with the `--set` options that fix it where a setting does.
+This writes `drawing.svg` and `preview.png`, and prints a one-line summary with the path count and an estimated plot time, then the tone error and SSIM. The plot lint's findings follow on stderr, each with the `--set` options that fix it where a setting does.
 
 | To | Use |
 | --- | --- |
@@ -121,6 +122,8 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Share the drawing between pens given with `--pen` more than once; by default only the first draws | `--set split.mode=light_to_dark` or `by_colour` |
 | Change a setting | `--set points.spacing_mm=3` |
 | Meet a budget of plot time, paths, pen-down metres or dots by changing the style's density setting | `--fit-minutes 60`, `--fit-paths 2000`, `--fit-metres 50` or `--fit-dots 20000` |
+| Also find the density whose drawing follows the image's tones best, and print the `--set` that applies it | `--optimize`, within a budget when given with a `--fit-…` option |
+| Correct the tone map for the style's own response | `--set tone.response=auto` |
 | List a style's settings | `plotline describe grid` |
 | Save the run's look as a preset | `--save-preset my-look.json` |
 | Start a later run from a preset | `--preset my-look.json` |
@@ -136,7 +139,7 @@ A machine file holds the same object as a preset's `machine`: `name`, `area` (`x
 
 ## With an AI assistant
 
-`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles and read the plot lint's findings in each result, `fit` one to a budget, look at previews, also zoomed in on a part of the page, and export the result, as G-code too once `set_machine` has described the plotter.
+`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles and read the tone match and the plot lint's findings in each result, `fit` one to a budget, ask `optimize` for the density that matches the image's tones best, look at previews, also zoomed in on a part of the page, and export the result, as G-code too once `set_machine` has described the plotter.
 
 ## Roadmap
 

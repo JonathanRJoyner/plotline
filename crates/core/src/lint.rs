@@ -14,6 +14,7 @@ use crate::coverage::{self, Coverage};
 use crate::machine::Machine;
 use crate::stats::{self, Speeds};
 use crate::style::Style;
+use crate::tone_match::{self, ToneMatch};
 use crate::types::{Drawing, Paths, Pen};
 
 /// A pen passing a spot this often risks the paper; over `OVERDRAW_SHARE` of the inked cells
@@ -73,6 +74,9 @@ pub struct Measure {
     /// Vertices outside the page, and vertices past the drawing area by more than half their pen.
     pub off_page: usize,
     pub off_area: usize,
+    /// How the inked cells follow the tone map; see [`tone_match`]. `None` without a tone map or
+    /// when there is nothing to compare.
+    pub tone_match: Option<ToneMatch>,
 }
 
 /// Measure `d` on one raster over the page, with the cell size of its thinnest pen, cleared
@@ -161,6 +165,10 @@ pub fn measure(d: &Drawing) -> Measure {
         }),
         off_page,
         off_area,
+        tone_match: d.tone.as_deref().and_then(|t| {
+            let c = tone_match::pixel_coverage(&union, grid.width, grid.height, [0.0; 2], cell, t);
+            tone_match::compare(&c, t)
+        }),
     }
 }
 
