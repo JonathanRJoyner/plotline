@@ -119,6 +119,16 @@ def describe(style: str, as_json: bool) -> None:
                     fields.append(f"{word} {prop[key]}")
             fields.append(prop.get("description", ""))
             click.echo("  " + "  ".join(fields))
+    click.echo()
+    click.echo("Looks")
+    for look in schema["looks"]:
+        pairs = " ".join(
+            f"{stage}.{key}={_text(value)}"
+            for stage, values in look["settings"].items()
+            for key, value in values.items()
+        )
+        fields = [look["name"], look["label"], look["description"], pairs]
+        click.echo("  " + "  ".join(f for f in fields if f))
 
 
 def page_options(command: Callable[..., Any]) -> Callable[..., Any]:
@@ -247,6 +257,14 @@ def read_machine(path: str) -> dict[str, Any]:
     help="Start from a saved preset, or from an exported SVG or JSON drawing.",
 )
 @click.option(
+    "--look",
+    metavar="NAME",
+    help=(
+        "Start from one of the style's looks, such as faithful, quick or fine; "
+        "plotline describe STYLE lists them."
+    ),
+)
+@click.option(
     "--save-preset",
     type=click.Path(),
     help="Write the style, page, pens and settings used to a preset file.",
@@ -297,6 +315,7 @@ def run(
     pens: list[Pen],
     sets: list[tuple[str, str, bool | int | float | str]],
     preset: str | None,
+    look: str | None,
     save_preset: str | None,
     machine: str | None,
     gcode: str | None,
@@ -324,6 +343,11 @@ def run(
             session.load_preset(preset)
         # The preset's changed settings carry into STYLE where it has the same stages.
         session.set_style(style)
+        if look is not None:
+            try:
+                session.apply_look(look)
+            except ValueError as error:
+                raise click.BadParameter(str(error), param_hint=["--look"]) from error
         if machine is not None:
             loaded = read_machine(machine)
             session.set_machine(loaded)
@@ -393,14 +417,19 @@ def run(
         sys.exit(1)
 
 
+def _text(value: Any) -> str:
+    """A setting's value as ``coerce`` reads it back: a boolean as ``true`` or ``false``, numbers
+    and text as they are."""
+    return str(value).lower() if isinstance(value, bool) else str(value)
+
+
 def _options(patch: dict[str, Any] | None) -> str:
     """The ``run`` options that apply a lint or optimize patch: ``--set`` for each setting,
     then ``--width`` and ``--height`` for a page."""
     if patch is None:
         return ""
     sets = [
-        # A boolean as coerce reads it; numbers and text as they are.
-        f"--set {stage}.{key}={str(value).lower() if isinstance(value, bool) else value}"
+        f"--set {stage}.{key}={_text(value)}"
         for stage, values in patch.get("settings", {}).items()
         for key, value in values.items()
     ]

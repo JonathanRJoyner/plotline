@@ -5,7 +5,9 @@
 //! is a small image built in code (a two-colour gradient under discs, boxes and noise, or one of
 //! the crate's synthetic pictures), a page and margin, one to three pens, a style, and a value for
 //! each of its settings, Pen use included, from the schema's range: the default, either end, or
-//! anything between. proptest shrinks a failing case and prints it.
+//! anything between. proptest shrinks a failing case and prints it. The look law is the one
+//! exception: its cases are a style, one of its looks and one of three test images at the size of
+//! the regression gallery's.
 //!
 //! Each law runs a fixed number of cases from a fixed seed, so a pull request's run is the same
 //! every time. `PLOTLINE_LAWS_SCALE` multiplies the case counts and raises the speed caps, and
@@ -18,13 +20,14 @@ use std::sync::{Arc, Mutex};
 
 use plotline_core::cache::StageCache;
 use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
+use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
 use plotline_core::style::Style;
-use plotline_core::synthetic::{flat_noise, ramp, scene, strokes};
+use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session};
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -942,6 +945,40 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         let mut r = s.start().unwrap();
         drain(&mut r)?;
         prop_assert_eq!(metrics(&s, &r)[metric], fit.achieved);
+        Ok(())
+    });
+}
+
+/// The test images of the regression gallery, by name, which the look law draws.
+const LOOK_IMAGES: [&str; 3] = ["still life", "scene", "gradient"];
+
+#[test]
+fn every_look_plots_clean() {
+    // Balanced is the defaults, which some styles' own findings warn about, so it is left out.
+    let looks: Vec<(String, String)> = (list_styles().iter())
+        .flat_map(|s| {
+            let others = s.looks().into_iter().filter(|l| l.name != "balanced");
+            others.map(|l| (s.name.clone(), l.name)).collect::<Vec<_>>()
+        })
+        .collect();
+    let strategy = (select(looks), 0..LOOK_IMAGES.len());
+    check("looks", 12, strategy, |((style, look), image)| {
+        let mut s = Session::new(256 << 20);
+        s.set_image(match image {
+            0 => still_life(600, 875),
+            1 => scene(600, 875),
+            _ => gradient(600, 875),
+        });
+        s.set_style(&style).unwrap();
+        s.apply_look(&look).unwrap();
+        run(&mut s)?;
+        let case = format!("{style} at {look} on the {}", LOOK_IMAGES[image]);
+        prop_assert_eq!(s.state(), RunState::Done, "{}: {:?}", case, s.error());
+        let found: Vec<String> = (s.lint().unwrap_or_default().iter())
+            .filter(|f| matches!(f.severity, Severity::Warning | Severity::Error))
+            .map(|f| format!("{}: {}", f.code, f.message))
+            .collect();
+        prop_assert!(found.is_empty(), "{case} plots with {}", found.join("; "));
         Ok(())
     });
 }

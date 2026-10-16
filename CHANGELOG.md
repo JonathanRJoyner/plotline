@@ -4,6 +4,10 @@ New entries go under Unreleased until the next release.
 
 ## Unreleased
 
+### Styles
+
+- **Looks:** most styles offer a few measured starting points under plain names: Faithful, the lowest tone error on the test images; Quick, about half an hour on A4 where the defaults take longer; and Fine, the densest marks that still plot cleanly with a 0.3 mm pen. Balanced is the defaults. A look sets only the few settings that make it: the Look select in the GUI, `plotline run --look NAME`, the MCP `run` tool's `look` and `Session.apply_look()`.
+
 ### Output
 
 - **Embedded presets:** an exported SVG or JSON drawing carries the preset of the run that made it, in a `<metadata>` element in the SVG and a `preset` key in the JSON. Load preset in the GUI, `--preset` on the command line, `Session.load_preset` and the MCP `load_preset` tool read such a file as a preset, so a drawing brings its look back.

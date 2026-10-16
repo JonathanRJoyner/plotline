@@ -105,6 +105,18 @@ impl Session {
         Ok(self.inner.set_style(name)?)
     }
 
+    /// Set the settings of the style's look `name` and leave the others as they are; an unknown
+    /// look changes nothing.
+    #[wasm_bindgen(js_name = applyLook)]
+    pub fn apply_look(&mut self, name: &str) -> Result<(), JsError> {
+        Ok(self.inner.apply_look(name)?)
+    }
+
+    /// The name of the style's look the settings match, or `undefined` for a custom setup.
+    pub fn look(&self) -> Option<String> {
+        self.inner.look()
+    }
+
     /// Put every stage of the style, Pen use included, back to the style's defaults.
     #[wasm_bindgen(js_name = resetSettings)]
     pub fn reset_settings(&mut self) {
