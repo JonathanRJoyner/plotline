@@ -235,8 +235,9 @@ class Session:
         ``palette_error`` (its mean colour difference). Each suggestion is
         ``{"kind", "reason", "patch"}``, where ``patch`` is ``None`` or any of ``style``, ``pens``
         (a list of ``{name, width_mm, color}``, for :meth:`set_pens`), ``settings``
-        (``{stage: {key: value}}``) and ``page`` (``{width_mm, height_mm}``), which the caller
-        applies in that order; the list follows the current style, pens, settings and page. Raises
+        (``{stage: {key: value}}``) and ``page`` (``{width_mm, height_mm}`` or ``{crop}``, the
+        shares to cut from the image's left, top, right and bottom), which the caller applies in
+        that order; the list follows the current style, pens, settings and page. Raises
         ``RuntimeError`` when no image is loaded."""
         analysis = self._core.analysis()
         if analysis is None:
@@ -245,7 +246,7 @@ class Session:
 
     def set_canvas(self, canvas: Canvas) -> None:
         """Use ``canvas`` as the page. Raises ``ValueError`` for a page or margin that leaves no
-        drawing area."""
+        drawing area and for a crop share that is not from 0 to 0.45."""
         self._core.set_canvas(asdict(canvas))
 
     def set_pens(self, pens: Sequence[Pen]) -> None:

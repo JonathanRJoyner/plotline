@@ -7,6 +7,7 @@ import time
 from functools import partial
 
 import anyio
+import numpy as np
 import pytest
 from looks import off_look, style_with_looks
 from machines import MACHINE
@@ -62,9 +63,10 @@ async def test_setup_tools_and_session(tmp_path):
         r = await call(c, "load_image", path=str(path))
         assert data(r) == {"path": str(path), "width_px": 64, "height_px": 48}
         r = await call(c, "set_page", width_mm=100, height_mm=100, margin_mm=5)
-        assert data(r) == {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fit"}
+        page = {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fit", "crop": [0] * 4}
+        assert data(r) == page
         r = await call(c, "set_page", fit="fill")
-        assert data(r) == {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fill"}
+        assert data(r) == {**page, "fit": "fill"}
         r = await call(c, "set_pens", pens=[{"name": "B", "width_mm": 0.5, "color": "Blue"}])
         assert data(r) == [{"name": "B", "width_mm": 0.5, "color": inks()["blue"]}]
         s = data(await call(c, "get_session"))
@@ -90,7 +92,7 @@ async def test_set_machine_sets_the_page_and_clears():
         await call(c, "set_page", width_mm=300, height_mm=300, margin_mm=7, fit="fill")
         r = await call(c, "set_machine", machine=MACHINE)
         assert not r.is_error, text(r)
-        page = {"width_mm": 200, "height_mm": 174, "margin_mm": 7, "fit": "fill"}
+        page = {"width_mm": 200, "height_mm": 174, "margin_mm": 7, "fit": "fill", "crop": [0] * 4}
         assert data(r) == {"machine": MACHINE, "page": page}
         s = data(await call(c, "get_session"))
         assert (s["machine"], s["page"]) == (MACHINE, page)
@@ -441,6 +443,30 @@ async def test_analyse_image(tmp_path):
         r = await call(c, "analyse_image")
         assert not r.is_error
         assert set(data(r)) == {"stats", "suggestions"}
+
+
+async def test_set_page_crops_the_image_as_the_framing_suggestion_says(tmp_path):
+    path = tmp_path / "disc.png"
+    y, x = np.mgrid[0:256, 0:256] / 256
+    inside = (x - 0.7) ** 2 + (y - 0.3) ** 2 <= 0.05**2
+    write_png(path, np.repeat(np.where(inside, 0.1, 0.95)[..., None], 3, axis=2))
+    async with Client(build_server(Session())) as c:
+        await call(c, "load_image", path=str(path))
+        found = data(await call(c, "analyse_image"))["suggestions"]
+        crop = next(s for s in found if s["kind"] == "framing")["patch"]["page"]["crop"]
+        assert len(crop) == 4 and any(crop)
+        r = await call(c, "set_page", crop=crop)
+        assert data(r)["crop"] == crop and data(r)["width_mm"] == 210
+        found = data(await call(c, "analyse_image"))["suggestions"]
+        assert all(s["kind"] != "framing" for s in found)
+        # Every other value stays; zeros remove the crop; a refused crop changes nothing.
+        r = await call(c, "set_page", crop=[0, 0, 0, 0])
+        assert data(r)["crop"] == [0, 0, 0, 0]
+        await call(c, "set_page", crop=crop)
+        for bad in ([0.5, 0, 0, 0], [0.1, 0.1]):
+            r = await call(c, "set_page", crop=bad)
+            assert r.is_error
+        assert data(await call(c, "get_session"))["page"]["crop"] == crop
 
 
 async def test_preview_limits(tmp_path):

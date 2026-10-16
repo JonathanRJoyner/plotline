@@ -187,9 +187,10 @@ def build_server(session: Session | None = None) -> MCPServer:
         noise and colour; for a colour image, palette lists the inks that draw it best. Each
         suggestion has a kind, a reason and a patch, which holds any of style, pens (a list of
         {name, width_mm, color}), settings ({stage: {setting: value}}) and page ({width_mm,
-        height_mm}), or none for a note. Apply a patch with set_pens for its pens, then
-        run(style=..., settings=...) or set_page. The suggestions follow the current style, pens,
-        settings and page."""
+        height_mm}, or {crop}, the shares to cut from the image's left, top, right and bottom),
+        or none for a note. Apply a patch with set_pens for its pens, then run(style=...,
+        settings=...) or set_page. The suggestions follow the current style, pens, settings and
+        page."""
         with _errors():
             return session.analysis()
 
@@ -199,14 +200,18 @@ def build_server(session: Session | None = None) -> MCPServer:
         height_mm: float | None = None,
         margin_mm: float | None = None,
         fit: Literal["fit", "fill"] | None = None,
+        crop: list[float] | None = None,
     ) -> dict[str, Any]:
-        """Set the page size and margin in mm, and whether the image fits inside the drawing area
-        or fills it. A value that is left out stays as it was."""
+        """Set the page size and margin in mm, whether the image fits inside the drawing area or
+        fills it, and the crop: [left, top, right, bottom], the shares of the image to cut from
+        each side before it is fitted, each 0 to 0.45 (analyse_image's framing suggestion gives
+        one; [0, 0, 0, 0] removes it). A value that is left out stays as it was."""
         given: dict[str, Any] = {
             "width_mm": width_mm,
             "height_mm": height_mm,
             "margin_mm": margin_mm,
             "fit": fit,
+            "crop": crop,
         }
         with _errors():
             changes = {key: value for key, value in given.items() if value is not None}
