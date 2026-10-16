@@ -4,6 +4,8 @@ New entries go under Unreleased until the next release.
 
 ## Unreleased
 
+Pending entries are files in [changelog.d/](changelog.d/README.md); they move here at the next release.
+
 ## 0.1.0 (2026-10-16)
 
 The first release. One Rust engine runs everything: the Python package, the command line and the MCP server use it as a native extension, and the browser GUI runs it as WebAssembly.
