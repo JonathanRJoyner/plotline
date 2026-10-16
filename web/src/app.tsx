@@ -413,14 +413,7 @@ export function App() {
   }
 
   async function loadPreset(file: File) {
-    let preset: unknown;
-    try {
-      preset = JSON.parse(await file.text());
-    } catch {
-      setErrors((es) => ({ ...es, preset: `${file.name} is not a preset: it is not valid JSON.` }));
-      return;
-    }
-    const warned = await call<string[]>("loadPreset", [preset], "preset");
+    const warned = await call<string[]>("loadPresetText", [await file.text()], "preset");
     // The engine's message names no file, and a refusal is the only way `warned` is undefined.
     if (!warned) setErrors((es) => ({ ...es, preset: es.preset && `Could not load ${file.name} (${es.preset}).` }));
     setWarnings(warned ?? []);

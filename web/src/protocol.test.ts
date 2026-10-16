@@ -102,6 +102,30 @@ test("a bad preset changes nothing", () => {
   expect(pick(ok("preset").state)).toEqual(pick(before));
 });
 
+test("loadPresetText reads a preset, an exported SVG and an exported JSON drawing, and redraws", async () => {
+  const { call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("setStyle", "hatch");
+  await ended(2);
+  ok("update", "hatch", { spacing_mm: 2.5 });
+  await ended(3);
+  const files = [JSON.stringify(ok("preset").value), ok("svg").value as string, ok("json").value as string];
+  let run = 3;
+  for (const text of files) {
+    ok("setStyle", "grid");
+    await ended(++run);
+    const reply = ok("loadPresetText", text);
+    expect(reply.state.style).toBe("hatch");
+    expect((reply.state.settings as { hatch: { spacing_mm: number } }).hatch.spacing_mm).toBe(2.5);
+    expect(reply.state.run.state).toBe("running");
+    await ended(++run);
+  }
+  const refusal = (text: string) => { const r = call("loadPresetText", text); return r.ok ? null : r.error; };
+  expect(refusal("plain words")).toBe("not a preset: it is neither JSON nor an SVG");
+  expect(refusal("<svg></svg>")).toBe("this SVG carries no plotline preset");
+});
+
 test("a bad pen is refused", () => {
   const { call, ok } = setup();
   const before = ok("preset").state.pens;

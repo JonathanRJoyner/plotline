@@ -79,6 +79,26 @@ test("a style switch keeps a changed setting, and Reset to defaults restores it"
   await expect(count).toHaveValue(initial);
 });
 
+test("an exported SVG loads back as a preset", async ({ page }) => {
+  let id = await pick(page, "stipple", await sample(page));
+  const count = page.getByRole("spinbutton", { name: /^count$/i });
+  const initial = await count.inputValue();
+  const changed = String(Math.round(Number(initial) / 2));
+  await count.fill(changed);
+  await count.blur();
+  id = await ran(page, id);
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "SVG", exact: true }).click()]);
+  const svg = readFileSync(await download.path());
+  await page.getByRole("button", { name: "Reset to defaults" }).click();
+  id = await ran(page, id);
+  await expect(count).toHaveValue(initial);
+  id = await pick(page, "line", id);
+  await page.getByLabel("Load preset").setInputFiles({ name: download.suggestedFilename(), mimeType: "image/svg+xml", buffer: svg });
+  await ran(page, id);
+  await expect(styleSelect(page)).toHaveValue("stipple");
+  await expect(count).toHaveValue(changed);
+});
+
 test("Fit to target meets its target", async ({ page }) => {
   test.setTimeout(120_000);
   await pick(page, "hatch", await sample(page));
