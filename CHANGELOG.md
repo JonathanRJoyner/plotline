@@ -20,6 +20,8 @@ A style switch keeps the settings you changed in the stages both styles share, P
 
 **Plot lint** checks every finished drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, needless vertices, unused pens, and vertices off the page, the margin or the machine. Each finding comes with the setting change that fixes it where one does. The GUI lists the findings under the stats with Apply buttons, `plotline run` prints them on stderr and fails on a warning with `--strict`, and the MCP `run` result carries them.
 
+**Tone match** scores every drawing on how closely its tones follow the image through a 1.5 mm eye filter, as a tone error and an SSIM, shown with the stats in the GUI and the CLI and returned by the MCP `run` tool. **Optimize** searches the style's density setting for the value with the lowest tone error, within a budget if one is given, in eight runs, and suggests it without applying it: an Optimize button beside Fit to target, `plotline run --optimize` and the MCP `optimize` tool. The tone stage's **Response** setting can be `auto`, which runs the style on a small step wedge first and corrects the tone map for the coverage it measures; it is off by default, and helps most the joined-point styles `line`, `tree` and `mesh`.
+
 ### Pens
 
 - **Pen use** shares a drawing between several pens: the first pen alone (the default), light to dark in list order, or each pen by its colour. The stages after it run once per pen that draws.
