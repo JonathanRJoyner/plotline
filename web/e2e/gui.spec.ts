@@ -79,6 +79,44 @@ test("a style switch keeps a changed setting, and Reset to defaults restores it"
   await expect(count).toHaveValue(initial);
 });
 
+test("a look changes the density setting, Undo takes it back, and Reset to defaults shows Balanced", async ({ page }) => {
+  let id = await sample(page);
+  // The style the page opens on has a Fine look; the menu lists the labels the engine gives.
+  const look = page.getByRole("combobox", { name: "Look", exact: true });
+  const shown = look.locator("option:checked");
+  const spacing = page.getByRole("spinbutton", { name: /^spacing( mm)?$/i });
+  await expect(look.getByRole("option", { name: "Fine" })).toHaveCount(1);
+  await expect(shown).toHaveText("Balanced");
+  const balanced = await spacing.inputValue();
+  await look.selectOption({ label: "Fine" });
+  id = await ran(page, id);
+  await expect(shown).toHaveText("Fine");
+  await expect(spacing).not.toHaveValue(balanced);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  id = await ran(page, id);
+  await expect(shown).toHaveText("Balanced");
+  await expect(spacing).toHaveValue(balanced);
+  // A changed setting is no look, and the menu then shows Custom.
+  await spacing.fill("1.7");
+  await spacing.blur();
+  id = await ran(page, id);
+  await expect(shown).toHaveText("Custom");
+  await look.selectOption({ label: "Fine" });
+  id = await ran(page, id);
+  await expect(shown).toHaveText("Fine");
+  await page.getByRole("button", { name: "Reset to defaults" }).click();
+  await ran(page, id);
+  await expect(shown).toHaveText("Balanced");
+  await expect(spacing).toHaveValue(balanced);
+});
+
+test("a style with no look but Balanced hides the Look menu", async ({ page }) => {
+  const id = await sample(page);
+  await expect(page.getByRole("combobox", { name: "Look", exact: true })).toBeVisible();
+  await pick(page, "ink", id);
+  await expect(page.getByRole("combobox", { name: "Look", exact: true })).toHaveCount(0);
+});
+
 test("Fit to target meets its target", async ({ page }) => {
   test.setTimeout(120_000);
   await pick(page, "hatch", await sample(page));

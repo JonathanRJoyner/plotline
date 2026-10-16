@@ -193,6 +193,14 @@ class Session:
         return self._core.settings()
 
     @property
+    def look(self) -> str | None:
+        """The name of the style's look that the settings are at, such as ``"balanced"``, or
+        ``None`` when they are at none, as after an edit of a setting that the looks set. It is
+        worked out from the settings on each call, so a reset, a preset or a style switch show
+        the right one. ``style.schema()["looks"]`` lists them."""
+        return self._core.look()
+
+    @property
     def state(self) -> RunState:
         """The state of the latest run, or ``idle`` before any run."""
         return RunState.idle if self._handle is None else self._handle.state
@@ -274,6 +282,13 @@ class Session:
         checked again, so a bad value or an unknown stage raises ``ValueError`` and changes
         nothing."""
         self._core.update(stage, values)
+
+    def apply_look(self, name: str) -> None:
+        """Start from the style's look ``name``, a named set of values for the few settings that
+        set how the style draws, as ``update`` would set each one. Every other setting stays as
+        it is, the image adjustments and Pen use among them. Raises ``ValueError`` for a name
+        that the style has no look of, naming the ones it has, and changes nothing."""
+        self._core.apply_look(name)
 
     def save_preset(self, path: str | os.PathLike[str]) -> None:
         """Write the style, canvas, pens and settings to ``path`` as a JSON preset, UTF-8 with LF
