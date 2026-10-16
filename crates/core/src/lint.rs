@@ -7,15 +7,23 @@
 //! ([`crate::analysis::Suggestion`]), so the front ends apply both the same way. The thresholds
 //! are hand-set taste defaults, recorded in the brief.
 
+use std::collections::HashMap;
+use std::f64::consts::PI;
+use std::sync::Arc;
+
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::coverage::{self, Coverage};
+use crate::fit::Density;
 use crate::machine::Machine;
-use crate::stats::{self, Speeds};
+use crate::raster;
+use crate::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
+use crate::stages::order::OrderStage;
+use crate::stats::{self, Speeds, Stats};
 use crate::style::Style;
 use crate::tone_match::{self, ToneMatch};
-use crate::types::{Drawing, Paths, Pen};
+use crate::types::{Drawing, Layer, Paths, Pen, ToneMap};
 
 /// A pen passing a spot this often risks the paper; over `OVERDRAW_SHARE` of the inked cells
 /// passed that often is overdraw. Two passes are normal where hatching crosses and fill rings meet.
@@ -24,7 +32,7 @@ const OVERDRAW_SHARE: f64 = 0.05;
 /// Short paths are specks when there are at least this many and this share of the paths.
 const SPECKS: usize = 10;
 const SPECK_SHARE: f64 = 0.01;
-/// Below this share of the drawing area inked, a drawing is nearly empty.
+/// Below this share of the drawing area laid with ink, a drawing is nearly empty.
 const NEARLY_EMPTY: f64 = 0.001;
 /// Tone at least this dark counts as the image's dark parts; under this share of the map they are
 /// too small to judge.
@@ -66,8 +74,10 @@ pub struct Measure {
     pub cell_mm: f64,
     /// One entry per layer, in drawing order.
     pub layers: Vec<LayerMeasure>,
-    /// The share of the drawing area any layer inks.
-    pub inked_share: f64,
+    /// The ink laid as a share of the drawing area: each path's length times its pen width, plus a
+    /// pen-width disc at the path, summed over every layer. Unlike the raster it counts a thin
+    /// pen's marks in full, and every mark added raises it.
+    pub laid_share: f64,
     /// The share any layer inks of the cells whose nearest tone-map pixel holds [`DARK_TONE`] or
     /// more; `None` without a tone map or when such cells are under [`DARK_AREA`] of its area.
     pub dark_coverage: Option<f64>,
@@ -77,6 +87,22 @@ pub struct Measure {
     /// How the inked cells follow the tone map; see [`tone_match`]. `None` without a tone map or
     /// when there is nothing to compare.
     pub tone_match: Option<ToneMatch>,
+}
+
+/// The segments of `path`, and how many of them are finer than [`FINE`] of a pen `w` mm wide.
+fn segment_counts(path: &[[f64; 2]], w: f64) -> (usize, usize) {
+    let fine = path.windows(2).filter(|s| Paths::path_length(s) < w * FINE);
+    (path.len().saturating_sub(1), fine.count())
+}
+
+/// The `vertices` finding's number for layers with these `(segments, fine segments)`: the largest
+/// share of fine segments over the layers with at least [`FINE_MIN`] segments, or `None` when no
+/// share is over half.
+fn fine_share(layers: impl Iterator<Item = (usize, usize)>) -> Option<f64> {
+    let share = (layers.filter(|&(n, _)| n >= FINE_MIN))
+        .map(|(n, fine)| fine as f64 / n as f64)
+        .fold(0.0, f64::max);
+    (share > 0.5).then_some(share)
 }
 
 /// Measure `d` on one raster over the page, with the cell size of its thinnest pen, cleared
@@ -89,6 +115,7 @@ pub fn measure(d: &Drawing) -> Measure {
     let mut grid = Coverage::new(page, cell);
     let mut union = vec![false; grid.count.len()];
     let (mut off_page, mut off_area) = (0, 0);
+    let mut laid = 0.0;
     let mut layers = Vec::new();
     for layer in &d.layers {
         let w = layer.pen.width_mm;
@@ -111,11 +138,12 @@ pub fn measure(d: &Drawing) -> Measure {
         let (mut dots, mut short, mut segments, mut fine_segments) = (0, 0, 0, 0);
         for p in layer.paths.iter() {
             dots += usize::from(p.len() == 1);
-            short += usize::from(Paths::path_length(p) < w);
-            for s in p.windows(2) {
-                segments += 1;
-                fine_segments += usize::from(Paths::path_length(s) < w * FINE);
-            }
+            let length = Paths::path_length(p);
+            laid += length * w + PI * half * half;
+            short += usize::from(length < w);
+            let (n, fine) = segment_counts(p, w);
+            segments += n;
+            fine_segments += fine;
         }
         layers.push(LayerMeasure {
             inked,
@@ -128,11 +156,10 @@ pub fn measure(d: &Drawing) -> Measure {
             fine_segments,
         });
     }
-    let inked_area = union.iter().filter(|&&b| b).count() as f64 * cell * cell;
     Measure {
         cell_mm: cell,
         layers,
-        inked_share: inked_area / (aw * ah),
+        laid_share: laid / (aw * ah),
         dark_coverage: d.tone.as_deref().and_then(|t| {
             // The tone-map column or row under each cell centre's, if any.
             let under = |cells: usize, origin: f64, pixels: u32| -> Vec<Option<usize>> {
@@ -241,9 +268,223 @@ impl Context<'_> {
         };
         Some(json!({"settings": {stage: {key: v}}}))
     }
+
+    /// The largest length in mm among the settings of `stage` that end in `_mm`, which is the scale
+    /// of its pattern: a truchet tile or a scribble loop is bigger than the spacing of its lines.
+    fn scale(&self, stage: &str) -> f64 {
+        let all = self.settings.get(stage).and_then(Value::as_object);
+        let lengths = all
+            .into_iter()
+            .flatten()
+            .filter(|(k, _)| k.ends_with("_mm"));
+        lengths.filter_map(|(_, v)| v.as_f64()).fold(0.0, f64::max)
+    }
+
+    /// A patch moving the density setting `d` one step denser: doubled for a count, halved for a
+    /// spacing, or `None` at the end of its range.
+    fn denser(&self, d: &Density) -> Option<Value> {
+        let v = self.number(&d.stage, &d.key)?;
+        self.set(
+            &d.stage,
+            &d.key,
+            d.grain(if d.direct { v * 2.0 } else { v / 2.0 }),
+        )
+    }
+}
+
+/// A region needs this many spacings squared of area before a closer spacing is sure to put a
+/// mark more in it: it holds some four lines across at the spacing it has, and a few lines more
+/// or fewer, as the lines fall, do not undo the gain. A style whose stage has longer lengths than
+/// its spacing, such as truchet's tiles, counts those as the spacing ([`Context::scale`]).
+const ROOM: f64 = 16.0;
+
+/// How many pixels of `tone` have ink of at least `level`, and their area in mm2.
+fn over(tone: &ToneMap, level: f32) -> (usize, f64) {
+    let n = tone.ink.iter().filter(|&&i| i >= level).count();
+    (n, n as f64 * tone.mm_per_px * tone.mm_per_px)
+}
+
+/// Whether the pixels of `tone` with ink of at least `level` can take a denser setting: a spacing
+/// needs `ROOM` spacings squared of them, `v` being the spacing it has now, and a count of points
+/// `v` needs a pixel to snap to well before there is one per pixel (relaxation drops a point whose
+/// cell holds none), so a quarter.
+fn room(tone: &ToneMap, level: f32, direct: bool, v: f64) -> bool {
+    let (n, area) = over(tone, level);
+    if direct {
+        v <= n as f64 / 4.0
+    } else {
+        area >= ROOM * v * v
+    }
+}
+
+/// Whether the order stage keeps every path: it drops those under its minimum length, dots among
+/// them, and a denser drawing makes shorter marks (smaller cells, shorter pieces of a line), so
+/// with a minimum no setting is sure to add marks.
+fn keeps_all(cx: &Context) -> bool {
+    cx.number("order", "min_length_mm").unwrap_or(0.0) == 0.0
+}
+
+/// The patch for a nearly empty drawing, or `None` where no setting is sure to add marks.
+fn more_ink(cx: &Context, d: &Drawing, paths: usize) -> Option<Value> {
+    // A blank tone map has nothing for a setting to draw, and without one nothing says what can.
+    let tone = d.tone.as_deref()?;
+    let top = tone.ink.iter().copied().fold(0.0, f32::max);
+    if top <= 0.0 || !keeps_all(cx) {
+        return None;
+    }
+    if paths > 0 {
+        let density = Density::of(cx.style)?;
+        let patch = cx.denser(&density)?;
+        // The count wanted, or the scale of the pattern now.
+        let v = if density.direct {
+            patch["settings"][&density.stage][&density.key].as_f64()?
+        } else {
+            cx.number(&density.stage, &density.key)?
+                .max(cx.scale(&density.stage))
+        };
+        // Marks lie where the ink reaches the style's threshold, if it has one.
+        let level = cx.find(&["threshold"]).map_or(0.0, |t| t.2 as f32);
+        let level = level.max(f32::MIN_POSITIVE);
+        return room(tone, level, density.direct, v).then_some(patch);
+    }
+    // Some pens read other tone maps than the one the drawing keeps: one per colour, or the map
+    // corrected for the style's response.
+    let own =
+        cx.settings["split"]["mode"] != "by_colour" && cx.settings["tone"]["response"] != "auto";
+    let (stage, key, t) = cx.find(&["threshold"]).filter(|_| own)?;
+    // The new threshold, in 0.01 steps, lets through the darkest pixels, as many as it takes for
+    // the drawing to leave the finding: those the dots of the style's spacing (a pen width for a
+    // style with none) would lay twice [`NEARLY_EMPTY`] of the drawing area on, the least ink a
+    // mark lays for its spacing. But never fewer than [`ROOM`] needs, which is sure to take marks;
+    // with fewer than those, or a threshold of 0, which takes blank paper too, there is no patch.
+    let pens = d.layers.iter().map(|l| l.pen.width_mm);
+    let (thinnest, widest) = (
+        pens.clone().fold(f64::MAX, f64::min),
+        pens.fold(0.0, f64::max),
+    );
+    let spacing = cx.find(SPACING);
+    let s = spacing.map_or(widest, |f| f.2);
+    let big = spacing.map_or(widest, |f| f.2.max(cx.scale(f.0)));
+    let [_, _, aw, ah] = d.canvas.drawing_rect();
+    let dot = PI * thinnest * thinnest / 4.0 / (s * s);
+    let px = tone.mm_per_px * tone.mm_per_px;
+    let sure = (ROOM * big * big / px).ceil().max(1.0) as usize;
+    let clear = (2.0 * NEARLY_EMPTY * aw * ah / dot / px).ceil() as usize;
+    let mut ink: Vec<f32> = tone.ink.iter().copied().filter(|&i| i > 0.0).collect();
+    let k = clear.max(sure).min(ink.len());
+    let level = f64::from(
+        *ink.select_nth_unstable_by(k.checked_sub(1)?, |a, b| b.total_cmp(a))
+            .1,
+    );
+    let to = (level * 100.0).floor() / 100.0;
+    let patch = cx
+        .set(stage, key, to)
+        .filter(|_| k >= sure && 0.0 < to && to < t)?;
+    (patch["settings"][stage][key].as_f64()? <= level).then_some(patch)
 }
 
 const SPACING: &[&str] = &["spacing_mm", "min_spacing_mm"];
+
+/// The share of the plot time `st` spends on pen-up travel.
+fn travel_share(st: &Stats, speeds: Speeds) -> f64 {
+    st.pen_up_mm / speeds.travel_mm_s / st.estimated_seconds
+}
+
+/// The travel share of `d` once the ordering stage has put every layer in nearest-neighbour order.
+/// With `optimize` off the stage keeps the paths of a layer in input order, and `d` holds exactly
+/// those, so this is the drawing that turning `optimize` on would make. `None` if the stage fails.
+fn optimized_travel_share(d: &Drawing, speeds: Speeds) -> Option<f64> {
+    let settings = json!({"optimize": true, "min_length_mm": 0});
+    let canvas = Arc::new(d.canvas.clone());
+    let layers = (d.layers.iter())
+        .map(|layer| {
+            let inputs = Inputs::new(HashMap::from([
+                (Kind::Paths, Artifact::Paths(Arc::new(layer.paths.clone()))),
+                (Kind::Canvas, Artifact::Canvas(canvas.clone())),
+            ]));
+            let ctx = RunContext::new(Arc::default());
+            let mut run = OrderStage.start(inputs, &settings, ctx).ok()?;
+            let paths = loop {
+                match run.step().ok()? {
+                    Step::Frame(_) => {}
+                    Step::Done(Artifact::Paths(p)) => break p,
+                    Step::Done(_) => return None,
+                }
+            };
+            Some(Layer {
+                pen: layer.pen.clone(),
+                paths: Arc::unwrap_or_clone(paths),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let ordered = Drawing {
+        canvas: d.canvas.clone(),
+        layers,
+        tone: None,
+        preset: None,
+    };
+    Some(travel_share(&stats::compute(&ordered, speeds), speeds))
+}
+
+/// The `vertices` number of `d` once the ordering stage simplifies every path to `tolerance` and
+/// drops those shorter than `min_length`, or `None` if the finding would not fire. With
+/// `simplify_mm` at 0 the layers of `d` hold the very paths the stage takes in (the stage only
+/// drops and reorders them), and the order of the paths does not change a count, so this is the
+/// number after the setting is turned on. A path the run reversed may break an exact tie in
+/// `raster::simplify` the other way.
+fn simplified_fine_share(d: &Drawing, tolerance: f64, min_length: f64) -> Option<f64> {
+    fine_share(d.layers.iter().map(|layer| {
+        let w = layer.pen.width_mm;
+        (layer.paths.iter())
+            .map(|p| raster::simplify(p, tolerance))
+            .filter(|p| !p.is_empty() && Paths::path_length(p) >= min_length)
+            .map(|p| segment_counts(&p, w))
+            .fold((0, 0), |(n, fine), (m, f)| (n + m, fine + f))
+    }))
+}
+
+/// The patch for a drawing that covers `c` of its dark parts, or `None` where no setting is sure
+/// to raise that. Coverage grows about in proportion to the marks, so it asks for closer lines, or
+/// more points or strokes, aiming at [`DARK_TARGET`]. But the dark parts must have room for the
+/// marks to land in them (see [`room`]), the order stage must keep every path, and the raster must
+/// see the pens: a pen thinner than a cell is undercounted (a dot counts only when a cell centre
+/// lies within half the pen of it), so what a patch would reach cannot be told.
+fn more_dark(
+    cx: &Context,
+    (d, m): (&Drawing, &Measure),
+    c: f64,
+    spacing: Option<(&'static str, &'static str, f64)>,
+    widest: f64,
+) -> Option<Value> {
+    let seen = d.layers.iter().all(|l| l.pen.width_mm >= m.cell_mm);
+    let tone = d.tone.as_deref().filter(|_| seen && keeps_all(cx))?;
+    let closer = spacing.and_then(|(stage, key, s)| {
+        let s2 = step_down(s * c / DARK_TARGET).max(step_up(widest));
+        (s2 < s).then_some((stage, key, s, s2))
+    });
+    if let Some((stage, key, s, s2)) = closer {
+        let fits = room(tone, DARK_TONE, false, s.max(cx.scale(stage)));
+        return fits.then(|| cx.set(stage, key, s2))?;
+    }
+    let (stage, key, n) = cx.find(&["count", "max_lines"])?;
+    let mut to = (n * DARK_TARGET / c).round();
+    // The strokes of a sketch stop when the ink is gone; only a run that drew its limit of
+    // segments in some layer would draw more.
+    if key == "max_lines" && m.layers.iter().all(|l| (l.segments as f64) < n) {
+        return None;
+    }
+    if stage == "voronoi" {
+        // The tone map holds only so many points, and at least `ROOM` of those added should fall
+        // in the dark parts, counting only their share of the inked area.
+        let (inked, _) = over(tone, f32::MIN_POSITIVE);
+        to = to.min((inked / 4) as f64);
+        let (dark, _) = over(tone, DARK_TONE);
+        if (to - n) * dark as f64 / (inked as f64) < ROOM {
+            return None;
+        }
+    }
+    (to > n).then(|| cx.set(stage, key, to))?
+}
 
 /// The findings for drawing `d` and its measurement `m`, given the session's current style,
 /// settings, pens, speeds and machine, in a fixed order. See the plot lint spec for the rules.
@@ -271,15 +512,8 @@ pub fn check(
     let paths: usize = m.layers.iter().map(|l| l.paths).sum();
     let percent = |share: f64| (share * 100.0).round();
 
-    let empty = paths == 0 || m.inked_share < NEARLY_EMPTY;
+    let empty = m.laid_share < NEARLY_EMPTY;
     if empty {
-        let threshold = cx.find(&["threshold"]);
-        let patch = threshold
-            .and_then(|(stage, key, t)| cx.set(stage, key, (t * 50.0).floor() / 100.0))
-            .or_else(|| {
-                (cx.settings["tone"]["levels"] == "manual")
-                    .then(|| json!({"settings": {"tone": {"levels": "auto"}}}))
-            });
         let what = if paths == 0 {
             "No marks at these settings.".to_string()
         } else {
@@ -290,7 +524,8 @@ pub fn check(
         };
         let message =
             format!("{what} Try a lower threshold, or the tone's black, white and gamma settings.");
-        add("empty", Severity::Warning, message, m.inked_share, patch);
+        let patch = more_ink(&cx, d, paths);
+        add("empty", Severity::Warning, message, m.laid_share, patch);
     }
     if m.off_page > 0 {
         let message = format!(
@@ -379,15 +614,7 @@ pub fn check(
         add("specks", Severity::Warning, message, short as f64, patch);
     }
     if let Some(c) = m.dark_coverage.filter(|&c| c < DARK_COVERAGE && !empty) {
-        // Coverage grows about in proportion to the marks: closer lines, or more points or strokes.
-        let closer = spacing.and_then(|(stage, key, s)| {
-            let s2 = step_down(s * c / DARK_TARGET).max(step_up(widest));
-            (s2 < s).then(|| cx.set(stage, key, s2)).flatten()
-        });
-        let patch = closer.or_else(|| {
-            let (stage, key, n) = cx.find(&["count", "max_lines"])?;
-            cx.set(stage, key, (n * DARK_TARGET / c).round())
-        });
+        let patch = more_dark(&cx, (d, m), c, spacing, widest);
         let message = format!(
             "Where the image is darkest, the drawing covers only {} % of the paper.",
             percent(c)
@@ -404,7 +631,7 @@ pub fn check(
             );
             add("lifts", Severity::Info, message, lifts, None);
         }
-        let travel = st.pen_up_mm / speeds.travel_mm_s / st.estimated_seconds;
+        let travel = travel_share(&st, speeds);
         if travel > TRAVEL_SHARE {
             let optimized = cx.settings["order"]["optimize"] != false;
             let mut message = format!(
@@ -414,18 +641,19 @@ pub fn check(
             let (severity, patch) = if optimized {
                 (Severity::Info, None)
             } else {
-                message += " Path order's optimize setting cuts it.";
-                let patch = json!({"settings": {"order": {"optimize": true}}});
-                (Severity::Warning, Some(patch))
+                // The order may already be the nearest-neighbour one, so offer the setting only
+                // when it cuts the travel.
+                let cuts = optimized_travel_share(d, speeds).is_some_and(|share| share < travel);
+                let patch = cuts.then(|| {
+                    message += " Path order's optimize setting cuts it.";
+                    json!({"settings": {"order": {"optimize": true}}})
+                });
+                (Severity::Warning, patch)
             };
             add("travel", severity, message, travel, patch);
         }
     }
-    let fine = (m.layers.iter())
-        .filter(|l| l.segments >= FINE_MIN)
-        .map(|l| l.fine_segments as f64 / l.segments as f64)
-        .fold(0.0, f64::max);
-    if fine > 0.5 {
+    if let Some(fine) = fine_share(m.layers.iter().map(|l| (l.segments, l.fine_segments))) {
         let mut message = format!(
             "{} % of the segments are shorter than an eighth of the pen width, so the paths hold more vertices than the pen can show.",
             percent(fine)
@@ -437,9 +665,22 @@ pub fn check(
             .map(|l| l.pen.width_mm)
             .fold(f64::MAX, f64::min);
         let tolerance = ((narrowest * FINE * 1000.0 + 1e-9).floor() / 1000.0).max(0.001);
-        let patch = (cx.number("order", "simplify_mm").unwrap_or(0.0) < tolerance)
+        // A wide pen's layer counts fine segments against its own width, and simplifying to the
+        // narrowest pen's tolerance can remove its long, nearly straight segments' vertices
+        // faster than its fine segments, which raises its share. So offer the setting only when
+        // it lowers the number, as predicted from the paths. That is exact only from 0: from
+        // another value the layers hold paths already simplified, and simplifying them again is
+        // not simplifying the originals.
+        let patch = (cx.number("order", "simplify_mm").unwrap_or(0.0) == 0.0)
             .then(|| cx.set("order", "simplify_mm", tolerance))
-            .flatten();
+            .flatten()
+            .filter(|patch| {
+                let on = patch["settings"]["order"]["simplify_mm"]
+                    .as_f64()
+                    .unwrap_or(tolerance);
+                let min_length = cx.number("order", "min_length_mm").unwrap_or(0.0);
+                simplified_fine_share(d, on, min_length).is_none_or(|after| after < fine)
+            });
         if patch.is_some() {
             message += " Path order's simplify setting removes them.";
         }
@@ -467,7 +708,7 @@ pub fn check(
                 idle.join(", ")
             );
             add(
-                "unused_pens",
+                "idle_pens",
                 Severity::Info,
                 message,
                 idle.len() as f64,
@@ -535,27 +776,117 @@ mod tests {
         (0..n).map(|i| vec![[1.0 + i as f64 * 0.9, 50.0]]).collect()
     }
 
+    /// A tone map `side` pixels square over the 100 mm page, every pixel with ink `ink`.
+    fn flat_tone(ink: f32, side: u32) -> Arc<ToneMap> {
+        Arc::new(ToneMap {
+            width: side,
+            height: side,
+            ink: vec![ink; (side * side) as usize],
+            mm_per_px: 100.0 / f64::from(side),
+            origin_mm: [0.0; 2],
+        })
+    }
+
+    /// The `empty` finding's patch for `d` under `style` at its defaults changed by `change`.
+    fn empty_patch(d: &Drawing, style: &str, change: impl Fn(&mut Value)) -> Option<Value> {
+        find(&lint(d, style, change), "empty")
+            .unwrap()
+            .patch
+            .clone()
+    }
+
+    /// The `dark` finding's patch, likewise.
+    fn dark_patch(d: &Drawing, style: &str, change: impl Fn(&mut Value)) -> Option<Value> {
+        find(&lint(d, style, change), "dark").unwrap().patch.clone()
+    }
+
     #[test]
-    fn an_empty_drawing_suggests_a_lower_threshold_then_auto_levels() {
-        let d = page(vec![]);
+    fn an_empty_drawing_lowers_the_threshold_below_its_darkest_ink() {
+        let mut d = page(vec![]);
         let all = lint(&d, "grid", |_| {});
         let empty = find(&all, "empty").unwrap();
         assert_eq!(empty.severity, Severity::Warning);
+        assert_eq!((empty.value, &empty.patch), (0.0, &None));
         assert!(empty.message.starts_with("No marks at these settings."));
-        let patch = json!({"settings": {"points": {"threshold": 0.25}}});
-        assert_eq!(empty.patch, Some(patch));
-        let all = lint(&d, "grid", |s| s["points"]["threshold"] = json!(0.0));
-        let patch = json!({"settings": {"tone": {"levels": "auto"}}});
-        assert_eq!(find(&all, "empty").unwrap().patch, Some(patch));
-        let all = lint(&d, "grid", |s| {
-            s["points"]["threshold"] = json!(0.0);
-            s["tone"]["levels"] = json!("auto");
-        });
-        assert_eq!(find(&all, "empty").unwrap().patch, None);
-        // The ink threshold stops at its schema's least value.
-        let all = lint(&d, "ink", |s| s["ink"]["threshold"] = json!(0.06));
+        // A blank tone map has nothing to draw, whatever the settings.
+        d.tone = Some(flat_tone(0.0, 10));
+        assert_eq!(empty_patch(&d, "grid", |_| {}), None);
+        d.tone = Some(flat_tone(0.4, 10));
+        let patch = json!({"settings": {"points": {"threshold": 0.4}}});
+        assert_eq!(empty_patch(&d, "grid", |_| {}), Some(patch));
+        // The darkest ink is already past the threshold, so the threshold is not the cause.
+        let low = |s: &mut Value| s["points"]["threshold"] = json!(0.3);
+        assert_eq!(empty_patch(&d, "grid", low), None);
+        // A style with no threshold has no patch, nor does one that reads other tone maps.
+        assert_eq!(empty_patch(&d, "waves", |_| {}), None);
+        let colours = |s: &mut Value| s["split"]["mode"] = json!("by_colour");
+        assert_eq!(empty_patch(&d, "grid", colours), None);
+        let corrected = |s: &mut Value| s["tone"]["response"] = json!("auto");
+        assert_eq!(empty_patch(&d, "grid", corrected), None);
+        // A minimum length drops dots, so the marks may be there and dropped.
+        let long = |s: &mut Value| s["order"]["min_length_mm"] = json!(1.0);
+        assert_eq!(empty_patch(&d, "grid", long), None);
+        // The ink threshold stops at its schema's least value, and not above the darkest ink.
+        d.tone = Some(flat_tone(0.06, 10));
         let patch = json!({"settings": {"ink": {"threshold": 0.05}}});
-        assert_eq!(find(&all, "empty").unwrap().patch, Some(patch));
+        assert_eq!(empty_patch(&d, "ink", |_| {}), Some(patch));
+        d.tone = Some(flat_tone(0.04, 10));
+        assert_eq!(empty_patch(&d, "ink", |_| {}), None);
+    }
+
+    #[test]
+    fn a_drawing_with_marks_gets_its_density_one_step_up() {
+        let mut d = page(vec![vec![[50.0, 50.0], [51.0, 50.0]]]);
+        d.tone = Some(flat_tone(1.0, 100));
+        // A spacing is halved, to its least, and a count is doubled, up to the pixels' room.
+        let patch = json!({"settings": {"hatch": {"spacing_mm": 0.5}}});
+        assert_eq!(empty_patch(&d, "hatch", |_| {}), Some(patch));
+        let least = |s: &mut Value| s["hatch"]["spacing_mm"] = json!(0.2);
+        assert_eq!(empty_patch(&d, "hatch", least), None);
+        let patch = json!({"settings": {"voronoi": {"count": 2000}}});
+        let few = |s: &mut Value| s["voronoi"]["count"] = json!(1000);
+        assert_eq!(empty_patch(&d, "stipple", few), Some(patch));
+        // 10000 pixels hold 2500 points, which 5000 doubled passes by far.
+        assert_eq!(empty_patch(&d, "stipple", |_| {}), None);
+        // A denser drawing makes shorter marks, which a minimum length drops.
+        let long = |s: &mut Value| s["order"]["min_length_mm"] = json!(1.0);
+        assert_eq!(empty_patch(&d, "hatch", long), None);
+        assert_eq!(
+            empty_patch(&d, "stipple", |s| {
+                few(s);
+                long(s)
+            }),
+            None
+        );
+        // Marks lie only where the ink reaches the threshold, and a closer spacing needs room
+        // there: with ink 0.2 a threshold of 0.1 leaves the whole page, one of 0.3 nothing.
+        d.tone = Some(flat_tone(0.2, 100));
+        let low = |s: &mut Value| s["hatch"]["threshold"] = json!(0.1);
+        assert!(empty_patch(&d, "hatch", low).is_some());
+        let high = |s: &mut Value| s["hatch"]["threshold"] = json!(0.3);
+        assert_eq!(empty_patch(&d, "hatch", high), None);
+    }
+
+    #[test]
+    fn a_thin_pens_dots_are_ink() {
+        // 4000 dots of a 0.03 mm pen: the raster counts about none of them, the ink laid is
+        // pi (0.015 mm)^2 for each, and the more dots the more ink.
+        let dots = |n: usize| -> Vec<Vec<[f64; 2]>> {
+            let at = |i: usize| [1.0 + (i % 60) as f64 * 1.5, 1.0 + (i / 60) as f64 * 1.4];
+            (0..n).map(|i| vec![at(i)]).collect()
+        };
+        let thin = |n| drawing_100(dots(n), 0.03, "#000000");
+        let laid = |n| measure(&thin(n)).laid_share;
+        assert!((laid(4000) - 4000.0 * PI * 0.015 * 0.015 / 10000.0).abs() < 1e-12);
+        assert!(laid(4000) > laid(2000) && laid(2000) > 0.0);
+        let all = lint(&thin(4000), "grid", |_| {});
+        let empty = find(&all, "empty").unwrap();
+        assert_eq!(empty.value, laid(4000));
+        assert!(empty.message.starts_with("The drawing inks under 0.1 % of"));
+        // A line adds its length times the pen width to the disc at its end.
+        let line = drawing_100(vec![vec![[0.0, 0.0], [10.0, 0.0]]], 0.5, "#000000");
+        let want = (10.0 * 0.5 + PI * 0.25 * 0.25) / 10000.0;
+        assert!((measure(&line).laid_share - want).abs() < 1e-12);
     }
 
     #[test]
@@ -676,12 +1007,30 @@ mod tests {
         assert_eq!(dark.severity, Severity::Info);
         let patch = json!({"settings": {"hatch": {"spacing_mm": 0.3}}});
         assert_eq!(dark.patch, Some(patch));
-        let all = lint(&d, "stipple", |_| {});
-        let count = &find(&all, "dark").unwrap().patch.as_ref().unwrap()["settings"];
-        assert!(
-            count["voronoi"]["count"].as_u64().unwrap() > 15000,
-            "{count}"
-        );
+        // More points than the 40000 pixels hold are not asked for: a quarter of them, 10000.
+        d.tone = Some(flat_tone(1.0, 200));
+        let patch = json!({"settings": {"voronoi": {"count": 10000}}});
+        assert_eq!(dark_patch(&d, "stipple", |_| {}), Some(patch));
+        // A coarse map, 64 by 6 pixels, holds 384 points at most, so more points add nothing.
+        let coarse = ToneMap {
+            width: 64,
+            height: 6,
+            ink: vec![1.0; 384],
+            mm_per_px: 100.0 / 64.0,
+            origin_mm: [0.0; 2],
+        };
+        d.tone = Some(Arc::new(coarse));
+        assert_eq!(dark_patch(&d, "stipple", |_| {}), None);
+        // A denser drawing makes shorter marks (more points, smaller cells and edges), which a
+        // minimum length drops.
+        d.tone = Some(flat_tone(1.0, 200));
+        let long = |s: &mut Value| s["order"]["min_length_mm"] = json!(8.0);
+        assert_eq!(dark_patch(&d, "stipple", long), None);
+        assert_eq!(dark_patch(&d, "hatch", long), None);
+        // A pen thinner than a raster cell is undercounted, so no patch can promise a gain.
+        let mut thin = drawing_100(lines(2.0), 0.05, "#000000");
+        thin.tone = d.tone.clone();
+        assert_eq!(dark_patch(&thin, "hatch", |_| {}), None);
         // Dense lines reach it, and a light image has nothing dark to reach.
         assert!(!finds(&drawing_100_with_tone(lines(0.3)), "hatch", "dark"));
         let grey = ToneMap {
@@ -714,6 +1063,53 @@ mod tests {
         let all = lint(&far, "hatch", |_| {});
         let travel = find(&all, "travel").unwrap();
         assert_eq!((travel.severity, &travel.patch), (Severity::Info, &None));
+    }
+
+    #[test]
+    fn travel_offers_optimize_only_when_the_order_would_cut_it() {
+        let stroke = |x: f64, y: f64, dx: f64| vec![[x, y], [x + dx, y]];
+        let travel = |paths| {
+            let d = page(paths);
+            let all = lint(&d, "hatch", |s| s["order"]["optimize"] = json!(false));
+            find(&all, "travel").unwrap().clone()
+        };
+        // Already in nearest-neighbour order from the corner: the setting changes nothing.
+        let in_order = travel(vec![stroke(0.5, 0.5, 2.5), stroke(50.0, 50.0, 3.0)]);
+        assert_eq!(
+            (in_order.severity, &in_order.patch),
+            (Severity::Warning, &None)
+        );
+        assert!(
+            !in_order.message.contains("optimize"),
+            "{}",
+            in_order.message
+        );
+        // The far stroke comes second, though the middle one is nearer.
+        let shuffled = travel(vec![
+            stroke(0.5, 0.5, 2.5),
+            stroke(99.0, 99.0, -2.5),
+            stroke(50.0, 50.0, 3.0),
+        ]);
+        let patch = json!({"settings": {"order": {"optimize": true}}});
+        assert_eq!(shuffled.patch, Some(patch));
+        assert!(
+            shuffled.message.contains("optimize"),
+            "{}",
+            shuffled.message
+        );
+    }
+
+    #[test]
+    fn the_travel_share_lint_predicts_is_the_one_after_its_patch() {
+        let mut s = session(false, "hatch", json!({"order": {"optimize": false}}));
+        draw(&mut s);
+        let found = s.lint().unwrap();
+        let patch = find(&found, "travel").unwrap().patch.clone().unwrap();
+        let predicted = optimized_travel_share(&s.drawing().unwrap(), s.speeds()).unwrap();
+        assert!(predicted < find(&found, "travel").unwrap().value);
+        s.update("order", &patch["settings"]["order"]).unwrap();
+        draw(&mut s);
+        assert_eq!(travel_share(&s.stats().unwrap(), s.speeds()), predicted);
     }
 
     #[test]
@@ -755,6 +1151,101 @@ mod tests {
         assert_eq!(find(&all, "vertices").unwrap().patch, Some(patch));
     }
 
+    /// `n` dashes of two vertices `len` mm long, one above the next from y = 60, which
+    /// simplifying leaves as they are.
+    fn dashes_of(n: usize, len: f64) -> Vec<Vec<[f64; 2]>> {
+        (0..n)
+            .map(|i| {
+                let y = 60.0 + i as f64 * 0.01;
+                vec![[10.0, y], [10.0 + len, y]]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn simplifying_is_offered_when_it_lowers_the_share() {
+        // A straight line of fine segments goes down to one long segment; the dashes stay fine.
+        let mut paths = dashes_of(1500, 0.01);
+        paths.push((0..1500).map(|i| [10.0 + i as f64 * 0.02, 50.0]).collect());
+        let d = page(paths);
+        let all = lint(&d, "hatch", |_| {});
+        let vertices = find(&all, "vertices").unwrap();
+        assert_eq!(vertices.value, 1.0);
+        let patch = json!({"settings": {"order": {"simplify_mm": 0.037}}});
+        assert_eq!(vertices.patch, Some(patch));
+        assert!(vertices
+            .message
+            .ends_with("Path order's simplify setting removes them."));
+        // The finding stays, with a lower number: 1500 fine of 1501 segments.
+        assert_eq!(simplified_fine_share(&d, 0.037, 0.0), Some(1500.0 / 1501.0));
+    }
+
+    #[test]
+    fn simplifying_is_not_offered_when_it_raises_the_share() {
+        // The wide pen's layer: 1100 dashes finer than an eighth of 1 mm, and one path of 500
+        // segments of 0.19 mm, bent by 0.01 mm, which are not fine. The thin pen sets the tolerance
+        // to 0.025 mm, which straightens that path to one segment and leaves the dashes: the share
+        // would go from 1100 of 1600 to 1100 of 1101.
+        let mut paths = dashes_of(1100, 0.05);
+        paths.push(
+            (0..=500)
+                .map(|i| [2.0 + i as f64 * 0.19, 80.0 + (i % 2) as f64 * 0.01])
+                .collect(),
+        );
+        let mut d = page(paths);
+        d.layers[0].pen = Pen::new("Wide", 1.0, "#000000").unwrap();
+        let mut thin = Paths::new();
+        thin.push(&[[5.0, 90.0], [95.0, 90.0]]);
+        d.layers.push(Layer {
+            pen: Pen::new("Thin", 0.2, "#000000").unwrap(),
+            paths: thin,
+        });
+        let all = lint(&d, "hatch", |_| {});
+        let vertices = find(&all, "vertices").unwrap();
+        assert_eq!(vertices.value, 1100.0 / 1600.0);
+        assert_eq!(vertices.patch, None);
+        assert!(!vertices.message.contains("simplify"));
+        assert_eq!(simplified_fine_share(&d, 0.025, 0.0), Some(1100.0 / 1101.0));
+        // A partly simplified drawing cannot be predicted from its paths, so it gets no patch.
+        let all = lint(&page(dashes_of(1500, 0.01)), "hatch", |s| {
+            s["order"]["simplify_mm"] = json!(0.01)
+        });
+        assert_eq!(find(&all, "vertices").unwrap().patch, None);
+    }
+
+    #[test]
+    fn the_vertices_share_lint_predicts_is_the_one_after_its_patch() {
+        // Waves sample far finer than a wide pen can show. One wide pen has its finding go away;
+        // a thin and a wide pen, a layer each, leave the wide layer a lower share than before.
+        for (widths, stays) in [(vec![1.0], false), (vec![0.2, 2.0], true)] {
+            let mut s = session(false, "waves", json!({}));
+            if widths.len() > 1 {
+                s.update("split", &json!({"mode": "light_to_dark"}))
+                    .unwrap();
+            }
+            let pens = (widths.iter())
+                .map(|&w| Pen::new("Pen", w, "#000000").unwrap())
+                .collect();
+            s.set_pens(pens).unwrap();
+            draw(&mut s);
+            let found = s.lint().unwrap();
+            let vertices = find(&found, "vertices").unwrap();
+            let patch = vertices.patch.clone().unwrap();
+            let on = &patch["settings"]["order"];
+            let tolerance = on["simplify_mm"].as_f64().unwrap();
+            let predicted = simplified_fine_share(&s.drawing().unwrap(), tolerance, 0.0);
+            assert_eq!(predicted.is_some(), stays);
+            assert!(predicted.is_none_or(|share| share < vertices.value));
+            s.update("order", on).unwrap();
+            draw(&mut s);
+            let after = measure(&s.drawing().unwrap());
+            let counts = after.layers.iter().map(|l| (l.segments, l.fine_segments));
+            assert_eq!(predicted, fine_share(counts));
+            let value = find(&s.lint().unwrap(), "vertices").map(|f| f.value);
+            assert_eq!(predicted, value);
+        }
+    }
+
     #[test]
     fn pens_that_draw_nothing() {
         let mut d = page(lines(5.0));
@@ -786,9 +1277,12 @@ mod tests {
             paths: Paths::new(),
         });
         let found = all(&d, &settings);
-        let unused = find(&found, "unused_pens").unwrap();
+        let idle = find(&found, "idle_pens").unwrap();
         let message = "These pens draw nothing at these settings: Red.";
-        assert_eq!((unused.message.as_str(), &unused.patch), (message, &None));
+        assert_eq!((idle.message.as_str(), &idle.patch), (message, &None));
+        // The one-pen note and the idle note never stand together, so the note's patch cannot
+        // leave the same code behind.
+        assert!(find(&found, "unused_pens").is_none());
     }
 
     #[test]
