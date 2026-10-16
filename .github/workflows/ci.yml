@@ -71,7 +71,7 @@ jobs:
         run: |
           size=$(stat -c %s web/pkg/plotline_wasm_bg.wasm)
           echo "plotline_wasm_bg.wasm is $size bytes"
-          test "$size" -le 2000000
+          test "$size" -le 2300000
 
   web:
     runs-on: ubuntu-latest

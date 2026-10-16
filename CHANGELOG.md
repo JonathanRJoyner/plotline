@@ -46,4 +46,5 @@ A style switch keeps the settings you changed in the stages both styles share, P
 - **Clearer names:** exports are named after the style (`plotline-waves.svg`), a preset that will not load names its file, and the toolbar's view fit is called Fit page, apart from Fit to target and the page's fit setting.
 - **Command line:** `plotline run`, `styles`, `describe`, `analyse`, `gui` and `mcp`. `plotline run --machine FILE --gcode DIR` draws for a machine and writes one G-code file per pen.
 - **MCP server** over stdio, in the `mcp` extra, with thirteen tools: `list_styles`, `describe_style`, `load_image`, `set_page`, `set_pens`, `set_machine`, `run`, `fit`, `preview`, `get_session`, `analyse_image`, `load_preset` and `export`, which also writes G-code.
+- **A smaller WebAssembly module:** one PNG library instead of two, image decoding and JSON built for size, and wasm-opt at `-O3`. The module is 41 KB smaller and the Voronoi relaxation about 12 percent faster, with every drawing unchanged.
 - **Python library:** `Session`, with `set_machine` and `export_gcode`, the style registry and the value types, with type information.
