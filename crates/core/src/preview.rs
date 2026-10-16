@@ -14,6 +14,8 @@
 //!
 //! Rasterization and anti-aliasing are tiny-skia's job, so this module cites no algorithm.
 
+use ::image::codecs::png::PngEncoder;
+use ::image::{ExtendedColorType, ImageEncoder};
 use thiserror::Error;
 use tiny_skia::{
     BlendMode, Color, FillRule, FilterQuality, LineCap, LineJoin, Paint, PathBuilder, Pixmap,
@@ -51,10 +53,19 @@ pub fn render_png(
     region: Option<[f64; 4]>,
 ) -> Result<Vec<u8>, PreviewError> {
     let v = view(d, width_px, region)?;
-    render(d, width_px, &v, travel, source)
-        .ok_or(PreviewError::Empty)?
-        .encode_png()
-        .map_err(|e| PreviewError::Encode(e.to_string()))
+    let pixmap = render(d, width_px, &v, travel, source).ok_or(PreviewError::Empty)?;
+    // The `image` crate's encoder, which decoding already needs, so the module carries one PNG
+    // library. The pixels are opaque, so premultiplied RGBA is plain RGBA.
+    let mut png = Vec::new();
+    PngEncoder::new(&mut png)
+        .write_image(
+            pixmap.data(),
+            pixmap.width(),
+            pixmap.height(),
+            ExtendedColorType::Rgba8,
+        )
+        .map_err(|e| PreviewError::Encode(e.to_string()))?;
+    Ok(png)
 }
 
 /// `d` as `(width, height, pixels)`: `width_px` wide and `round(height * width_px / width)` high,

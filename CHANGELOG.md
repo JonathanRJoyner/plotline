@@ -10,9 +10,9 @@ The first release. One Rust engine runs everything: the Python package, the comm
 
 ### Styles
 
-Twenty styles, each a pipeline of cached stages, so changing a late setting reruns only the stages after it:
+Twenty-one styles, each a pipeline of cached stages, so changing a late setting reruns only the stages after it:
 
-- **Lines:** `grid`, `hatch`, `waves`, `spiral` and `ink`, for line art and inked drawings.
+- **Lines:** `grid`, `hatch`, `waves`, `spiral`, `truchet` and `ink`, for line art and inked drawings.
 - **The Voronoi point family:** `stipple`, `line` (one unbroken line that does not cross itself), `dashes`, `tree`, `mesh`, `cells` and `scribble` (loops traced along the line). They share one placement of points, so switching between them reuses the points. Placing 10,000 points over 50 relaxation passes on a 1000-pixel image takes about 3.3 s natively.
 - **Sketch Lines:** `sketch`.
 - **Other placers:** `halftone`, `dither` and `circles`.
@@ -50,4 +50,5 @@ A style switch keeps the settings you changed in the stages both styles share, P
 - **Clearer names:** exports are named after the style (`plotline-waves.svg`), a preset that will not load names its file, and the toolbar's view fit is called Fit page, apart from Fit to target and the page's fit setting.
 - **Command line:** `plotline run`, `styles`, `describe`, `analyse`, `gui` and `mcp`. `plotline run --machine FILE --gcode DIR` draws for a machine and writes one G-code file per pen.
 - **MCP server** over stdio, in the `mcp` extra, with thirteen tools: `list_styles`, `describe_style`, `load_image`, `set_page`, `set_pens`, `set_machine`, `run`, `fit`, `preview`, `get_session`, `analyse_image`, `load_preset` and `export`, which also writes G-code.
+- **A smaller WebAssembly module:** one PNG library instead of two, image decoding and JSON built for size, and wasm-opt at `-O3`. The module is 41 KB smaller and the Voronoi relaxation about 12 percent faster, with every drawing unchanged.
 - **Python library:** `Session`, with `set_machine` and `export_gcode`, the style registry and the value types, with type information.

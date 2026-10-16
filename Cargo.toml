@@ -15,3 +15,28 @@ codegen-units = 1
 # The engine's tests run whole styles on real-sized rasters, which unoptimised code makes slow.
 [profile.test]
 opt-level = 1
+
+# Image decoding, PNG encoding and JSON run once per image, export or command, not in a run's
+# loop, so they are built for size: 41 KB off the WebAssembly module, with runs unchanged and
+# decoding within a few percent (brief §14, "Wasm size limit"). tiny-skia stays at 3, where it is
+# both smaller and faster.
+[profile.release.package.zune-jpeg]
+opt-level = "s"
+[profile.release.package.zune-core]
+opt-level = "s"
+[profile.release.package.image]
+opt-level = "s"
+[profile.release.package.image-webp]
+opt-level = "s"
+[profile.release.package.png]
+opt-level = "s"
+[profile.release.package.fdeflate]
+opt-level = "s"
+[profile.release.package.miniz_oxide]
+opt-level = "s"
+[profile.release.package.flate2]
+opt-level = "s"
+[profile.release.package.serde_json]
+opt-level = "s"
+[profile.release.package.schemars]
+opt-level = "s"
