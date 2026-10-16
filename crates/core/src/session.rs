@@ -25,6 +25,7 @@ use crate::fit::{places_points, Density, FitRun, Metric};
 use crate::image::{self, ImageError};
 use crate::lint::{self, Finding, Measure};
 use crate::machine::{Machine, MachineError};
+use crate::models::{ModelError, ModelInfo, ModelRuntime, ModelStore};
 use crate::optimize::{Budget, OptimizeRun};
 use crate::presets::{self, PresetError};
 use crate::preview::{self, PreviewError};
@@ -102,6 +103,8 @@ pub struct Session {
     pens: Vec<Pen>,
     /// The machine the G-code export writes for, if one is set.
     machine: Option<Machine>,
+    /// The learned line models, shared with the runs that use them.
+    models: Arc<ModelStore>,
     style: Arc<Style>,
     /// Every stage's full settings object, keyed by stage name.
     settings: Value,
@@ -129,6 +132,7 @@ impl Session {
             canvas: Canvas::new(210.0, 297.0, 10.0, Fit::Fit).expect("A4 is a valid canvas"),
             pens: vec![Pen::new("Black 0.3", 0.3, "#000000").expect("the default pen is valid")],
             machine: None,
+            models: Arc::default(),
             settings: style.defaults(),
             changed: BTreeSet::new(),
             style,
@@ -205,6 +209,37 @@ impl Session {
         }
         self.machine = m;
         Ok(())
+    }
+
+    /// Run models with `runtime`. The session starts with none, so [`Session::add_model`] fails
+    /// until the host sets one. Models loaded into an earlier runtime are dropped from the list;
+    /// a run already going keeps the models it started with.
+    pub fn set_model_runtime(&mut self, runtime: Arc<dyn ModelRuntime>) {
+        self.models = Arc::new(ModelStore::new(Some(runtime)));
+    }
+
+    /// Load the ONNX file `bytes` as a model. With `Some(id)` the bytes must be the catalogue
+    /// model of that id, with the size and SHA-256 it lists; with `None` they are a file of the
+    /// user's own, named by its hash (see [`crate::models::file_id`]). A file over 200 MB is
+    /// refused before it is looked at. Adding an id the session already holds replaces it, and
+    /// on any error the models are unchanged.
+    pub fn add_model(&mut self, id: Option<&str>, bytes: &[u8]) -> Result<ModelInfo, ModelError> {
+        self.models.add(id, bytes)
+    }
+
+    /// Unload the model `id`. An id the session does not hold changes nothing.
+    pub fn remove_model(&mut self, id: &str) {
+        self.models.remove(id);
+    }
+
+    /// The models the session holds, in id order.
+    pub fn models(&self) -> Vec<ModelInfo> {
+        self.models.list()
+    }
+
+    /// The models, for a run to read.
+    pub fn model_store(&self) -> Arc<ModelStore> {
+        self.models.clone()
     }
 
     /// The chosen style.

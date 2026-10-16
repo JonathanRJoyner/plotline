@@ -9,6 +9,7 @@ pub mod image;
 pub mod lint;
 pub mod machine;
 pub mod math;
+pub mod models;
 pub mod optimize;
 pub mod pens;
 pub mod presets;
