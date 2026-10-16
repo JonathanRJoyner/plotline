@@ -40,14 +40,22 @@ function optionsOf(schema: Json): Option[] | null {
   return null;
 }
 
+// A key as a label: a last word that is the unit drops off (the input shows the unit), first letter up.
+function labelOf(key: string, unit: string | null): string {
+  const words = key.split("_");
+  if (words.length > 1 && words.at(-1) === unit?.replace("²", "2")) words.pop();
+  const text = words.join(" ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function controlFor(key: string, prop: Json, root: Json): Control {
+  const unit = str(prop["x-unit"]);
   const base: Base = {
     key,
-    label: str(prop["x-label"]) ?? key.replaceAll("_", " "),
+    label: str(prop["x-label"]) ?? labelOf(key, unit),
     help: str(prop.description) ?? "",
     advanced: prop["x-advanced"] === true,
   };
-  const unit = str(prop["x-unit"]);
   const def = prop.default;
 
   const target = referenced(prop, root);

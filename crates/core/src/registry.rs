@@ -537,6 +537,48 @@ mod tests {
             println!("{name}: {:.2} s", start.elapsed().as_secs_f64());
         }
     }
+    /// Prints the time of `stipple` at the Rust core spec's relaxation target, 10,000 points over
+    /// 50 passes on a 1000 by 750 radial image, and of its relaxation alone, from the frame before
+    /// the first `voronoi` frame to the last. Run with `cargo test --release -p plotline-core --lib
+    /// target_timings -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn target_timings() {
+        use crate::cache::StageCache;
+        use crate::runner::Run;
+        use std::sync::Mutex;
+        use std::time::Instant;
+        let style = get_style("stipple").unwrap();
+        let mut settings = style.defaults();
+        settings["voronoi"]["count"] = 10_000.into();
+        settings["voronoi"]["iterations"] = 50.into();
+        let [_, canvas, pens] = crate::test_util::roots();
+        let image = Artifact::Image(Arc::new(radial(1000, 750)));
+        let mut run = Run::new(
+            style,
+            settings,
+            [image, canvas, pens],
+            Arc::new(Mutex::new(StageCache::new(1 << 20))),
+            Arc::default(),
+            Arc::default(),
+            0,
+        );
+        let start = Instant::now();
+        let (mut before, mut relax) = (start, None);
+        while let Some(frame) = run.next_frame() {
+            let now = Instant::now();
+            if frame.stage == "voronoi" {
+                relax = Some((relax.map_or(before, |(from, _)| from), now));
+            }
+            before = now;
+        }
+        let (from, to) = relax.expect("the run relaxes");
+        println!(
+            "stipple, 10000 points, 50 passes: {:.2} s, relaxation {:.2} s",
+            start.elapsed().as_secs_f64(),
+            (to - from).as_secs_f64()
+        );
+    }
     #[test]
     fn every_style_survives_tiny_white_and_black_images() {
         for style in list_styles() {
