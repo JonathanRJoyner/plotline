@@ -10,6 +10,11 @@
 //! and their difference. A usual round is a run on `main` into `target/gallery-main`, then a run on
 //! the branch with `--baseline target/gallery-main`. `target/` is ignored by git, so no picture
 //! lands in the repository.
+//!
+//! `--snapshot <file>` also writes the stats as the committed snapshot,
+//! `tests/snapshots/gallery-stats.json`: one cell per line, lengths and times rounded to 0.001.
+//! CI draws the gallery again and fails when the snapshot it writes differs from the committed
+//! one, so a change that moves a drawing shows in review as a diff of numbers.
 
 use std::fs;
 use std::path::PathBuf;
@@ -32,14 +37,18 @@ enum Change {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let (out, baseline) = match args.as_slice() {
-        [out] => (PathBuf::from(out), None),
-        [out, flag, base] if flag == "--baseline" => {
-            (PathBuf::from(out), Some(PathBuf::from(base)))
+    let usage = "usage: gallery <out-dir> [--baseline <dir>] [--snapshot <file>]";
+    let mut args = std::env::args().skip(1);
+    let out = PathBuf::from(args.next().ok_or(usage)?);
+    let (mut baseline, mut snapshot_file) = (None, None);
+    while let Some(flag) = args.next() {
+        let value = PathBuf::from(args.next().ok_or(usage)?);
+        match flag.as_str() {
+            "--baseline" => baseline = Some(value),
+            "--snapshot" => snapshot_file = Some(value),
+            _ => return Err(usage.into()),
         }
-        _ => return Err("usage: gallery <out-dir> [--baseline <dir>]".into()),
-    };
+    }
     let old_stats: Map<String, Value> = match &baseline {
         Some(base) => {
             let path = base.join("stats.json");
@@ -115,6 +124,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         out.join("stats.json"),
         serde_json::to_string_pretty(&stats)?,
     )?;
+    if let Some(file) = &snapshot_file {
+        fs::write(file, snapshot(&stats))?;
+    }
 
     let removed: Vec<&str> = old_stats
         .keys()
@@ -174,6 +186,28 @@ fn cell(name: &str, label: &str, stats: &Value, old: Option<&Value>, change: &Ch
         )
     };
     format!("<figure class=\"{class}\">{body}</figure>\n")
+}
+
+/// The stats as the snapshot file: one cell per line, so a diff shows whole cells, and each
+/// fractional number rounded to 0.001, a micrometre or a millisecond.
+fn snapshot(stats: &Map<String, Value>) -> String {
+    let round = |v: &Value| match v.as_f64() {
+        Some(x) if v.is_f64() => json!((x * 1000.0).round() / 1000.0),
+        _ => v.clone(),
+    };
+    let rows: Vec<String> = stats
+        .iter()
+        .map(|(name, cell)| {
+            let cell: Map<String, Value> = cell
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(k, v)| (k.clone(), round(v)))
+                .collect();
+            format!("  {}: {}", json!(name), Value::Object(cell))
+        })
+        .collect();
+    format!("{{\n{}\n}}\n", rows.join(",\n"))
 }
 
 /// `text` safe to place between HTML tags.
