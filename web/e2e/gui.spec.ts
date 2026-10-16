@@ -58,7 +58,8 @@ test("the sample image draws in every style", async ({ page }) => {
   const styles = await styleNames(page);
   expect(styles.length).toBeGreaterThan(10);
   const first = await styleSelect(page).inputValue();
-  for (const style of styles.filter((s) => s !== first)) {
+  // `learned` needs a downloaded model, so it draws nothing here.
+  for (const style of styles.filter((s) => s !== first && s !== "learned")) {
     id = await pick(page, style, id);
     await expect(page.locator(".stats"), style).toContainText("paths");
   }

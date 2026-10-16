@@ -3,6 +3,9 @@
 //! style is run on a noise image; the paths must differ. The exceptions are listed with a reason,
 //! and a listed exception that starts to matter fails too, so the list stays honest.
 
+use std::sync::Arc;
+
+use plotline_core::models::{file_id, StandIn, STANDIN_BYTES, STANDIN_HALF_BYTES};
 use plotline_core::registry::list_styles;
 use plotline_core::synthetic::noise;
 use plotline_core::{Canvas, Fit, Pen, Session};
@@ -203,6 +206,12 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "at its defaults the curve is one path, far longer than the 5 mm it is tested at; split between pens, a lane lifts over empty areas and leaves fragments, and then it drops the short ones",
     ),
     (
+        "learned",
+        "ink",
+        "spacing",
+        "fill rings are drawn only in fill mode, and learned starts in centreline mode",
+    ),
+    (
         "hilbert",
         "order",
         "optimize",
@@ -264,6 +273,11 @@ fn draw(s: &mut Session, style: &str, stage: &str, patch: &Value) -> Value {
     for (name, values) in defaults.as_object().unwrap() {
         s.update(name, values).unwrap();
     }
+    if style == "learned" {
+        // A model must be chosen to draw; the stand-in Sobel is the one the settings start from.
+        s.update("model", &json!({"model": file_id(STANDIN_BYTES)}))
+            .unwrap();
+    }
     s.update(stage, patch).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
@@ -275,6 +289,9 @@ fn draw(s: &mut Session, style: &str, stage: &str, patch: &Value) -> Value {
 #[test]
 fn every_setting_changes_the_drawing() {
     let mut s = Session::new(512 << 20);
+    s.set_model_runtime(Arc::new(StandIn::default()));
+    s.add_model(None, STANDIN_BYTES).unwrap();
+    s.add_model(None, STANDIN_HALF_BYTES).unwrap();
     s.set_image(noise(64, 48, 1));
     s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
     // Two pens, so that the split's light to dark mode has a second layer to add.
@@ -296,7 +313,12 @@ fn every_setting_changes_the_drawing() {
                 .unwrap_or_default();
             for (key, prop) in &props {
                 let default = &defaults[name][key];
-                let value = another(prop, default, &stage["schema"]["$defs"]);
+                let value = if (name, key.as_str()) == ("model", "model") {
+                    // The model starts as the Sobel stand-in and moves to the half-strength one.
+                    json!(file_id(STANDIN_HALF_BYTES))
+                } else {
+                    another(prop, default, &stage["schema"]["$defs"])
+                };
                 let changed = draw(&mut s, &style.name, name, &json!({ key: value })) != base;
                 let listed = NO_OPS
                     .iter()

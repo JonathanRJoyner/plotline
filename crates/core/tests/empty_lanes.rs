@@ -2,6 +2,9 @@
 //! give a layer with no paths in every style, and a later pen in light to dark mode adds only to
 //! tones darker than its band.
 
+use std::sync::Arc;
+
+use plotline_core::models::{file_id, StandIn, STANDIN_BYTES};
 use plotline_core::registry::list_styles;
 use plotline_core::synthetic::flat;
 use plotline_core::{Canvas, Fit, Pen, Session};
@@ -19,9 +22,16 @@ fn layer_paths(style: &str, value: f32, mode: &str) -> Vec<usize> {
     ])
     .unwrap();
     s.set_style(style).unwrap();
-    // Gamma 1 for every style, so the ink is 1 - value even where a style starts darker.
-    s.update("tone", &json!({"resolution": 64, "gamma": 1.0}))
-        .unwrap();
+    if style == "learned" {
+        s.set_model_runtime(Arc::new(StandIn::default()));
+        s.add_model(None, STANDIN_BYTES).unwrap();
+        let model = json!({"model": file_id(STANDIN_BYTES), "resolution": 256});
+        s.update("model", &model).unwrap();
+    } else {
+        // Gamma 1 for every style, so the ink is 1 - value even where a style starts darker.
+        s.update("tone", &json!({"resolution": 64, "gamma": 1.0}))
+            .unwrap();
+    }
     s.update("split", &json!({"mode": mode})).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
@@ -42,7 +52,8 @@ fn a_white_image_by_colour_draws_nothing() {
 fn a_light_grey_leaves_the_second_pen_light_to_dark_empty() {
     // Ink 0.4 fills the first band to 0.8, past the mid-grey thresholds of grid and ink, and leaves
     // the second band empty.
-    for style in list_styles() {
+    // A model finds no lines in a flat grey, so `learned` has no first band to fill.
+    for style in list_styles().iter().filter(|s| s.name != "learned") {
         let counts = layer_paths(&style.name, 0.6, "light_to_dark");
         assert_eq!(counts.len(), 2, "{}: {counts:?}", style.name);
         assert!(

@@ -264,7 +264,8 @@ test("thumbs without an image posts each style's error", async () => {
   ok("thumbs", 120);
   for (let i = 0; i < 50; i++) await macrotask();
   const events = posted.filter((m) => m.type === "thumb");
-  expect(events).toHaveLength((ok("listStyles").value as unknown[]).length);
+  expect(events).toHaveLength((ok("listStyles").value as unknown[]).length - 1); // not `learned`, which needs a model
+  expect(events.map((m) => m.style)).not.toContain("learned");
   expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
 });
 
@@ -290,7 +291,8 @@ test("undoing a random run of edits through restore returns the start, and undo 
   const history = new History(1000);
   const see = (state: State, restored = false) => { history.see(setupOf(state), restored); return setupOf(state); };
   const start = see(ok("preset").state);
-  const styles = (ok("listStyles").value as Array<{ name: string }>).map((s) => s.name);
+  // Not `learned`: it has no tone stage for the edits below, and needs a model to draw.
+  const styles = (ok("listStyles").value as Array<{ name: string }>).map((s) => s.name).filter((n) => n !== "learned");
   let seed = 7; // a fixed linear congruential sequence, so a failure repeats
   const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
   const pick = <T,>(xs: T[]) => xs[Math.floor(rand() * xs.length)];

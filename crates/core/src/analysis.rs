@@ -18,6 +18,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::math;
+use crate::registry::get_style;
 use crate::types::{Canvas, Fit, Image};
 
 /// Bins for the black and white points.
@@ -253,8 +254,9 @@ const TURN_GAIN: f64 = 1.3;
 
 /// Suggestions for the session as it stands, in a fixed order, each left out when already in
 /// effect. `settings` is `{stage: {key: value}}`; a missing `tone` or `split` key counts as its
-/// default (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000, `mode` one pen). The
-/// cut-offs are hand-set starting values, not a fitted model.
+/// default (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000, `mode` one pen). A style
+/// with no tone stage gets none of the suggestions that set it. The cut-offs are hand-set starting
+/// values, not a fitted model.
 pub fn suggest(
     stats: &ImageStats,
     canvas: &Canvas,
@@ -267,6 +269,9 @@ pub fn suggest(
         return out;
     }
     let tone = |key: &str| settings.get("tone").and_then(|t| t.get(key));
+    // The patches of the next three set the tone stage, which a style that makes its own tone map,
+    // such as `learned`, does not have. An unknown style counts as having one.
+    let has_tone = get_style(style).is_none_or(|s| s.stage_index("tone").is_some());
     let mut add = |kind, reason, patch| {
         out.push(Suggestion {
             kind,
@@ -279,13 +284,15 @@ pub fn suggest(
     }
     // Under 1/64 the tone stage keeps black 0 and white 1, so there is nothing to stretch.
     let range = stats.p_high - stats.p_low;
-    if (1.0 / 64.0..0.6).contains(&range)
+    if has_tone
+        && (1.0 / 64.0..0.6).contains(&range)
         && tone("levels").and_then(Value::as_str).unwrap_or("manual") == "manual"
     {
         let patch = json!({"settings": {"tone": {"levels": "auto"}}});
         add("levels", NARROW, Some(patch));
     }
-    if stats.border < 0.3
+    if has_tone
+        && stats.border < 0.3
         && stats.mean < 0.5
         && stats.two_level >= 0.85
         && !tone("invert").and_then(Value::as_bool).unwrap_or(false)
@@ -294,7 +301,10 @@ pub fn suggest(
         add("invert", LIGHT_MARKS, Some(patch));
     }
     let [_, _, dw, dh] = canvas.drawing_rect();
-    if stats.noise > 0.03 && tone("blur_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0 {
+    if has_tone
+        && stats.noise > 0.03
+        && tone("blur_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0
+    {
         let resolution = tone("resolution").and_then(Value::as_f64).unwrap_or(1000.0);
         // The schema's largest blur is 10 mm.
         let blur = ((dw.max(dh) / resolution.max(1.0) * 10.0).ceil() / 10.0).min(10.0);
@@ -462,6 +472,26 @@ mod tests {
         );
         let marks = run(&strokes(256, 256, 1.0, 0.0), "grid", &none);
         assert!(find(&marks, "invert").is_some());
+    }
+
+    #[test]
+    fn a_style_without_a_tone_stage_gets_no_tone_suggestions() {
+        // These images call for levels, an inversion and a blur on a style with a tone stage.
+        let none = json!({});
+        for image in [
+            ramp(256, 64, 0.4, 0.6),
+            strokes(256, 256, 1.0, 0.0),
+            flat_noise(256, 256, 0.5, 0.1, 7),
+        ] {
+            let kinds = |style| {
+                let all = run(&image, style, &none);
+                all.iter().map(|s| s.kind).collect::<Vec<_>>()
+            };
+            assert!(!kinds("grid").is_empty());
+            assert!(kinds("learned")
+                .iter()
+                .all(|k| !["levels", "invert", "noise"].contains(k)));
+        }
     }
 
     #[test]

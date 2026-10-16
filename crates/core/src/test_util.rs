@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::cache::StageCache;
 use crate::machine::{Area, Machine, PenLift};
+use crate::models::{file_id, ModelStore, StandIn, STANDIN_BYTES, STANDIN_HALF_BYTES};
 use crate::runner::{Run, Shared};
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{
@@ -137,20 +138,46 @@ pub(crate) fn drain(run: &mut Run) -> Vec<Frame> {
     std::iter::from_fn(|| run.next_frame()).collect()
 }
 
+/// The id a session gives the stand-in model that answers with the Sobel magnitude.
+pub(crate) fn standin_id() -> String {
+    file_id(STANDIN_BYTES)
+}
+
+/// The id a session gives the stand-in model that answers with half the Sobel magnitude.
+pub(crate) fn standin_half_id() -> String {
+    file_id(STANDIN_HALF_BYTES)
+}
+
+/// A model store with the stand-in runtime and both stand-in models loaded.
+pub(crate) fn standin_store() -> Arc<ModelStore> {
+    let store = ModelStore::new(Some(Arc::new(StandIn::default())));
+    store.add(None, STANDIN_BYTES).unwrap();
+    store.add(None, STANDIN_HALF_BYTES).unwrap();
+    Arc::new(store)
+}
+
 /// Run `style` with its default settings over `image` and the other [`roots`], with a fresh cache,
-/// and return the drawing. Panics if the run ends without one.
+/// and return the drawing. A style that runs a model gets [`standin_store`], the model
+/// [`standin_id`] and the least resolution. Panics if the run ends without a drawing.
 pub(crate) fn run_to_drawing(style: &Arc<Style>, image: Image) -> Arc<Drawing> {
     let [_, canvas, pens] = roots();
     let shared = Arc::new(Mutex::new(Shared::default()));
+    let mut settings = style.defaults();
+    if style.stage_index("model").is_some() {
+        // The stand-in finds lines where the picture changes by a sixteenth of its range in a
+        // pixel, so a small test image is not stretched far.
+        settings["model"] = serde_json::json!({"model": standin_id(), "resolution": 256});
+    }
     let mut run = Run::new(
         style.clone(),
-        style.defaults(),
+        settings,
         [Artifact::Image(Arc::new(image)), canvas, pens],
         Arc::new(Mutex::new(StageCache::new(1 << 20))),
         shared.clone(),
         Arc::default(),
         0,
-    );
+    )
+    .with_models(standin_store());
     drain(&mut run);
     let drawing = shared.lock().unwrap().drawing.clone();
     drawing.unwrap_or_else(|| panic!("style {:?} gave no drawing", style.name))

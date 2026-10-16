@@ -1,7 +1,9 @@
 //! Laws that every style and every setting keeps, checked on random inputs.
 //!
-//! Nothing here names a style or a setting. The inputs come from the registry and from each
-//! stage's settings schema, so a new style or setting is covered with no edit to this file. A case
+//! Nothing here names a style or a setting, bar the model: it needs a file, so a case's session
+//! holds the two stand-in models and the setting takes either. The inputs come from the registry
+//! and from each stage's settings schema, so a new style or setting is covered with no edit to
+//! this file. A case
 //! is a small image built in code (a two-colour gradient under discs, boxes and noise, or one of
 //! the crate's synthetic pictures), a page and margin, one to three pens, a style, and a value for
 //! each of its settings, Pen use included, from the schema's range: the default, either end, or
@@ -20,6 +22,7 @@ use plotline_core::cache::StageCache;
 use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
+use plotline_core::models::{file_id, StandIn, STANDIN_BYTES, STANDIN_HALF_BYTES};
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
@@ -40,6 +43,7 @@ const SPEED_CAPS: &[(&str, &str, f64)] = &[
     ("voronoi", "iterations", 20.0),
     ("sketch", "max_lines", 2000.0),
     ("sketch", "candidates", 64.0),
+    ("model", "resolution", 512.0),
 ];
 
 /// The seed of the pull request run.
@@ -311,6 +315,12 @@ fn value(stage: &str, key: &str, prop: &Value, defs: &Value) -> BoxedStrategy<Va
     };
     match prop["type"].as_str() {
         Some("boolean") => any::<bool>().prop_map(Value::from).boxed(),
+        // The one string setting is the model, and a session holds the two stand-in models.
+        Some("string") if (stage, key) == ("model", "model") => {
+            select(vec![file_id(STANDIN_BYTES), file_id(STANDIN_HALF_BYTES)])
+                .prop_map(Value::from)
+                .boxed()
+        }
         Some("integer") => {
             let (lo, hi, d) = range();
             let (lo, hi, d) = (lo as i64, hi as i64, d as i64);
@@ -419,6 +429,9 @@ impl Case {
     /// A fresh session, with its own cache, set up for this case.
     fn session(&self) -> Session {
         let mut s = Session::new(256 << 20);
+        s.set_model_runtime(Arc::new(StandIn::default()));
+        s.add_model(None, STANDIN_BYTES).unwrap();
+        s.add_model(None, STANDIN_HALF_BYTES).unwrap();
         s.set_image(self.picture.image());
         s.set_canvas(self.page.canvas());
         s.set_pens(self.pens()).unwrap();
@@ -576,7 +589,8 @@ fn every_run_keeps_the_run_laws() {
                 slot.clone(),
                 cancel,
                 0,
-            );
+            )
+            .with_models(s.model_store());
             drain(&mut r)?;
             let slot = slot.lock().unwrap();
             let plain = outcome(slot.state, slot.error.clone(), slot.drawing.as_deref());

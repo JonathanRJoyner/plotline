@@ -120,6 +120,7 @@ export class Protocol {
   private async thumbs(id: number, width: number): Promise<void> {
     let lastYield = performance.now();
     for (const { name } of JSON.parse(listStyles()) as Array<{ name: string }>) {
+      if (name === "learned") continue; // it needs a downloaded model, so it has no trial picture
       if (id !== this.thumbsId) return;
       let png: Uint8Array | null = null;
       let error: string | null = null;
