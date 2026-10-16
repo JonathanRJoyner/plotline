@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::settings::{defaults_for, schema_for, validate};
-use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
+use crate::stage::{
+    Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
+};
 use crate::types::{Paths, Points, ToneMap};
 
 // Each help text stays on one line: schemars keeps the line breaks of a doc comment.
@@ -76,18 +78,10 @@ impl Stage for GridPlacer {
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<GridSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
-        let [x0, y0, w, h] = tone.rect_mm();
-        let lane = ctx.lane();
-        // Each pen's grid is shifted along the diagonal by its share of a cell, and loses the cells
-        // that no longer fit.
-        let d = s.spacing_mm * lane.index as f64 / lane.count as f64;
-        // The tolerance keeps the last cell when w / spacing is a whole number that rounds just
-        // below; a float to usize cast saturates, so a NaN size gives no cells.
-        let cols = ((w - d) / s.spacing_mm + 1e-9).floor() as usize;
-        let rows = ((h - d) / s.spacing_mm + 1e-9).floor() as usize;
+        let (origin, cols, rows) = lane_grid(tone.rect_mm(), s.spacing_mm, ctx.lane());
         Ok(Box::new(GridRun {
             tone,
-            origin: [x0 + d, y0 + d],
+            origin,
             spacing: s.spacing_mm,
             // numpy compares the f32 samples with the threshold rounded to f32.
             threshold: s.threshold as f32,
@@ -99,6 +93,19 @@ impl Stage for GridPlacer {
             points: Vec::new(),
         }))
     }
+}
+
+/// The grid of `spacing` cells over `rect` that `lane` uses: its top-left corner in mm, its columns
+/// and its rows. Each pen's grid is shifted along the diagonal by its share of a cell, and loses
+/// the cells that no longer fit; the first lane's grid starts at the rect's corner.
+pub(super) fn lane_grid(rect: [f64; 4], spacing: f64, lane: Lane) -> ([f64; 2], usize, usize) {
+    let [x0, y0, w, h] = rect;
+    let d = spacing * lane.index as f64 / lane.count as f64;
+    // The tolerance keeps the last cell when w / spacing is a whole number that rounds just
+    // below; a float to usize cast saturates, so a NaN size gives no cells.
+    let cols = ((w - d) / spacing + 1e-9).floor() as usize;
+    let rows = ((h - d) / spacing + 1e-9).floor() as usize;
+    ([x0 + d, y0 + d], cols, rows)
 }
 
 /// Each step places the next few rows, so a run reports about 50 frames however many rows it has.

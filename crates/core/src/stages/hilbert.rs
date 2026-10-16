@@ -18,6 +18,13 @@
 //! ends the current path, and a cell entirely outside the map ends it without being split, since
 //! all its leaves would. When the drawing is split between pens, a leaf over almost no ink in its
 //! lane ends the path too.
+//!
+//! Split between pens, pen `i` of `n` also moves the square's corner up and left by
+//! `cell_mm * i / n` on both axes, and grows the square until it covers the map from there. The
+//! leaves over full ink are `cell_mm` wide, so two pens' finest folds interleave, as the grid
+//! placer's dots do, and the coarser folds are offset by the same distance. Two lattices of one
+//! period and angle superpose with no moiré whatever their offset (I. Amidror, *The Theory of the
+//! Moiré Phenomenon*, 2nd ed., Springer, 2009).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -70,7 +77,7 @@ impl Stage for HilbertStage {
         "Hilbert curve"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -92,18 +99,21 @@ impl Stage for HilbertStage {
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<HilbertSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
-        let lift = ctx.lane().count > 1;
+        let lane = ctx.lane();
+        let lift = lane.count > 1;
         let rect = tone.rect_mm();
         let sums = Sums::new(&tone);
         let (cell, max) = (s.cell_mm, s.max_cell_mm.max(s.cell_mm));
+        // Each pen's square moves up and left by its share of a cell; the first pen's stays put.
+        let d = cell * lane.index as f64 / lane.count as f64;
         // Doubling a float is exact, so the side is the same on every platform.
         let (mut side, mut k) = (cell, 0);
-        while side < rect[2].max(rect[3]) {
+        while side < rect[2].max(rect[3]) + d {
             side *= 2.0;
             k += 1;
         }
         let root = Cell {
-            o: [rect[0], rect[1]],
+            o: [rect[0] - d, rect[1] - d],
             i: [side, 0.0],
             j: [0.0, side],
             side,
@@ -275,8 +285,10 @@ impl Sums {
 mod tests {
     use super::*;
     use crate::math;
-    use crate::stage::Kind;
-    use crate::test_util::{assert_inside, bounds, run_tone_stage, tone_map};
+    use crate::stage::{Kind, Lane};
+    use crate::test_util::{
+        assert_inside, bounds, run_tone_stage, run_tone_stage_in_lane, tone_map,
+    };
     use crate::types::ToneMap;
     use serde_json::json;
     use std::sync::Arc;
@@ -297,7 +309,7 @@ mod tests {
             (HilbertStage.name(), HilbertStage.label()),
             ("hilbert", "Hilbert curve")
         );
-        assert_eq!(HilbertStage.version(), 1);
+        assert_eq!(HilbertStage.version(), 2);
         assert_eq!(
             (HilbertStage.requires(), HilbertStage.provides()),
             (&[Kind::Tone][..], Kind::Paths)
@@ -347,6 +359,23 @@ mod tests {
         for s in steps(path) {
             assert!((s - 2.0).abs() < 1e-9, "{s}");
         }
+    }
+
+    #[test]
+    fn a_second_pen_folds_between_the_first_pens_cells() {
+        let run = |lane| {
+            let tone = tone_map(32, 32, |_, _| 1.0);
+            run_tone_stage_in_lane(&HilbertStage, tone, json!({"cell_mm": 2.0}), lane).1
+        };
+        let single = run(Lane::SINGLE);
+        assert_eq!(run(Lane { index: 0, count: 2 }).coords(), single.coords());
+        // Pen 0's leaves are centred on odd mm, 11 to 73. Pen 1's square starts 1 mm up and left,
+        // so its leaves are centred on even mm, 10 to 74, the map's edges included.
+        let second = run(Lane { index: 1, count: 2 });
+        assert!(single.coords().iter().flatten().all(|v| v % 2.0 == 1.0));
+        assert_eq!(second.coords().len(), 33 * 33);
+        assert!(second.coords().iter().flatten().all(|v| v % 2.0 == 0.0));
+        assert_inside(&second, [10.0, 10.0, 64.0, 64.0]);
     }
 
     #[test]
