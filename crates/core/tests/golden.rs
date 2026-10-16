@@ -89,6 +89,13 @@ fn styles_match_golden_files() {
                 "stipple": {"shape": "point"}
             }),
         ),
+        (
+            "truchet_gradient",
+            "truchet",
+            gradient(64, 48),
+            // A few big tiles, so that the file stays small.
+            json!({"tone": {"resolution": 64}, "truchet": {"tile_mm": 20.0, "spacing_mm": 1.5}}),
+        ),
     ];
     for (name, style, image, patch) in cases {
         let actual = produce(style, image, patch);

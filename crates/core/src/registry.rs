@@ -21,6 +21,7 @@ use crate::stages::spiral::SpiralStage;
 use crate::stages::split::SplitStage;
 use crate::stages::stipple::StippleRenderer;
 use crate::stages::tone::ToneStage;
+use crate::stages::truchet::TruchetStage;
 use crate::stages::tsp::TspRenderer;
 use crate::stages::voronoi::VoronoiPlacer;
 use crate::stages::waves::WaveStage;
@@ -281,6 +282,19 @@ pub fn hilbert_style() -> Style {
     )
 }
 
+/// Quarter-circle arcs on tiles in random turns, nested more deeply where it is darker, joined into
+/// curves: tone, split, truchet, order.
+pub fn truchet_style() -> Style {
+    tone_style(
+        "truchet",
+        "Truchet tiles",
+        "Quarter-circle arcs on square tiles in random turns, joining into winding curves, with \
+         more nested arcs where the image is darker.",
+        Arc::new(TruchetStage),
+    )
+    .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -314,6 +328,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(contours_style()),
         Arc::new(flow_style()),
         Arc::new(hilbert_style()),
+        Arc::new(truchet_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -372,7 +387,7 @@ mod tests {
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
                 "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
-                "hilbert"
+                "hilbert", "truchet"
             ]
         );
         assert!(get_style("_slow").is_some());
@@ -447,6 +462,7 @@ mod tests {
         let gamma = |name: &str| get_style(name).unwrap().defaults()["tone"]["gamma"].clone();
         assert_eq!(gamma("waves"), json!(1.9));
         assert_eq!(gamma("spiral"), json!(1.9));
+        assert_eq!(gamma("truchet"), json!(1.9));
         assert_eq!(gamma("hatch"), json!(1.0));
         assert_eq!(gamma("grid"), json!(1.0));
     }
