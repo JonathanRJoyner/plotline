@@ -21,20 +21,27 @@ There is no memory per style: settings of a stage the new style lacks are droppe
 - **Presets load as before.** `load_preset` sets the preset's style with every stage at its defaults, then applies the preset's settings, so a key the preset leaves out takes its default whatever the session held.
 - **The cache is untouched.** The points are reused because the kept settings give the same cache key, not because of any new cache code.
 
-## 3. Where it reaches
+## 3. Reset to defaults
 
-- **Core.** `Session::set_style` in `crates/core/src/session.rs` applies the rule; `load_preset` resets to the defaults after setting the style. The bindings in `crates/py` and `crates/wasm` pass through, with their doc comments updated.
-- **Python.** `Session.set_style` in `src/plotline/session.py` documents the rule.
-- **CLI.** `plotline run STYLE --preset FILE` used to skip `set_style` when the preset's style matched, because it reset the settings. A switch to the same style is now a no-op, so the check goes. With a preset of another style, the preset's changed shared settings now carry into STYLE.
-- **MCP.** A `run` with a different style carries the changed settings instead of resetting them. When a change is refused, the server still puts back the old style and settings exactly: it switches back, then reapplies every stage's old values. The tool's docstring and the brief's §9 say so.
-- **GUI.** The style select calls the engine's `setStyle`, so it gains the rule with no code change. The tour's "Pick a style" step says that changed settings carry over.
-- **Docs.** The README's style section, the brief's §3 first-release criterion, §6.1, §9, §12 (question 8 removed), the "Shared Voronoi defaults" row, and a new decision-log row.
+Before this change, choosing a style again reset every setting. With the carry-over that path is gone, so the session gains `reset_settings`, which puts every stage of the chosen style, Pen use included, back to the style's defaults. The image, page, pens and machine stay. `load_preset` uses it after setting the preset's style.
 
-## 4. Tests
+The reset covers the whole style, which is what re-choosing a style used to do. A reset per stage section was left out: a dozen more buttons in a crowded panel for a need nobody has shown yet.
+
+## 4. Where it reaches
+
+- **Core.** `Session::set_style` in `crates/core/src/session.rs` applies the rule; `Session::reset_settings` puts the defaults back, and `load_preset` calls it after setting the style. The bindings in `crates/py` (`reset_settings`) and `crates/wasm` (`resetSettings`) pass through.
+- **Python.** `Session.set_style` in `src/plotline/session.py` documents the rule, and `Session.reset_settings()` is new.
+- **CLI.** `plotline run STYLE --preset FILE` used to skip `set_style` when the preset's style matched, because it reset the settings. A switch to the same style is now a no-op, so the check goes. With a preset of another style, the preset's changed shared settings now carry into STYLE. The CLI gets no reset flag: every `plotline run` starts from the defaults unless `--preset` is given, so leaving the preset out is the reset.
+- **MCP.** A `run` with a different style carries the changed settings instead of resetting them. When a change is refused, the server still puts back the old style and settings exactly: it switches back, then reapplies every stage's old values. `run` also takes `reset`, applied after the style and before `settings`, so one call can start over and change settings; the server stays at eleven tools. The tool's docstring and the brief's §9 say so.
+- **GUI.** The style select calls the engine's `setStyle`, so it gains the rule with no code change. A "Reset to defaults" button sits under the style select and calls `resetSettings`. The tour's "Pick a style" step says that changed settings carry over, and a new "Start over" step points at the button.
+- **Docs.** The README's style section, the brief's §3 first-release criterion, §6.1, §9, §12 (question 8 removed), the "Shared Voronoi defaults" row, two new decision-log rows, and the 0.1.0 entry in `CHANGELOG.md`.
+
+## 5. Tests
 
 - Core: set the relaxation's iterations on `stipple`, run, switch to `line`, run, and assert the `voronoi` stage's only frame is `cached`.
 - Core: from `hatch` at its defaults, switch to `waves` and assert `tone.gamma` is 1.9; a gamma changed on `hatch` stays.
 - Core: a changed Pen use mode survives a switch; an integer `1` for a default of `1.0` counts as unchanged.
 - Core: `load_preset` still gives the defaults for keys the preset leaves out, after a switch that carried changes.
 - `crates/core/tests/settings_matter.rs` compares each setting's drawing against the style's defaults, so its helper now resets every stage after the switch.
-- Python: `tests/test_session.py` asserts the carry through the binding. MCP: `tests/test_mcp.py` asserts that a `run` with a new style keeps a changed setting.
+- Core: `reset_settings` gives exactly the style's defaults, override included.
+- Python: `tests/test_session.py` asserts the carry and the reset through the binding. MCP: `tests/test_mcp.py` asserts that a `run` with a new style keeps a changed setting, and that `reset` puts the defaults back before `settings` apply.

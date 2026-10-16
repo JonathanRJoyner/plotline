@@ -191,6 +191,12 @@ async def test_a_new_style_keeps_changed_settings():
         assert after["settings"]["tone"]["resolution"] == 64
         assert after["settings"]["split"]["mode"] == "light_to_dark"
         assert after["settings"]["tone"]["gamma"] == 1.9  # still at grid's default, so waves'
+        r = await call(c, "run", reset=True, settings={"order": {"min_length_mm": 1.0}})
+        assert not r.is_error
+        after = data(await call(c, "get_session"))
+        assert after["settings"]["tone"]["resolution"] == 1000
+        assert after["settings"]["split"]["mode"] == "one_pen"
+        assert after["settings"]["order"]["min_length_mm"] == 1.0  # applied after the reset
 
 
 async def test_run_without_an_image_is_an_error():

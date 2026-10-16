@@ -223,6 +223,11 @@ impl Session {
         Ok(())
     }
 
+    /// Put every stage of the style, Pen use included, back to the style's defaults.
+    pub fn reset_settings(&mut self) {
+        self.settings = self.style.defaults();
+    }
+
     /// Every stage's full settings object, keyed by stage name.
     pub fn settings(&self) -> &Value {
         &self.settings
@@ -359,7 +364,7 @@ impl Session {
     pub fn load_preset(&mut self, v: &Value) -> Result<Vec<String>, SessionError> {
         let data = presets::parse(v)?;
         self.set_style(&data.style)?;
-        self.settings = self.style.defaults();
+        self.reset_settings();
         self.set_canvas(data.canvas);
         self.set_pens(data.pens)?;
         self.set_machine(data.machine)?;
@@ -471,6 +476,12 @@ mod tests {
             .contains("its stages are tone, split, points, render, order"));
         s.set_style("grid").unwrap(); // the same style: nothing changes
         assert_eq!(s.settings()["tone"]["resolution"], 128);
+        s.set_style("waves").unwrap();
+        s.update("split", &json!({"mode": "light_to_dark"}))
+            .unwrap();
+        s.reset_settings();
+        assert_eq!(s.settings(), &s.style().defaults());
+        assert_eq!(s.settings()["tone"]["gamma"], 1.9);
     }
     #[test]
     fn a_switch_keeps_changed_values_and_takes_the_new_style_defaults() {

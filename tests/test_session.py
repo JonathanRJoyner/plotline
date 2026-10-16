@@ -98,6 +98,9 @@ def test_update_validates_and_set_style_keeps_changes():
     s.set_style("waves")
     assert s.settings["order"]["min_length_mm"] == 1.5
     assert s.settings["tone"]["gamma"] == 1.9
+    s.reset_settings()
+    assert s.settings["order"]["min_length_mm"] == 0.0
+    assert s.settings["tone"]["gamma"] == 1.9
     with pytest.raises(ValueError):
         s.set_pens(())
 

@@ -9,12 +9,14 @@ The first release. One Rust engine runs everything: the Python package, the comm
 Eighteen styles, each a pipeline of cached stages, so changing a late setting reruns only the stages after it:
 
 - **Lines:** `grid`, `hatch`, `waves`, `spiral` and `ink`, for line art and inked drawings.
-- **The Voronoi point family:** `stipple`, `line` (one unbroken line that does not cross itself), `dashes`, `tree`, `mesh` and `cells`. They share one placement of points, so switching between them at their default settings reuses the points.
+- **The Voronoi point family:** `stipple`, `line` (one unbroken line that does not cross itself), `dashes`, `tree`, `mesh` and `cells`. They share one placement of points, so switching between them reuses the points.
 - **Sketch Lines:** `sketch`.
 - **Other placers:** `halftone`, `dither` and `circles`.
 - **Tone only:** `contours`, `flow` and `hilbert`.
 
 Every run ends with path ordering, which cuts pen-up travel, joins paths whose ends nearly touch and drops paths below a minimum length.
+
+A style switch keeps the settings you changed in the stages both styles share, Pen use included, and gives the rest the new style's defaults, so a tuned placement of points carries from one Voronoi style to the next. **Reset to defaults** in the GUI, `reset` on the MCP `run` tool and `Session.reset_settings()` put every setting of the style back.
 
 ### Pens
 

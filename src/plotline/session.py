@@ -226,6 +226,10 @@ class Session:
         name."""
         self._core.set_style(name)
 
+    def reset_settings(self) -> None:
+        """Put every stage of the style, Pen use included, back to the style's defaults."""
+        self._core.reset_settings()
+
     def update(self, stage: str, **values: Any) -> None:
         """Change settings of one stage, leaving the rest as they were. The whole stage is
         checked again, so a bad value or an unknown stage raises ``ValueError`` and changes

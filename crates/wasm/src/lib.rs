@@ -104,6 +104,12 @@ impl Session {
         Ok(self.inner.set_style(name)?)
     }
 
+    /// Put every stage of the style, Pen use included, back to the style's defaults.
+    #[wasm_bindgen(js_name = resetSettings)]
+    pub fn reset_settings(&mut self) {
+        self.inner.reset_settings();
+    }
+
     /// Every stage's settings as JSON, keyed by stage name.
     pub fn settings(&self) -> String {
         self.inner.settings().to_string()
