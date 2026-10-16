@@ -426,16 +426,26 @@ type ExportProps = {
   onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void;
 };
 
-// One G-code file per layer of the drawing, once a machine is set.
+// One G-code file per layer of the drawing, once a machine is set. With several pens each gets a
+// row told apart by its number and swatch, since pens can share a name.
 export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: ExportProps): JSX.Element {
   return (
     <fieldset data-tour="export">
       <legend>Export</legend>
       <button type="button" disabled={!drawing} onClick={() => onExport("svg")}><Download /> SVG</button>
       <button type="button" disabled={!drawing} onClick={() => onExport("json")}><Download /> JSON</button>
-      {machine ? layers.map((p, i) => (
-        <div><button type="button" disabled={!drawing} onClick={() => onGcode(i)}><Download /> G-code: {p.name}</button></div>
-      )) : <p class="help">For G-code, set up a machine in Settings.</p>}
+      {!machine ? <p class="help">For G-code, set up a machine in Settings.</p>
+        : layers.length < 2 ? <button type="button" disabled={!drawing} onClick={() => onGcode(0)}><Download /> G-code</button>
+        : (
+          <div class="gcode">
+            <p class="help">G-code, one file per pen:</p>
+            {layers.map((p, i) => (
+              <button type="button" disabled={!drawing} title={p.name} aria-label={`G-code for pen ${i + 1}, ${p.name}`} onClick={() => onGcode(i)}>
+                <Download /><span class="swatch" style={{ background: p.color }} /><span class="name">{i + 1}. {p.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
     </fieldset>
   );
 }

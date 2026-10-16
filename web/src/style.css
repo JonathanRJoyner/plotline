@@ -205,6 +205,10 @@ button.icon { width: 30px; padding: 0; justify-content: center; }
 .button:has(:focus-visible), .chip:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chip:has(:checked) { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 fieldset > button, fieldset > .button { margin: 4px 6px 0 0; }
+.gcode { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.gcode .help { margin: 0; }
+.gcode button { width: 100%; min-width: 0; }
+.gcode .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .control { margin-bottom: 4px; }
 .help { margin: -2px 0 8px; color: var(--muted); font-size: 12px; }
