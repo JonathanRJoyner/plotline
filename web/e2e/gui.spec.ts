@@ -363,12 +363,91 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await ran(page, id);
 });
 
+// A hash of the canvas pixels from `from` to `to` of its width (fractions), once the canvas has
+// painted. Left out: the outer 8 px at the sides, where the divider sits at 0 and 100, and the
+// top 100 px, where its labels sit.
+async function canvasHash(page: Page, from: number, to: number): Promise<number> {
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  return page.evaluate(([a, b]) => {
+    const canvas = document.querySelector<HTMLCanvasElement>(".preview canvas")!;
+    const x0 = Math.max(8, Math.floor(canvas.width * a));
+    const x1 = Math.min(canvas.width - 8, Math.floor(canvas.width * b));
+    const px = canvas.getContext("2d")!.getImageData(x0, 100, x1 - x0, canvas.height - 100).data;
+    let hash = 0;
+    for (let i = 0; i < px.length; i++) hash = (hash * 31 + px[i]) | 0;
+    return hash;
+  }, [from, to]);
+}
+
+test("Compare swipes the previous drawing against the current one", async ({ page }) => {
+  test.setTimeout(120_000);
+  // Narrow enough that the page fills the preview's width, so each third shows the drawing.
+  await page.setViewportSize({ width: 900, height: 1000 });
+  await pick(page, "hatch", await sample(page));
+  const [left, right] = [await canvasHash(page, 0, 1 / 3), await canvasHash(page, 2 / 3, 1)];
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  await expect(page.getByRole("checkbox", { name: "Compare", exact: true })).toBeChecked();
+  // Left of the divider is the first run's drawing now, and right of it the hatch drawing as before.
+  await expect.poll(() => canvasHash(page, 0, 1 / 3)).not.toBe(left);
+  const previous = await canvasHash(page, 0, 1 / 3);
+  expect(await canvasHash(page, 2 / 3, 1)).toBe(right);
+  // The divider at 0 leaves nothing to the comparison.
+  const swipe = page.getByRole("slider", { name: "Swipe position" });
+  await swipe.fill("0");
+  await expect.poll(() => canvasHash(page, 0, 1 / 3)).toBe(left);
+  await swipe.fill("50");
+  await expect.poll(() => canvasHash(page, 0, 1 / 3)).toBe(previous);
+  // The divider drags by its handle, and the slider follows.
+  const preview = (await page.locator(".preview").boundingBox())!;
+  const handle = (await page.locator(".compare-handle").boundingBox())!;
+  await page.mouse.move(handle.x + handle.width / 2, preview.y + preview.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(preview.x + preview.width / 4, preview.y + preview.height / 2, { steps: 5 });
+  await page.mouse.up();
+  expect(Math.abs(Number(await swipe.inputValue()) - 25)).toBeLessThanOrEqual(1.5);
+  await swipe.fill("50");
+  // The source image replaces the first run's drawing.
+  await page.getByRole("combobox", { name: "Compare with" }).selectOption({ label: "source image" });
+  await expect.poll(() => canvasHash(page, 0, 1 / 3)).not.toBe(previous);
+  expect(await canvasHash(page, 0, 1 / 3)).not.toBe(left);
+  expect(await canvasHash(page, 2 / 3, 1)).toBe(right);
+});
+
+test("Compare waits for a drawing, and says when there is nothing to compare with", async ({ page }) => {
+  await open(page);
+  const chip = page.getByRole("checkbox", { name: "Compare", exact: true });
+  await expect(chip).toBeDisabled();
+  // The test chart has no tone map, and nothing came before it.
+  await page.getByRole("button", { name: "Test chart" }).click();
+  const id = await ran(page, 0);
+  await expect(chip).toBeEnabled();
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  await expect(page.getByText("Run again to compare with the previous drawing.")).toBeVisible();
+  await expect(page.getByRole("slider", { name: "Swipe position" })).toHaveCount(0);
+  // The next drawing has a tone map and the chart before it.
+  await page.getByRole("button", { name: "Sample image" }).click();
+  await ran(page, id);
+  const menu = page.getByRole("combobox", { name: "Compare with" });
+  await expect(menu).toHaveValue("previous");
+  await expect(menu.getByRole("option", { name: "source image" })).toBeEnabled();
+  await expect(page.getByRole("slider", { name: "Swipe position" })).toBeVisible();
+});
+
+test("Compare offers only the source image on a first run", async ({ page }) => {
+  await sample(page);
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  const menu = page.getByRole("combobox", { name: "Compare with" });
+  await expect(menu).toHaveValue("source");
+  await expect(menu.getByRole("option", { name: "previous run" })).toBeDisabled();
+  await expect(menu.getByRole("option", { name: "source image" })).toBeEnabled();
+});
+
 test("the toolbar keeps to one row on a wide window and two on a phone, its buttons still named", async ({ page }) => {
   await open(page);
   const toolbar = page.locator(".toolbar");
   for (const [width, rows] of [[1730, 1], [1280, 1], [960, 2], [375, 2]] as const) {
     await page.setViewportSize({ width, height: 800 });
-    const { height, overflow } = await toolbar.evaluate((e) => ({ height: e.getBoundingClientRect().height, overflow: e.scrollWidth > e.clientWidth }));
+    const { height, overflow } = await toolbar.evaluate((e) => ({ height: e.getBoundingClientRect().height, overflow: e.scrollWidth > e.clientWidth || document.documentElement.scrollWidth > innerWidth }));
     expect(Math.round((height - 8) / 36), `rows at ${width} px`).toBe(rows); // a row is a 30 px button and a 6 px gap
     expect(overflow, `overflow at ${width} px`).toBe(false);
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();

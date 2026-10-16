@@ -113,7 +113,7 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
 .preview canvas:focus-visible { outline-offset: -2px; }
 .preview .hint {
   position: absolute;
-  top: 10px;
+  bottom: 10px; /* the top left is the compare card's */
   left: 50%;
   width: max-content; /* else left: 50% caps its width at half the preview */
   max-width: calc(100% - 20px);
@@ -128,6 +128,30 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
   box-shadow: var(--shadow);
   pointer-events: none;
 }
+
+/* The compare view's controls: a card at the top left with the chip and its menu, the slider along
+   the bottom and, between them, a handle on the divider that the canvas draws. The hint moves above the slider. */
+.preview .compare-pick, .preview .compare-swipe {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.preview .compare-pick { top: 10px; left: 10px; max-width: calc(100% - 20px); padding: 4px; }
+.preview .compare-pick > span { padding: 0 8px 0 4px; }
+.preview .compare-pick select { height: 28px; min-width: 0; }
+.preview .compare-swipe { right: 10px; bottom: 10px; left: 10px; padding: 8px 12px; }
+.preview .compare-handle { position: absolute; top: 0; bottom: 0; width: 16px; margin-left: -8px; cursor: ew-resize; touch-action: none; }
+.preview.comparing .hint { bottom: 56px; }
 
 /* The focus points over the preview: a dashed ring of the radius, a dot, and while focusing a
    target that takes the click which removes the point. The paper is white in both themes, so the
@@ -234,6 +258,7 @@ button.primary { color: var(--on-accent); background: var(--accent); border-colo
 button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
 button.icon { width: 30px; padding: 0; justify-content: center; }
 .button:has(:focus-visible), .chip:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip:has(:disabled) { opacity: 0.45; background: var(--field); cursor: not-allowed; }
 .chip:has(:checked) { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 fieldset > button, fieldset > .button { margin: 4px 6px 0 0; }
 .gcode { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }

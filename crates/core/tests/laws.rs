@@ -49,12 +49,9 @@ const SPEED_CAPS: &[(&str, &str, f64)] = &[
     ("sketch", "candidates", 64.0),
 ];
 
-/// The seed of the pull request run. Re-picked twice on 2026-10-16: a new setting shifts every
-/// case the seed draws, and the new cases broke the density law on settings the new one does not
-/// touch, a nearest-neighbour `line` and `sketch`, then `waves`; seeds 3 and 5 break it on
-/// `circles` and `sketch` too. See docs/decisions/2026-10-16-paper-flattening.md and
-/// docs/decisions/2026-10-16-edge-smoothing.md.
-const SEED: u64 = 2;
+/// The seed of the pull request run. Every law must hold for any seed, since a new setting shifts
+/// every case a seed draws; see docs/decisions/2026-10-16-property-law-fixes.md.
+const SEED: u64 = 0x706c_6f74_6c69_6e65;
 
 /// How many times more cases to run than a pull request does, from `PLOTLINE_LAWS_SCALE`.
 fn scale() -> u32 {
@@ -779,9 +776,6 @@ fn smoothing_stays_within_the_tone_range() {
 /// other finding's number falls.
 const RISING: &[&str] = &["empty", "dark"];
 
-/// Lint findings whose patch can miss, which the law skips until issue #32 is closed.
-const LINT_MISSES: &[&str] = &["empty", "unused_pens", "dark", "travel"];
-
 #[test]
 fn an_applied_lint_fix_removes_or_shrinks_its_finding() {
     check("lint", 24, case(all_styles()), |c| {
@@ -791,9 +785,7 @@ fn an_applied_lint_fix_removes_or_shrinks_its_finding() {
             return Ok(());
         };
         for f in findings {
-            let Some(patch) = f.patch.as_ref().filter(|_| !LINT_MISSES.contains(&f.code)) else {
-                continue;
-            };
+            let Some(patch) = &f.patch else { continue };
             let mut t = c.session();
             apply(&mut t, patch)?;
             run(&mut t)?;
@@ -895,10 +887,6 @@ fn metrics(s: &Session, run: &Run) -> [f64; 4] {
     ]
 }
 
-/// The least pen-down length, in metres, on which the density law judges the length. A
-/// 24 mm line across a white map came out 0.46 mm longer at a flow spacing of 8 mm than of 0.7 mm.
-const JUDGED_METRES: f64 = 0.25;
-
 #[test]
 fn a_density_setting_moves_its_metrics_one_way() {
     let strategy = (case(dense_styles()), 0.0..1.0f64, 0.0..1.0f64);
@@ -917,6 +905,10 @@ fn a_density_setting_moves_its_metrics_one_way() {
         // A minimum length drops more paths as marks get shorter, so with it a denser setting can
         // draw less; the solver bisects across such a drop.
         s.update("order", &json!({"min_length_mm": 0.0})).unwrap();
+        // A tone response held to the image lightens the map as the style draws darker, so with
+        // it a denser setting can draw less: with two pens light to dark, 3346 Voronoi points
+        // emptied the second pen's band that 516 points drew in.
+        s.update("tone", &json!({"response": "off"})).unwrap();
         let mut measure = |v: f64| -> Result<Option<[f64; 4]>, TestCaseError> {
             let v = if d.integer { json!(v as u64) } else { json!(v) };
             s.update(&d.stage, &json!({ &d.key: v })).unwrap();
@@ -928,20 +920,25 @@ fn a_density_setting_moves_its_metrics_one_way() {
             return Ok(());
         };
         // The pen-down length and the points of the denser drawing are at least those of the
-        // sparser one, give or take 1 percent: lines and grids land on whole steps, which wobble
-        // a little. The path count is left out, because it follows where lines break, such as
-        // where a pen's share of the image runs out, and the time, because its pen-up travel
-        // follows the path order, as much as the density. The length is judged only from
-        // JUDGED_METRES of line: a line ends within a tracing step of the edge, and flow's step
-        // is half its minimum spacing, so on a drawing of one or two lines where that step falls
-        // outweighs the density.
+        // sparser one, give or take 1 percent. The length may also fall short by one of the
+        // sparser drawing's average paths: lines land on whole steps, so where they fall moves the
+        // length by about a line (waves 3.8 percent shorter at a 6.3 mm spacing than at 7.7 mm,
+        // with six lines), and a line ends within a tracing step of the edge (flow's step is half
+        // its minimum spacing). The path count is left out, because it follows where lines break,
+        // such as where a pen's share of the image runs out, and the time, because its pen-up
+        // travel follows the path order, as much as the density. A style that places points is
+        // judged on its points alone: its length follows how the renderer turns points into
+        // marks, since a dot no wider than the pen is one vertex with no length, and points
+        // crowding a small dark area sit on the pixel lattice, where a mesh with holes in it has
+        // longer edges than a fuller one.
         let (sparse, dense) = if d.direct { (a, b) } else { (b, a) };
+        let slack = [0.0, 0.0, sparse[2] / sparse[1].max(1.0), 0.0];
         for (i, name) in [(2, "metres"), (3, "dots")] {
-            if i == 2 && sparse[2] < JUDGED_METRES {
+            if i == 2 && places_points(&style) {
                 continue;
             }
             prop_assert!(
-                dense[i] >= 0.99 * sparse[i],
+                dense[i] >= (0.99 * sparse[i]).min(sparse[i] - slack[i]),
                 "{}.{} {lo} gives {} {name}, {hi} gives {}",
                 d.stage,
                 d.key,
