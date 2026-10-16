@@ -361,7 +361,7 @@ export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOp
       {error ? <span class="error">{error}</span> : fitted ? <span>{text(fitted)}</span> : optimum && (
         <span>
           {found(optimum)}
-          {optimum.patch && <button type="button" onClick={() => onApply(optimum.patch!)}><Check /> Apply</button>}
+          {optimum.patch && <button type="button" aria-label={`Apply: ${found(optimum)}`} onClick={() => onApply(optimum.patch!)}><Check /> Apply</button>}
         </span>
       )}
     </form>
