@@ -246,7 +246,9 @@ def test_optimize_suggests_and_applies_nothing():
     found = handle.optimum
     assert found is not None and handle.fit is None
     assert (found["stage"], found["key"], found["current"]) == ("hatch", "spacing_mm", 1.0)
-    assert len(found["trials"]) == 8 and found["error"] <= found["current_error"]
+    assert len(found["trials"]) == 9 and found["error"] <= found["current_error"]
+    assert found["current_minutes"] == s.stats().estimated_seconds / 60
+    assert "min to plot" in found["reason"]
     assert s.settings == before and s.result is handle.result
     if found["patch"] is not None:
         assert found["patch"] == {"settings": {"hatch": {"spacing_mm": found["value"]}}}

@@ -395,9 +395,9 @@ impl Session {
     }
 
     /// Cancel the latest run and return a search of the style's density setting for the value
-    /// whose drawing follows the tone map most closely, with every trial's `metric` (as for
-    /// [`Session::fit`]) at most `target` when a budget is given; see
-    /// [`optimize`](crate::optimize). It works over a snapshot of the session and claims the result
+    /// whose drawing follows the tone map most closely, within the time and lint limits and with
+    /// every trial's `metric` (as for [`Session::fit`]) at most `target` when a budget is given;
+    /// see [`optimize`](crate::optimize). It works over a snapshot of the session and claims the result
     /// slot as [`Session::start`] does, and ends with the drawing of the current settings. The
     /// settings stay as they are: [`OptimizeRun::result`] suggests a patch, applied only with
     /// [`Session::update`].
@@ -1143,7 +1143,8 @@ mod tests {
         }
         assert_eq!(labels.len(), crate::optimize::TRIALS);
         assert!(
-            labels[0].starts_with("try 1 of 8: spacing_mm 1: tone error"),
+            labels[0].starts_with("try 1 of 9: spacing_mm 1: tone error")
+                && labels[0].ends_with(" min"),
             "{labels:?}"
         );
         let found = job.result().unwrap();
@@ -1154,6 +1155,10 @@ mod tests {
         let drawn = s.drawing().unwrap();
         assert_eq!(found.current, json!(1.0));
         assert!(found.error <= found.current_error.unwrap());
+        assert_eq!(
+            found.current_minutes,
+            s.stats().unwrap().estimated_seconds / 60.0
+        );
         assert_eq!(found.patch.is_some(), found.value != found.current);
         assert!(!drawn.layers[0].paths.is_empty());
         // A budget the first trial breaks keeps every chosen trial within it.
