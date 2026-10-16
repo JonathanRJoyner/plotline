@@ -6,7 +6,7 @@
 
 The stage now reports the resize and the flattening as two steps, and with flattening off it is one step and the same map as before. The image analysis measures `flat_two_level`, Otsu's separability after flattening with a sixteenth of the image as the window. It suggests `paper` when that is at least 0.85 and 0.05 above the raw separability on a non-colour image. The patch sets a sixteenth of the drawing area's longer side, which is 17.5 mm on A4. The GUI shows the control in the Image settings, with a "Clean up a scan" tour step and a browser flow. A law says flattening ignores uniform lighting.
 
-The property laws' pull-request seed moved from `0x706c_6f74_6c69_6e65` to 1. A new setting shifts every case a seed draws. Under the old seed the new cases broke the density law on cases with flattening off:
+The property laws' pull-request seed moved from `0x706c_6f74_6c69_6e65` to 1. Amended on 2026-10-16: it moved back once the density law held for any seed, see [the property law fixes](2026-10-16-property-law-fixes.md). A new setting shifts every case a seed draws. Under the old seed the new cases broke the density law on cases with flattening off:
 
 - a nearest-neighbour `line` (`tsp.optimize` off): 164 and 614 points drew 0.376 m and 0.371 m;
 - `sketch`: 164 and 614 lines drew 3.28 m and 3.22 m.

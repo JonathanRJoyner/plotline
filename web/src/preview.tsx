@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { dividerX, type Compare } from "./compare";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
 import { eachPath, pathCount } from "./paths";
-import { fitView, toMm, zoomAt, type View } from "./view";
+import { fitView, onPaper, toMm, zoomAt, type View } from "./view";
 
 type Props = {
   canvas: Canvas;
