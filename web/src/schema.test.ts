@@ -26,7 +26,7 @@ test("maps each property to a control, in order", () => {
 
   expect(controls[0]).toMatchObject({ kind: "checkbox", default: false, help: "Swap light and dark.", advanced: false });
   expect(controls[1]).toMatchObject({ kind: "slider", label: "Spacing", step: 0.1, unit: "mm", integer: false, min: 0.2, max: 20, default: 2 });
-  expect(controls[2]).toMatchObject({ kind: "slider", step: 1, integer: true, label: "resolution", help: "", unit: null });
+  expect(controls[2]).toMatchObject({ kind: "slider", step: 1, integer: true, label: "Resolution", help: "", unit: null });
   expect(controls[3]).toMatchObject({ kind: "number", advanced: true, integer: true, default: 0 });
   expect(controls[4]).toMatchObject({ kind: "select", options: shapeOptions, default: "point" });
   expect(controls[5]).toMatchObject({ kind: "text", default: null });
@@ -69,6 +69,19 @@ test("splitStages puts the style's own stages first, then order, then tone as Im
 test("underscores in enum values read as spaces", () => {
   const [c] = controlsFor({ properties: { mode: { enum: ["one_pen", "by_colour"], default: "one_pen" } } });
   expect(c.kind === "select" && c.options.map((o) => o.label)).toEqual(["one pen", "by colour"]);
+});
+
+test("a key's label drops a trailing unit word and starts with a capital", () => {
+  const labels = controlsFor({
+    properties: {
+      blur_mm: { type: "number", "x-unit": "mm" },
+      min_area_mm2: { type: "number", "x-unit": "mm²" },
+      clip_percent: { type: "number" },
+      count: { type: "integer" },
+      angle_deg: { type: "number", "x-unit": "deg", "x-label": "Tilt_deg" },
+    },
+  }).map((c) => c.label);
+  expect(labels).toEqual(["Blur", "Min area", "Clip percent", "Count", "Tilt_deg"]);
 });
 
 test("splitStages sets the pen use stage apart", () => {
