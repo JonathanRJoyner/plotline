@@ -93,7 +93,8 @@ fn styles_match_golden_files() {
             "mosaic_gradient",
             "mosaic",
             gradient(64, 48),
-            json!({"tone": {"resolution": 64}}),
+            // A spacing of 0.8 mm keeps the file under 100 KB.
+            json!({"tone": {"resolution": 64}, "mosaic": {"spacing_mm": 0.8}}),
         ),
     ];
     for (name, style, image, patch) in cases {

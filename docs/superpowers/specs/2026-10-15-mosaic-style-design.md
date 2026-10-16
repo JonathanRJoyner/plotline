@@ -27,10 +27,10 @@ Every help text is one line.
 | Key | Help | Range | Default |
 |---|---|---|---|
 | `region_mm` | About how wide one patch is. | 2 to 50, step 0.5, mm | 8 |
-| `compactness` | Higher keeps the patches round; lower lets them follow the image's shapes. | 1 to 40, step 1 | 10 |
+| `compactness` | Higher keeps the patches round; lower lets them follow the image's shapes. | 1 to 40, step 1 | 3 |
 | `spacing_mm` | Distance between lines over full ink; lighter patches space theirs wider. | 0.2 to 10, step 0.1, mm, `"x-density": "inverse"` | 0.6 |
 
-The defaults are starting values. The builder tunes them on the README still life with a 0.3 mm pen so that the drawing reads clearly, and records the final values in the brief row. `spacing_mm` is the density setting for the budget solver, and its name lets plot lint's spacing rules apply.
+The defaults were starting values; the builder tuned them on the README still life with a 0.3 mm pen so that the drawing reads clearly, and the brief row records the final ones (compactness 3, not 10: the paper's usual value made the patches ignore the shading). `spacing_mm` is the density setting for the budget solver, and its name lets plot lint's spacing rules apply.
 
 ### 3.2 Regions
 
@@ -46,8 +46,8 @@ For each region `r`, in order:
 
 1. Its ink `t` is the mean ink of its pixels, its centre `c` the mean of its pixel centres in mm, and its angle the principal axis from §1, turned into the page's convention (counter-clockwise as seen on the page, brief §14 "Angles"; the page's y axis points down), plus the lane's turn (§3.5).
 2. With `t > 0`, the spacing is `d = spacing_mm / t`. Lines at that angle lie at offsets `(k + 1/2) d` from `c` along the normal, for every whole `k` that meets the region's bounding box. A region narrower than `d` across its lines gets none, so a light patch is drawn light on average instead of always getting one line.
-3. Each line is sampled every half pixel across the region's bounding box, and every run of samples whose pixel belongs to `r` becomes a segment from its first sample to its last.
-4. The segments are drawn back and forth: in offset order, every second line reversed. A segment joins the path before it when its start is within `2 d` of that path's end and the midpoint of the join lies in `r`; otherwise it starts a new path. One patch then usually costs one pen lift.
+3. Each line is sampled every half pixel across the region's bounding box, and every run of samples whose pixel belongs to `r` becomes a segment from its first sample to its last, unless the run is under two tone pixels long: a line that only grazes a corner would draw a dash shorter than the pen is wide, which plot lint calls a speck.
+4. The segments are drawn back and forth: in offset order, every second line reversed. A segment joins the path before it when its start is within `2 spacing_mm` of that path's end and the midpoint of the join lies in `r`; otherwise it starts a new path. The limit is absolute, twice the full-ink spacing, and not a multiple of the patch's own spacing `d`: the lines of a light patch lie far apart, and joining them by connectors as long as the gaps draws the patch as a U or a frame, much darker than its tone, so they stay loose strokes, while the connectors of a dark patch vanish among its lines. A dark patch then usually costs one pen lift, and a light one a lift per stroke.
 
 Every vertex is a sample of the map, so it lies inside the map's rect.
 

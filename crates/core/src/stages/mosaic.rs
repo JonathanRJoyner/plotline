@@ -24,6 +24,13 @@
 //! first pass keeps the label of its grid cell. A line that crosses a patch for less than two
 //! pixels, as at a corner, draws nothing, since the dash would be shorter than the pen is wide.
 //!
+//! The lines of a patch are drawn back and forth and joined into one path only where the gap from
+//! one line's end to the next one's start is within twice `spacing_mm`, the spacing over full ink,
+//! and the middle of the join lies in the patch. The limit is absolute rather than a multiple of
+//! the patch's own spacing: a light patch has few lines far apart, and joining those draws a U or
+//! a frame much darker than the tone, so they stay loose strokes, while the connectors of a dark
+//! patch vanish among its lines.
+//!
 //! When the drawing is split between pens, each pen's lines turn by its share of the half turn, so
 //! that the pens do not draw over each other.
 
@@ -43,6 +50,13 @@ use crate::types::{Paths, Points, ToneMap};
 
 /// Passes of local k-means; Achanta et al. find ten enough.
 const PASSES: usize = 10;
+
+/// How many full-ink spacings apart two neighbouring lines of a patch may end and still be joined
+/// by a connector. The limit is absolute, not a multiple of the patch's own spacing: a light patch
+/// has few, widely spaced lines, and joining them would draw it as a U or a frame, far darker than
+/// its tone, so its lines stay loose strokes, while in a dark patch the connectors vanish among
+/// the lines.
+const JOIN: f64 = 2.0;
 
 /// The shortest run of a line inside a region that is drawn, in pixels. A line that only grazes a
 /// region's corner would draw a dash shorter than the pen is wide, which plot lint calls a speck.
@@ -474,7 +488,7 @@ impl Mosaic {
         for (a, b) in segments {
             if let Some(&end) = path.last() {
                 let mid = [(end[0] + a[0]) / 2.0, (end[1] + a[1]) / 2.0];
-                if math::hypot(a[0] - end[0], a[1] - end[1]) <= 2.0 * d
+                if math::hypot(a[0] - end[0], a[1] - end[1]) <= JOIN * spacing
                     && self.region_at(mid, r.bbox) == i as u32
                 {
                     path.extend([a, b]);
@@ -808,6 +822,20 @@ mod tests {
                 assert!((off - 1.0).abs() < 1e-6, "{off} mm between lines");
             }
         }
+    }
+
+    #[test]
+    fn a_light_patch_keeps_its_lines_loose() {
+        // Spacing 1 mm joins lines up to 2 mm apart. At ink 0.8 they are 1.25 mm apart, so each
+        // patch is one back and forth path; at 0.4 they are 2.5 mm apart, so each is a stroke.
+        let paths = |ink: f32| {
+            let tone = tone_map(40, 40, move |_, _| ink);
+            let patch = json!({"region_mm": 20.0, "spacing_mm": 1.0});
+            run_tone_stage(&MosaicStage, tone, patch).1
+        };
+        assert_eq!(paths(0.8).len(), 16);
+        let light = paths(0.4);
+        assert!(light.len() > 64 && light.iter().all(|p| p.len() == 2));
     }
 
     #[test]
