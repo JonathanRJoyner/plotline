@@ -19,6 +19,16 @@ pub fn exp(x: f64) -> f64 {
     libm::exp(x)
 }
 
+/// `x` raised to `y`.
+pub fn powf(x: f64, y: f64) -> f64 {
+    libm::pow(x, y)
+}
+
+/// The cube root of `x`, real for a negative `x` too.
+pub fn cbrt(x: f64) -> f64 {
+    libm::cbrt(x)
+}
+
 /// `x` raised to `y`, in f32.
 pub fn powf32(x: f32, y: f32) -> f32 {
     libm::powf(x, y)

@@ -8,17 +8,24 @@
 //! colorfulness in natural images", *Human Vision and Electronic Imaging VIII*, SPIE 5007, 2003,
 //! doi:10.1117/12.477378), the noise level (J. Immerkær, "Fast noise variance estimation",
 //! *Computer Vision and Image Understanding* 64(2), 1996, pp. 300-302,
-//! doi:10.1006/cviu.1996.0060) and the tone at the border.
+//! doi:10.1006/cviu.1996.0060) and the tone at the border. For a colour image it also picks the
+//! pens that draw it best; see [`ImageStats::palette`].
 //!
 //! Every value is a deterministic function of the pixels: integer histograms with fixed bin
-//! edges, sums in row-major order, and `sqrt` (exact in IEEE 754) as the only float library call,
-//! so native and WebAssembly builds agree bit for bit.
+//! edges, sums in row-major order, and `sqrt` (exact in IEEE 754) as the only float library call
+//! besides `cbrt` and `pow`, which go through [`crate::math`] (`libm`), so native and WebAssembly
+//! builds agree bit for bit.
+
+use std::collections::BTreeSet;
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::math;
-use crate::types::{Canvas, Fit, Image};
+use crate::pens::INKS;
+use crate::preview::rgb;
+use crate::stages::split;
+use crate::types::{Canvas, Fit, Image, Pen};
 
 /// Bins for the black and white points.
 const LEVEL_BINS: usize = 4096;
@@ -26,6 +33,15 @@ const LEVEL_BINS: usize = 4096;
 const OTSU_BINS: usize = 256;
 /// The longest side of the grid the statistics are measured on.
 const ANALYSIS_PX: usize = 1024;
+/// Colourfulness past which an image counts as a colour image, and gets a palette.
+const COLOUR_CUT: f64 = 40.0;
+/// Bins per channel for the palette fit's samples.
+const PALETTE_BINS: usize = 8;
+/// The most inks a palette holds.
+const PALETTE_MAX: usize = 4;
+/// The least an added ink must lower the mean colour difference to be kept: about one just
+/// noticeable difference in CIELAB.
+const PALETTE_GAIN: f64 = 2.3;
 
 /// What [`measure`] reports about an image. Luminance is 0..1; the shares are 0..1.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -51,6 +67,13 @@ pub struct ImageStats {
     pub noise: f64,
     /// Mean luminance of the outer band, 5 % of the shorter edge wide.
     pub border: f64,
+    /// The inks from [`INKS`] that draw a colour image best under the Pen use stage's colour model,
+    /// lightest first by luma; empty for an image that is not colourful enough (colourfulness
+    /// past 40) or that no ink improves on white paper.
+    pub palette: Vec<&'static str>,
+    /// The palette's mean CIE 1976 colour difference ΔE*ab from the image (white paper's, if the
+    /// palette is empty); 0 when the image is not colourful enough for the fit to run.
+    pub palette_error: f64,
 }
 
 /// Counts of `lum` in `bins` equal bins on 0..1; bin `min(floor(v * bins), bins - 1)`.
@@ -181,6 +204,157 @@ fn border(lum: &[f32], w: usize, h: usize) -> f64 {
     sum / count as f64
 }
 
+/// A colour in CIELAB (CIE 1976 L*a*b*) from encoded sRGB `[r, g, b]` on 0..1. Each channel is
+/// decoded with the IEC 61966-2-1 curve, `c / 12.92` up to 0.04045 and `((c + 0.055) / 1.055)^2.4`
+/// above it; the sRGB primaries under D65 take it to CIE XYZ, which is divided by the white point
+/// (the matrix's row sums, so white is exactly L* 100, a* = b* = 0); then
+/// `L = 116 f(Y) - 16`, `a = 500 (f(X) - f(Y))`, `b = 200 (f(Y) - f(Z))`, with `f(t)` the cube
+/// root above `(6/29)^3` and `t / (3 (6/29)^2) + 4/29` below (CIE 15:2004, *Colorimetry*, 3rd ed.;
+/// IEC 61966-2-1:1999, *Colour management in multimedia systems: default RGB colour space,
+/// sRGB*). Channels outside 0..1 are clamped to it.
+fn lab(srgb: [f64; 3]) -> [f64; 3] {
+    const M: [[f64; 3]; 3] = [
+        [0.4124, 0.3576, 0.1805],
+        [0.2126, 0.7152, 0.0722],
+        [0.0193, 0.1192, 0.9505],
+    ];
+    let linear = srgb.map(|c| {
+        let c = c.clamp(0.0, 1.0);
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            math::powf((c + 0.055) / 1.055, 2.4)
+        }
+    });
+    let f = |row: [f64; 3]| {
+        let t = (row[0] * linear[0] + row[1] * linear[1] + row[2] * linear[2])
+            / (row[0] + row[1] + row[2]);
+        let edge: f64 = 6.0 / 29.0;
+        if t > edge * edge * edge {
+            math::cbrt(t)
+        } else {
+            t / (3.0 * edge * edge) + 4.0 / 29.0
+        }
+    };
+    let [x, y, z] = M.map(f);
+    [116.0 * y - 16.0, 500.0 * (x - y), 200.0 * (y - z)]
+}
+
+/// The CIE 1976 colour difference ΔE*ab: the distance between two CIELAB colours.
+fn delta_e(p: [f64; 3], q: [f64; 3]) -> f64 {
+    let d = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+}
+
+/// One bin of the palette fit: its mean colour as encoded sRGB, that colour in CIELAB, and the
+/// number of pixels.
+struct Sample {
+    rgb: [f64; 3],
+    lab: [f64; 3],
+    weight: f64,
+}
+
+/// The samples of the planes `r`, `g` and `b`: the pixels binned `PALETTE_BINS`³ on their encoded
+/// values, bin `min(floor(v * 8), 7)` per channel, one sample for each non-empty bin in bin-index
+/// order.
+fn samples(r: &[f32], g: &[f32], b: &[f32]) -> Vec<Sample> {
+    let bin = |v: f32| ((v * PALETTE_BINS as f32) as usize).min(PALETTE_BINS - 1);
+    let mut bins = vec![([0.0f64; 3], 0u64); PALETTE_BINS * PALETTE_BINS * PALETTE_BINS];
+    for ((&r, &g), &b) in r.iter().zip(g).zip(b) {
+        let (sum, count) = &mut bins[(bin(r) * PALETTE_BINS + bin(g)) * PALETTE_BINS + bin(b)];
+        for (s, v) in sum.iter_mut().zip([r, g, b]) {
+            *s += f64::from(v);
+        }
+        *count += 1;
+    }
+    bins.into_iter()
+        .filter(|&(_, count)| count > 0)
+        .map(|(sum, count)| {
+            let rgb = sum.map(|s| s / count as f64);
+            Sample {
+                rgb,
+                lab: lab(rgb),
+                weight: count as f64,
+            }
+        })
+        .collect()
+}
+
+/// The mean ΔE*ab, weighted by pixel count, between each sample and its reproduction by inks of
+/// absorption `absorb`: the colour model of the Pen use stage (see `stages/split.rs`), where
+/// [`split::coverages`] gives the coverages that match the sample best and the reproduction is
+/// `R_c = prod_i (1 - a_i k_ic)`. No inks reproduce the white paper.
+fn mean_error(samples: &[Sample], absorb: &[[f64; 3]]) -> f64 {
+    let (mut sum, mut weight) = (0.0, 0.0);
+    for s in samples {
+        let a = split::coverages(s.rgb, absorb);
+        let shown = [0, 1, 2].map(|c| {
+            a.iter()
+                .zip(absorb)
+                .map(|(&a, k)| 1.0 - a * k[c])
+                .product::<f64>()
+        });
+        sum += s.weight * delta_e(s.lab, lab(shown));
+        weight += s.weight;
+    }
+    sum / weight
+}
+
+/// The inks of [`INKS`] that draw an image best, by forward stepwise selection (T. Hastie,
+/// R. Tibshirani and J. Friedman, *The Elements of Statistical Learning*, 2nd ed., Springer,
+/// 2009, section 3.3.2): from no ink, each step adds the ink that lowers [`mean_error`] most, the
+/// earlier ink in [`INKS`] on a tie, and the fit stops at `PALETTE_MAX` inks or when the best
+/// addition lowers the error by under `PALETTE_GAIN`, about one just noticeable difference (M.
+/// Mahy, L. Van Eycken and A. Oosterlinck, "Evaluation of uniform color spaces developed after
+/// the adoption of CIELAB and CIELUV", *Color Research and Application* 19(2), 1994). Returns
+/// the ink names, lightest first (BT.601 luma, ties in [`INKS`] order), and the chosen set's mean
+/// error.
+///
+/// The commonest colours of the image are not the answer: the inks are transparent and mix, so a
+/// green is best drawn by yellow over blue, and the inks that reproduce an image best are not its
+/// most common colours.
+fn fit_palette(samples: &[Sample]) -> (Vec<&'static str>, f64) {
+    let absorb: Vec<[f64; 3]> = INKS
+        .iter()
+        .map(|&(name, hex)| {
+            split::absorption(&Pen::new(name, 1.0, hex).expect("the inks are valid colours"))
+        })
+        .collect();
+    // The set is always in `INKS` order, so the result does not depend on the order of adding.
+    let error_of = |set: &[usize]| {
+        let absorb: Vec<_> = set.iter().map(|&i| absorb[i]).collect();
+        mean_error(samples, &absorb)
+    };
+    let mut chosen: Vec<usize> = Vec::new();
+    let mut error = error_of(&chosen);
+    while chosen.len() < PALETTE_MAX {
+        let mut best: Option<(usize, f64)> = None;
+        for i in (0..INKS.len()).filter(|i| !chosen.contains(i)) {
+            let mut set = chosen.clone();
+            set.push(i);
+            set.sort_unstable();
+            let e = error_of(&set);
+            if best.is_none_or(|(_, b)| e < b) {
+                best = Some((i, e));
+            }
+        }
+        match best {
+            Some((i, e)) if error - e >= PALETTE_GAIN => {
+                chosen.push(i);
+                chosen.sort_unstable();
+                error = e;
+            }
+            _ => break,
+        }
+    }
+    let luma = |i: usize| {
+        let [r, g, b] = rgb(INKS[i].1).map(|byte| f64::from(byte) / 255.0);
+        0.299 * r + 0.587 * g + 0.114 * b
+    };
+    chosen.sort_by(|&i, &j| luma(j).total_cmp(&luma(i)));
+    (chosen.iter().map(|&i| INKS[i].0).collect(), error)
+}
+
 /// Measure `image`; see [`ImageStats`]. An image with no pixels reports its size and zero for
 /// everything else.
 pub fn measure(image: &Image) -> ImageStats {
@@ -201,6 +375,12 @@ pub fn measure(image: &Image) -> ImageStats {
     let n = lum.len() as f64;
     let (p_low, p_high) = levels(&lum, 0.5);
     let (otsu, two_level) = otsu(&lum);
+    let colourfulness = colourfulness(&r, &g, &b);
+    let (palette, palette_error) = if colourfulness > COLOUR_CUT {
+        fit_palette(&samples(&r, &g, &b))
+    } else {
+        (Vec::new(), 0.0)
+    };
     let dark = lum.iter().filter(|&&v| v < 0.25).count();
     let light = lum.iter().filter(|&&v| v > 0.75).count();
     ImageStats {
@@ -214,20 +394,23 @@ pub fn measure(image: &Image) -> ImageStats {
         dark: dark as f64 / n,
         mid: (lum.len() - dark - light) as f64 / n,
         light: light as f64 / n,
-        colourfulness: colourfulness(&r, &g, &b),
+        colourfulness,
         noise: noise(&lum, gw, gh),
         border: border(&lum, gw, gh),
+        palette,
+        palette_error,
     }
 }
 
-/// A change that would suit the image, and why. The reasons are fixed sentences, written for a
-/// person and read by the assistant as well.
+/// A change that would suit the image, and why. The reasons are sentences written for a person
+/// and read by the assistant as well; all but the colour one are fixed.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Suggestion {
     pub kind: &'static str,
-    pub reason: &'static str,
-    /// Any of `style` (a style name), `settings` (`{stage: {key: value}}`, applied after the style)
-    /// and `page` (`{width_mm, height_mm}`); `None` for a note with nothing to apply.
+    pub reason: String,
+    /// Any of `style` (a style name), `pens` (a list of `{name, width_mm, color}`, applied after
+    /// the style), `settings` (`{stage: {key: value}}`, applied after the pens) and `page`
+    /// (`{width_mm, height_mm}`); `None` for a note with nothing to apply.
     pub patch: Option<Value>,
 }
 
@@ -246,20 +429,22 @@ const LIGHT_MARKS: &str =
 const NOISY: &str =
     "The image is noisy. A blur of one tone-map pixel keeps the noise from turning into specks.";
 const TURN: &str = "The image would draw larger with the page turned.";
-const COLOUR: &str = "This is a colour image. To draw its colours, add pens in those colours and set Pen use to by colour.";
 
 /// How much larger the turned page must draw the image to be worth suggesting.
 const TURN_GAIN: f64 = 1.3;
 
 /// Suggestions for the session as it stands, in a fixed order, each left out when already in
 /// effect. `settings` is `{stage: {key: value}}`; a missing `tone` or `split` key counts as its
-/// default (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000, `mode` one pen). The
-/// cut-offs are hand-set starting values, not a fitted model.
+/// default (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000, `mode` one pen). `pens`
+/// are the session's: the colour suggestion gives the palette's pens the first one's width, and is
+/// left out when Pen use is by colour and the pens already have the palette's colours. The cut-offs
+/// are hand-set starting values, not a fitted model.
 pub fn suggest(
     stats: &ImageStats,
     canvas: &Canvas,
     style: &str,
     settings: &Value,
+    pens: &[Pen],
 ) -> Vec<Suggestion> {
     let mut out = Vec::new();
     // Nothing to say about no pixels; the zeroed statistics would trip the rules below.
@@ -267,10 +452,10 @@ pub fn suggest(
         return out;
     }
     let tone = |key: &str| settings.get("tone").and_then(|t| t.get(key));
-    let mut add = |kind, reason, patch| {
+    let mut add = |kind, reason: &str, patch| {
         out.push(Suggestion {
             kind,
-            reason,
+            reason: reason.to_string(),
             patch,
         })
     };
@@ -316,10 +501,43 @@ pub fn suggest(
         .and_then(|s| s.get("mode"))
         .and_then(Value::as_str)
         == Some("by_colour");
-    if stats.colourfulness > 40.0 && !by_colour {
-        add("colour", COLOUR, None);
+    if stats.colourfulness > COLOUR_CUT && stats.palette.len() >= 2 {
+        let hex = |name: &str| {
+            INKS.iter()
+                .find(|ink| ink.0 == name)
+                .map_or("", |ink| ink.1)
+        };
+        let wanted: BTreeSet<&str> = stats.palette.iter().map(|&name| hex(name)).collect();
+        let have: BTreeSet<String> = pens.iter().map(|p| p.color.to_lowercase()).collect();
+        let in_effect = by_colour && have.iter().map(String::as_str).eq(wanted.iter().copied());
+        if !in_effect {
+            let width = pens.first().map_or(0.3, |p| p.width_mm);
+            let list: Vec<Value> = stats
+                .palette
+                .iter()
+                .map(|&name| {
+                    let label = format!("{} {width}", capitalise(name));
+                    json!({"name": label, "width_mm": width, "color": hex(name)})
+                })
+                .collect();
+            let (last, rest) = stats.palette.split_last().expect("two or more inks");
+            let named = capitalise(&format!("{} and {last}", rest.join(", ")));
+            let reason = format!(
+                "This is a colour image. {named} pens draw its colours best, with Pen use set to by colour."
+            );
+            let patch = json!({"pens": list, "settings": {"split": {"mode": "by_colour"}}});
+            add("colour", &reason, Some(patch));
+        }
     }
     out
+}
+
+/// `word` with its first letter in capitals.
+fn capitalise(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
 }
 
 #[cfg(test)]
@@ -336,8 +554,33 @@ mod tests {
         get_style(style).unwrap().defaults()
     }
 
+    fn black(width: f64) -> Vec<Pen> {
+        vec![Pen::new("Black", width, "#000000").unwrap()]
+    }
+
     fn run(image: &Image, style: &str, settings: &Value) -> Vec<Suggestion> {
-        suggest(&measure(image), &page(), style, settings)
+        run_with(image, style, settings, &black(0.3))
+    }
+
+    fn run_with(image: &Image, style: &str, settings: &Value, pens: &[Pen]) -> Vec<Suggestion> {
+        suggest(&measure(image), &page(), style, settings, pens)
+    }
+
+    /// Pens in the given inks, in order, at 0.3 mm.
+    fn inks(names: &[&str]) -> Vec<Pen> {
+        let hex = |name: &str| INKS.iter().find(|ink| ink.0 == name).unwrap().1;
+        names
+            .iter()
+            .map(|&name| Pen::new(name, 0.3, hex(name)).unwrap())
+            .collect()
+    }
+
+    /// The mean ΔE*ab of drawing `image` (analysis scale 1) with only a black pen.
+    fn black_alone(image: &Image) -> f64 {
+        let [r, g, b] = [0, 1, 2]
+            .map(|c| -> Vec<f32> { image.rgb.iter().skip(c).step_by(3).copied().collect() });
+        let absorb = split::absorption(&black(1.0)[0]);
+        mean_error(&samples(&r, &g, &b), &[absorb])
     }
 
     fn find<'a>(all: &'a [Suggestion], kind: &str) -> Option<&'a Suggestion> {
@@ -516,26 +759,142 @@ mod tests {
         let mut fill = page();
         fill.fit = Fit::Fill;
         let stats = measure(&ramp(400, 200, 0.0, 1.0));
-        assert!(find(&suggest(&stats, &fill, "grid", &settings), "orientation").is_none());
+        let pens = black(0.3);
+        assert!(find(
+            &suggest(&stats, &fill, "grid", &settings, &pens),
+            "orientation"
+        )
+        .is_none());
     }
 
     #[test]
-    fn colour_is_a_note() {
-        let all = run(&color_bars(256, 64), "grid", &defaults("grid"));
-        let colour = find(&all, "colour").expect("colour bars are colourful");
-        assert_eq!(colour.patch, None);
+    fn cielab_matches_the_cie_values() {
+        let near = |got: [f64; 3], want: [f64; 3], tolerance: f64| {
+            for (g, w) in got.iter().zip(want) {
+                assert!((g - w).abs() <= tolerance, "{got:?} against {want:?}");
+            }
+        };
+        near(lab([1.0, 1.0, 1.0]), [100.0, 0.0, 0.0], 1e-9);
+        near(lab([0.0, 0.0, 0.0]), [0.0, 0.0, 0.0], 1e-12);
+        // sRGB red under D65, as tabulated for the sRGB primaries.
+        near(lab([1.0, 0.0, 0.0]), [53.24, 80.09, 67.20], 0.2);
+        assert_eq!(delta_e([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]), 5.0);
     }
 
     #[test]
-    fn colour_is_skipped_when_splitting_by_colour() {
+    fn colour_bars_get_a_palette() {
         let image = color_bars(256, 64);
+        let stats = measure(&image);
+        assert!(
+            (2..=4).contains(&stats.palette.len()),
+            "{:?}",
+            stats.palette
+        );
+        let black = black_alone(&image);
+        assert!(
+            stats.palette_error < black,
+            "{} {black}",
+            stats.palette_error
+        );
+        // Lightest first by BT.601 luma.
+        let luma = |name: &str| {
+            let hex = INKS.iter().find(|ink| ink.0 == name).unwrap().1;
+            let [r, g, b] = rgb(hex).map(f64::from);
+            0.299 * r + 0.587 * g + 0.114 * b
+        };
+        assert!(stats.palette.windows(2).all(|w| luma(w[0]) >= luma(w[1])));
+    }
+
+    #[test]
+    fn a_grey_image_gets_no_palette() {
+        let image = ramp(256, 64, 0.0, 1.0);
+        let stats = measure(&image);
+        assert!(stats.palette.is_empty());
+        assert_eq!(stats.palette_error, 0.0);
+        assert!(find(&run(&image, "grid", &defaults("grid")), "colour").is_none());
+    }
+
+    #[test]
+    fn colour_suggests_the_palette_pens() {
+        let image = color_bars(256, 64);
+        let palette = measure(&image).palette;
+        let all = run_with(&image, "grid", &defaults("grid"), &black(0.5));
+        let colour = patch(&all, "colour").expect("colour bars are colourful");
+        let pens = colour["pens"].as_array().unwrap();
+        assert_eq!(pens.len(), palette.len());
+        for (pen, name) in pens.iter().zip(&palette) {
+            let hex = INKS.iter().find(|ink| ink.0 == *name).unwrap().1;
+            let label = format!("{}{} 0.5", name[..1].to_uppercase(), &name[1..]);
+            assert_eq!(pen, &json!({"name": label, "width_mm": 0.5, "color": hex}));
+        }
+        assert_eq!(colour["settings"], json!({"split": {"mode": "by_colour"}}));
+        // With no pens at all the width is the default one.
+        let none = run_with(&image, "grid", &defaults("grid"), &[]);
+        assert_eq!(patch(&none, "colour").unwrap()["pens"][0]["width_mm"], 0.3);
+    }
+
+    #[test]
+    fn colour_is_left_out_once_in_effect() {
+        let image = color_bars(256, 64);
+        let palette = measure(&image).palette;
         let mut settings = defaults("grid");
+        let mut pens = inks(&palette);
+        // The palette's pens alone do not set Pen use.
+        assert!(find(&run_with(&image, "grid", &settings, &pens), "colour").is_some());
         settings["split"]["mode"] = json!("by_colour");
-        assert!(find(&run(&image, "grid", &settings), "colour").is_none());
+        assert!(find(&run_with(&image, "grid", &settings, &pens), "colour").is_none());
+        // The set counts, not the order, the case of the hex digits or the widths.
+        pens.reverse();
+        for pen in &mut pens {
+            pen.color = pen.color.to_uppercase();
+            pen.width_mm = 0.7;
+        }
+        assert!(find(&run_with(&image, "grid", &settings, &pens), "colour").is_none());
+        // By colour with other pens, or with a pen of the set missing, still gets the suggestion.
+        let other = run_with(&image, "grid", &settings, &black(0.3));
+        assert!(find(&other, "colour").is_some());
+        pens.pop();
+        assert!(find(&run_with(&image, "grid", &settings, &pens), "colour").is_some());
         // Splitting by tone still draws the colours in grey, and a missing stage is not by colour.
+        let pens = inks(&palette);
         settings["split"]["mode"] = json!("light_to_dark");
-        assert!(find(&run(&image, "grid", &settings), "colour").is_some());
-        assert!(find(&run(&image, "grid", &json!({})), "colour").is_some());
+        assert!(find(&run_with(&image, "grid", &settings, &pens), "colour").is_some());
+        assert!(find(&run_with(&image, "grid", &json!({}), &pens), "colour").is_some());
+    }
+
+    #[test]
+    fn the_reason_names_the_inks() {
+        let stats = |palette: &[&'static str]| ImageStats {
+            width_px: 10,
+            height_px: 10,
+            colourfulness: 50.0,
+            palette: palette.to_vec(),
+            ..ImageStats::default()
+        };
+        let reason = |palette: &[&'static str]| {
+            let all = suggest(&stats(palette), &page(), "grid", &json!({}), &black(0.3));
+            find(&all, "colour").map(|s| s.reason.clone())
+        };
+        let draws = "pens draw its colours best, with Pen use set to by colour.";
+        assert_eq!(
+            reason(&["yellow", "blue"]),
+            Some(format!("This is a colour image. Yellow and blue {draws}"))
+        );
+        assert_eq!(
+            reason(&["yellow", "red", "black"]),
+            Some(format!(
+                "This is a colour image. Yellow, red and black {draws}"
+            ))
+        );
+        assert_eq!(
+            reason(&["yellow", "red", "blue", "black"]),
+            Some(format!(
+                "This is a colour image. Yellow, red, blue and black {draws}"
+            ))
+        );
+        // One ink is not worth a suggestion, and a grey image has no palette.
+        assert_eq!(reason(&["black"]), None);
+        assert_eq!(reason(&[]), None);
     }
 
     #[test]
@@ -585,11 +944,6 @@ mod tests {
                 "orientation",
                 "The image would draw larger with the page turned.",
             ),
-            (
-                color_bars(256, 64),
-                "colour",
-                "This is a colour image. To draw its colours, add pens in those colours and set Pen use to by colour.",
-            ),
         ];
         for (image, kind, reason) in cases {
             let all = run(&image, "grid", &settings);
@@ -609,8 +963,27 @@ mod tests {
                 "patch": {"style": "ink"}
             })
         );
-        let note = run(&color_bars(256, 64), "grid", &defaults("grid"));
-        let note = serde_json::to_value(find(&note, "colour").unwrap()).unwrap();
-        assert_eq!(note["patch"], Value::Null);
+        let stats = ImageStats {
+            width_px: 10,
+            height_px: 10,
+            colourfulness: 50.0,
+            palette: vec!["yellow", "blue"],
+            ..ImageStats::default()
+        };
+        let all = suggest(&stats, &page(), "grid", &json!({}), &black(0.3));
+        assert_eq!(
+            serde_json::to_value(find(&all, "colour").unwrap()).unwrap(),
+            json!({
+                "kind": "colour",
+                "reason": "This is a colour image. Yellow and blue pens draw its colours best, with Pen use set to by colour.",
+                "patch": {
+                    "pens": [
+                        {"name": "Yellow 0.3", "width_mm": 0.3, "color": "#f5c400"},
+                        {"name": "Blue 0.3", "width_mm": 0.3, "color": "#1d4fb8"}
+                    ],
+                    "settings": {"split": {"mode": "by_colour"}}
+                }
+            })
+        );
     }
 }

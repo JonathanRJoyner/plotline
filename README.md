@@ -47,7 +47,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 - **Twenty styles,** from dots on a grid to one continuous spiral. The table below describes each one.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
-- **Suggestions.** The engine measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
+- **Suggestions.** The engine measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour, for which it picks two to four ink pens that draw the image's colours best. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
 - **Plot lint.** After every run the engine checks the drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, and marks off the page or the machine. Where a setting fixes one, it says which.
 - **Budgets.** Give a plot time, a path count, metres of pen-down line or a dot count, and plotline finds the value of the style's density setting, such as its line spacing, that meets it in up to eight runs.
 - **Short pen travel.** Every run orders its paths to keep the pen's travel short, and the line styles lift the pen far less often than `grid`.

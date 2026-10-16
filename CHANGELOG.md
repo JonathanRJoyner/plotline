@@ -29,7 +29,7 @@ A style switch keeps the settings you changed in the stages both styles share, P
 ### Images
 
 - PNG, JPEG and WebP input, colour or greyscale, with 16-bit greyscale for scans.
-- **Image analysis** measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. Each suggestion is a patch that is applied only on request.
+- **Image analysis** measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. For a colour image it picks two to four of the ten inks that draw its colours best under the colour model Pen use solves, and its suggestion sets those pens and Pen use to by colour. Each suggestion is a patch that is applied only on request.
 - **Auto levels:** the tone stage's `levels` setting can be `auto`, which sets black and white from the image's own percentiles.
 
 ### Output

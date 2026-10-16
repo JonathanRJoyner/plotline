@@ -1,6 +1,6 @@
 # plotline spec 13: pen and palette suggestions
 
-Date: 2026-10-16. Status: decided by the builder under the owner's standing delegation; written for review. Not built yet.
+Date: 2026-10-16. Status: decided by the builder under the owner's standing delegation; written for review.
 
 For a colour image, the analysis suggests a set of two to four pens from the ink list (`pens::INKS`), and Pen use set to by colour, as one suggestion with a patch. Today the `colour` suggestion is a note with no patch ("add pens in those colours"). This spec turns it into a change the user applies with one click, through the GUI's Apply, `plotline analyse` and MCP `analyse_image`.
 
