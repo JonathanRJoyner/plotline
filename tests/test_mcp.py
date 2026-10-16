@@ -146,8 +146,9 @@ async def test_run_and_preview(tmp_path):
         r = await call(c, "run", settings={"tone": {"resolution": 64}})
         assert not r.is_error
         stats = json.loads(r.content[0].text)
-        keys = {"path_count", "pen_down_mm", "pen_up_mm", "estimated_seconds", "lint"}
+        keys = {"path_count", "pen_down_mm", "pen_up_mm", "estimated_seconds", "tone", "lint"}
         assert set(stats) == keys and isinstance(stats["lint"], list)
+        assert set(stats["tone"]) == {"error", "ssim", "floor", "reach"}
         assert png(r.content[1]).startswith(b"\x89PNG")
 
         r = await call(c, "preview", region_mm=[0, 0, 50, 50], width_px=200)
@@ -179,6 +180,22 @@ async def test_fit_returns_the_value_and_the_curve():
         assert data(await call(c, "get_session"))["settings"]["waves"]["spacing_mm"] == 0.843
         r = await call(c, "fit", metric="dots", target=10)
         assert r.is_error and "places no dots" in text(r)
+
+
+async def test_optimize_suggests_a_density_and_changes_nothing():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        await call(c, "set_page", width_mm=100, height_mm=75, margin_mm=5)
+        settings = {"tone": {"resolution": 64}}
+        r = await call(c, "optimize", style="hatch", settings=settings)
+        assert not r.is_error, text(r)
+        found = json.loads(r.content[0].text)
+        assert (found["stage"], found["key"], found["current"]) == ("hatch", "spacing_mm", 1.0)
+        assert len(found["trials"]) == 8 and "tone" in json.loads(r.content[1].text)
+        assert data(await call(c, "get_session"))["settings"]["hatch"]["spacing_mm"] == 1.0
+        r = await call(c, "optimize", metric="minutes")
+        assert r.is_error and "both a metric and a target" in text(r)
 
 
 async def test_refused_setting_changes_nothing():
@@ -370,6 +387,7 @@ async def test_stdio_server_lists_the_tools():
         "set_pens",
         "run",
         "fit",
+        "optimize",
         "preview",
         "get_session",
         "load_preset",

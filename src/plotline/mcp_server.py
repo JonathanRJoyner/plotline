@@ -39,11 +39,13 @@ INSTRUCTIONS = (
     "then set_page and set_pens if the defaults do not fit, then list_styles and describe_style "
     "to choose a style and see its settings. Call analyse_image to see the image's statistics and "
     "suggested changes; apply a suggestion with run(style=..., settings=...) or set_page. run "
-    "draws the image and returns its stats, the plot lint's findings and a preview at true pen "
-    "width; apply a finding's patch the same way as a suggestion's. Look at the preview, "
-    "change settings with run(settings=...), and repeat; only the stages after a changed setting "
-    "run again. To meet a budget of plot time, paths, pen-down metres or dots, call fit, which "
-    "sets the style's density setting. Use preview with region_mm to inspect detail. export "
+    "draws the image and returns its stats, the tone match, the plot lint's findings and a "
+    "preview at true pen width; apply a finding's patch the same way as a suggestion's. Look at "
+    "the preview, change settings with run(settings=...), and repeat; only the stages after a "
+    "changed setting run again. To meet a budget of plot time, paths, pen-down metres or dots, "
+    "call fit, which sets the style's density setting. To make the drawing's tones follow the "
+    "image more closely, call optimize, which suggests a density, or set tone.response to auto. "
+    "Use preview with region_mm to inspect detail. export "
     "writes the result. All lengths are millimetres, the page origin is its top-left corner and y "
     "grows down. Paths must be absolute."
 )
@@ -239,10 +241,10 @@ def build_server(session: Session | None = None) -> MCPServer:
             return handle
 
     def shown() -> list[str | Image]:
-        """The result's stats, with the plot lint's findings under lint, as JSON and a preview
-        of it."""
+        """The result's stats, with the tone match under tone and the plot lint's findings under
+        lint, as JSON and a preview of it."""
         png = session.preview_png(_page_px(session))
-        result = {**asdict(session.stats()), "lint": session.lint()}
+        result = {**asdict(session.stats()), "tone": session.tone_match(), "lint": session.lint()}
         return [json.dumps(result), Image(data=png, format="png")]
 
     @server.tool()
@@ -253,8 +255,12 @@ def build_server(session: Session | None = None) -> MCPServer:
         reset: bool = False,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
-        px wide. The JSON's lint key lists physical problems with the drawing as {code, severity,
-        message, value, patch}; a patch applies like an analyse_image suggestion's. A style that
+        px wide. The JSON's tone key is {error, ssim, floor, reach}: how the drawing's tones,
+        seen through a 1.5 mm eye filter, follow the tone map, as the RMS error in tone-map ink
+        once the coverage is put on the tone map's scale (lower is closer) and the structural
+        similarity (1 is identical), or null when there is nothing to compare. Its lint key lists
+        physical problems with the drawing as {code, severity, message, value, patch}; a patch
+        applies like an analyse_image suggestion's. A style that
         differs from the current one replaces it; a stage the two styles share keeps the values
         changed from the old style's defaults, and the rest take the new style's defaults. reset
         puts every setting back to the style's defaults first. settings is {stage: {setting:
@@ -284,6 +290,30 @@ def build_server(session: Session | None = None) -> MCPServer:
             change(style, settings)
             handle = await follow(ctx, lambda: session.fit(metric, target))
             return [json.dumps(handle.fit), *shown()]
+
+    @server.tool()
+    async def optimize(
+        ctx: Context,
+        metric: Literal["minutes", "paths", "metres", "dots"] | None = None,
+        target: float | None = None,
+        style: str | None = None,
+        settings: dict[str, dict[str, Any]] | None = None,
+    ) -> list[str | Image]:
+        """Search the style's density setting for the value whose drawing's tones follow the
+        image most closely, by the tone match's error, in eight runs: the current value, then a
+        golden-section search from a quarter to four times it. Given metric and target, as for
+        fit, a trial over the target does not count. style and settings apply first, as in run.
+        Nothing else changes: returns {stage, key, value, error, current, current_error, budget,
+        trials, reason, patch} as JSON, or null when no trial stayed within the target, then the
+        stats and a preview of the current settings as run does. Apply the patch with
+        run(settings=patch["settings"]) if it suits; fidelity to the image is not always the
+        aim."""
+        with _errors():
+            if (metric is None) != (target is None):
+                raise ValueError("give both a metric and a target, or neither")
+            change(style, settings)
+            handle = await follow(ctx, lambda: session.optimize(metric, target))
+            return [json.dumps(handle.optimum), *shown()]
 
     @server.tool()
     async def preview(
