@@ -44,8 +44,9 @@ INSTRUCTIONS = (
     "change settings with run(settings=...), and repeat; only the stages after a changed setting "
     "run again. To meet a budget of plot time, paths, pen-down metres or dots, call fit, which "
     "sets the style's density setting. Use preview with region_mm to inspect detail. export "
-    "writes the result. All lengths are millimetres, the page origin is its top-left corner and y "
-    "grows down. Paths must be absolute."
+    "writes the result. set_machine describes a pen plotter or pen-fitted printer; export with "
+    "gcode then writes one file per pen. All lengths are millimetres, the page origin is its "
+    "top-left corner and y grows down. Paths must be absolute."
 )
 
 
@@ -59,6 +60,27 @@ class PenSpec(TypedDict):
     name: str
     width_mm: float
     color: str
+
+
+class AreaSpec(TypedDict):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class MachineSpec(TypedDict):
+    name: str
+    area: AreaSpec
+    z_down_mm: float
+    z_up_mm: float
+    z_safe_mm: float
+    draw_feed: float
+    travel_feed: float
+    z_feed: float
+    settle_ms: int
+    start_gcode: str
+    end_gcode: str
 
 
 @contextmanager
@@ -195,6 +217,36 @@ def build_server(session: Session | None = None) -> MCPServer:
             )
             return _array([asdict(pen) for pen in session.pens])
 
+    @server.tool()
+    async def set_machine(machine: MachineSpec | None) -> dict[str, Any]:
+        """Set the machine that G-code is written for, a pen plotter or a printer fitted with a
+        pen, or clear it with null. area is the part of the bed the pen may reach, {x, y, width,
+        height} in mm. z_down_mm is the height of the pen when it draws, z_up_mm its height when
+        it travels between paths and z_safe_mm the height it lifts to before the first move and
+        before end_gcode, all in mm. draw_feed, travel_feed and z_feed are the speeds for drawing,
+        travelling and Z moves, in mm per minute. settle_ms is the pause after each Z move.
+        start_gcode and end_gcode are lines written as they are after the setup and after the last
+        lift. The page becomes the area's width and height, with the margin and fit kept, so that
+        the drawing fits the machine; set_page can change it afterwards. The machine also sets
+        the plot speeds that the stats and the lint use. export with format gcode needs a
+        machine, and a result drawn before the page changed must run again first. When any part
+        is refused, nothing changes. Returns the machine and the page."""
+        with _errors():
+            old_machine, old_speeds = session.machine, session.speeds
+            try:
+                session.set_machine(cast("dict[str, Any] | None", machine))
+                if machine is not None:
+                    area = machine["area"]
+                    page = replace(session.canvas, width_mm=area["width"], height_mm=area["height"])
+                    session.set_canvas(page)
+            except Exception:
+                # A refused machine or page changes nothing in the engine; only the machine, which
+                # went in first, and the speeds that came with it need to be put back.
+                session.set_machine(old_machine)
+                session.speeds = old_speeds
+                raise
+            return {"machine": session.machine, "page": asdict(session.canvas)}
+
     def change(
         style: str | None, settings: dict[str, dict[str, Any]] | None, reset: bool = False
     ) -> None:
@@ -324,6 +376,7 @@ def build_server(session: Session | None = None) -> MCPServer:
                 "settings": session.settings,
                 "page": asdict(session.canvas),
                 "pens": [asdict(pen) for pen in session.pens],
+                "machine": session.machine,
                 "image": _image_size(session),
                 "state": session.state.value,
                 "stats": stats,
@@ -340,12 +393,22 @@ def build_server(session: Session | None = None) -> MCPServer:
 
     @server.tool()
     async def export(
-        path: str, format: Literal["svg", "json", "png", "preset"], overwrite: bool = False
+        path: str,
+        format: Literal["svg", "json", "png", "preset", "gcode"],
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         """Write the result as svg, json (the paths) or png (a preview), or the settings as a
-        preset, to the absolute path. A file that exists is kept unless overwrite is true."""
+        preset, to the absolute path. A file that exists is kept unless overwrite is true. With
+        format gcode the path is a folder, made if it is missing, and the result is written into
+        it as one file per pen, plot_1_<pen>.gcode and so on, for the machine from set_machine;
+        if any of those files exists, none is written unless overwrite is true. Returns the path
+        and size of each file for gcode, and the size of the file for the other formats."""
         with _errors():
             p = _absolute(path)
+            if format == "gcode":
+                files = session.export_gcode(p, overwrite=overwrite)
+                sizes = [{"path": str(f), "bytes": f.stat().st_size} for f in files]
+                return {"path": str(p), "format": format, "files": sizes}
             if p.exists() and not overwrite:
                 raise ValueError(f"{p} exists; pass overwrite=true to replace it")
             if format == "svg":

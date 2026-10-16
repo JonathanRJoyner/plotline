@@ -8,6 +8,7 @@ from functools import partial
 
 import anyio
 import pytest
+from machines import MACHINE
 from mcp import Client, StdioServerParameters
 from pngs import write_png
 
@@ -79,6 +80,87 @@ async def test_refused_values_are_tool_errors():
         assert r.is_error
         assert "width_mm" in text(r)
         assert (await call(c, "set_pens", pens=[])).is_error
+
+
+async def test_set_machine_sets_the_page_and_clears():
+    async with Client(build_server(Session())) as c:
+        await call(c, "set_page", width_mm=300, height_mm=300, margin_mm=7, fit="fill")
+        r = await call(c, "set_machine", machine=MACHINE)
+        assert not r.is_error, text(r)
+        page = {"width_mm": 200, "height_mm": 174, "margin_mm": 7, "fit": "fill"}
+        assert data(r) == {"machine": MACHINE, "page": page}
+        s = data(await call(c, "get_session"))
+        assert (s["machine"], s["page"]) == (MACHINE, page)
+
+        r = await call(c, "set_machine", machine=None)
+        assert data(r) == {"machine": None, "page": page}  # the page stays
+        assert data(await call(c, "get_session"))["machine"] is None
+
+
+async def test_a_refused_machine_changes_nothing():
+    session = Session()
+    async with Client(build_server(session)) as c:
+        before = data(await call(c, "get_session"))
+        assert before["machine"] is None
+
+        # The machine is refused, with no machine before and with one.
+        bad = {**MACHINE, "z_up_mm": 2}
+        for first in (None, MACHINE):
+            await call(c, "set_machine", machine=first)
+            before = data(await call(c, "get_session"))
+            r = await call(c, "set_machine", machine=bad)
+            assert r.is_error
+            assert "z_up_mm" in text(r)
+            assert data(await call(c, "get_session")) == before
+
+        # The page is refused: a margin of 90 mm leaves no height in the machine's 174 mm.
+        await call(c, "set_machine", machine=None)
+        await call(c, "set_page", width_mm=300, height_mm=300, margin_mm=90)
+        before, speeds = data(await call(c, "get_session")), session.speeds
+        r = await call(c, "set_machine", machine=MACHINE)
+        assert r.is_error
+        assert data(await call(c, "get_session")) == before
+        assert session.speeds == speeds
+
+
+async def test_export_gcode(tmp_path):
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    out = tmp_path / "gcode"
+    async with Client(build_server(session)) as c:
+        r = await call(c, "export", path=str(out), format="gcode")
+        assert r.is_error
+        assert "run the style first" in text(r)
+
+        settings = {"tone": {"resolution": 64}, "points": {"spacing_mm": 5}}
+        assert not (await call(c, "run", settings=settings)).is_error
+        r = await call(c, "export", path=str(out), format="gcode")
+        assert r.is_error
+        assert "machine" in text(r)
+        assert not out.exists()
+
+        # The result keeps the page it was drawn on, so it must run again on the machine's.
+        assert not (await call(c, "set_machine", machine=MACHINE)).is_error
+        r = await call(c, "export", path=str(out), format="gcode")
+        assert r.is_error
+        assert "larger than the machine" in text(r)
+        assert not (await call(c, "run")).is_error
+        r = await call(c, "export", path=str(out), format="gcode")
+        assert not r.is_error, text(r)
+        file = out / "plot_1_Black_0.3.gcode"
+        assert "G1 Z4 F1200" in file.read_text(encoding="utf-8")
+        files = [{"path": str(file), "bytes": file.stat().st_size}]
+        assert data(r) == {"path": str(out), "format": "gcode", "files": files}
+
+        # The folder exists now, and the file with it.
+        file.write_text("kept", encoding="utf-8")
+        r = await call(c, "export", path=str(out), format="gcode")
+        assert r.is_error
+        assert "plot_1_Black_0.3.gcode" in text(r)
+        assert file.read_text(encoding="utf-8") == "kept"
+        r = await call(c, "export", path=str(out), format="gcode", overwrite=True)
+        assert not r.is_error, text(r)
+        assert "G1 Z4 F1200" in file.read_text(encoding="utf-8")
 
 
 async def test_file_paths(tmp_path, monkeypatch):
@@ -368,6 +450,7 @@ async def test_stdio_server_lists_the_tools():
         "analyse_image",
         "set_page",
         "set_pens",
+        "set_machine",
         "run",
         "fit",
         "preview",
