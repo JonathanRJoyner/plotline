@@ -7,15 +7,20 @@
 //! ([`crate::analysis::Suggestion`]), so the front ends apply both the same way. The thresholds
 //! are hand-set taste defaults, recorded in the brief.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::coverage::{self, Coverage};
 use crate::machine::Machine;
-use crate::stats::{self, Speeds};
+use crate::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
+use crate::stages::order::OrderStage;
+use crate::stats::{self, Speeds, Stats};
 use crate::style::Style;
 use crate::tone_match::{self, ToneMatch};
-use crate::types::{Drawing, Paths, Pen};
+use crate::types::{Drawing, Layer, Paths, Pen};
 
 /// A pen passing a spot this often risks the paper; over `OVERDRAW_SHARE` of the inked cells
 /// passed that often is overdraw. Two passes are normal where hatching crosses and fill rings meet.
@@ -245,6 +250,47 @@ impl Context<'_> {
 
 const SPACING: &[&str] = &["spacing_mm", "min_spacing_mm"];
 
+/// The share of the plot time `st` spends on pen-up travel.
+fn travel_share(st: &Stats, speeds: Speeds) -> f64 {
+    st.pen_up_mm / speeds.travel_mm_s / st.estimated_seconds
+}
+
+/// The travel share of `d` once the ordering stage has put every layer in nearest-neighbour order.
+/// With `optimize` off the stage keeps the paths of a layer in input order, and `d` holds exactly
+/// those, so this is the drawing that turning `optimize` on would make. `None` if the stage fails.
+fn optimized_travel_share(d: &Drawing, speeds: Speeds) -> Option<f64> {
+    let settings = json!({"optimize": true, "min_length_mm": 0});
+    let canvas = Arc::new(d.canvas.clone());
+    let layers = (d.layers.iter())
+        .map(|layer| {
+            let inputs = Inputs::new(HashMap::from([
+                (Kind::Paths, Artifact::Paths(Arc::new(layer.paths.clone()))),
+                (Kind::Canvas, Artifact::Canvas(canvas.clone())),
+            ]));
+            let ctx = RunContext::new(Arc::default());
+            let mut run = OrderStage.start(inputs, &settings, ctx).ok()?;
+            let paths = loop {
+                match run.step().ok()? {
+                    Step::Frame(_) => {}
+                    Step::Done(Artifact::Paths(p)) => break p,
+                    Step::Done(_) => return None,
+                }
+            };
+            Some(Layer {
+                pen: layer.pen.clone(),
+                paths: Arc::unwrap_or_clone(paths),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let ordered = Drawing {
+        canvas: d.canvas.clone(),
+        layers,
+        tone: None,
+        preset: None,
+    };
+    Some(travel_share(&stats::compute(&ordered, speeds), speeds))
+}
+
 /// The findings for drawing `d` and its measurement `m`, given the session's current style,
 /// settings, pens, speeds and machine, in a fixed order. See the plot lint spec for the rules.
 pub fn check(
@@ -404,7 +450,7 @@ pub fn check(
             );
             add("lifts", Severity::Info, message, lifts, None);
         }
-        let travel = st.pen_up_mm / speeds.travel_mm_s / st.estimated_seconds;
+        let travel = travel_share(&st, speeds);
         if travel > TRAVEL_SHARE {
             let optimized = cx.settings["order"]["optimize"] != false;
             let mut message = format!(
@@ -414,9 +460,14 @@ pub fn check(
             let (severity, patch) = if optimized {
                 (Severity::Info, None)
             } else {
-                message += " Path order's optimize setting cuts it.";
-                let patch = json!({"settings": {"order": {"optimize": true}}});
-                (Severity::Warning, Some(patch))
+                // The order may already be the nearest-neighbour one, so offer the setting only
+                // when it cuts the travel.
+                let cuts = optimized_travel_share(d, speeds).is_some_and(|share| share < travel);
+                let patch = cuts.then(|| {
+                    message += " Path order's optimize setting cuts it.";
+                    json!({"settings": {"order": {"optimize": true}}})
+                });
+                (Severity::Warning, patch)
             };
             add("travel", severity, message, travel, patch);
         }
@@ -454,7 +505,7 @@ pub fn check(
                 idle.join(", ")
             );
             add(
-                "unused_pens",
+                "idle_pens",
                 Severity::Info,
                 message,
                 idle.len() as f64,
@@ -704,6 +755,53 @@ mod tests {
     }
 
     #[test]
+    fn travel_offers_optimize_only_when_the_order_would_cut_it() {
+        let stroke = |x: f64, y: f64, dx: f64| vec![[x, y], [x + dx, y]];
+        let travel = |paths| {
+            let d = page(paths);
+            let all = lint(&d, "hatch", |s| s["order"]["optimize"] = json!(false));
+            find(&all, "travel").unwrap().clone()
+        };
+        // Already in nearest-neighbour order from the corner: the setting changes nothing.
+        let in_order = travel(vec![stroke(0.5, 0.5, 2.5), stroke(50.0, 50.0, 3.0)]);
+        assert_eq!(
+            (in_order.severity, &in_order.patch),
+            (Severity::Warning, &None)
+        );
+        assert!(
+            !in_order.message.contains("optimize"),
+            "{}",
+            in_order.message
+        );
+        // The far stroke comes second, though the middle one is nearer.
+        let shuffled = travel(vec![
+            stroke(0.5, 0.5, 2.5),
+            stroke(99.0, 99.0, -2.5),
+            stroke(50.0, 50.0, 3.0),
+        ]);
+        let patch = json!({"settings": {"order": {"optimize": true}}});
+        assert_eq!(shuffled.patch, Some(patch));
+        assert!(
+            shuffled.message.contains("optimize"),
+            "{}",
+            shuffled.message
+        );
+    }
+
+    #[test]
+    fn the_travel_share_lint_predicts_is_the_one_after_its_patch() {
+        let mut s = session(false, "hatch", json!({"order": {"optimize": false}}));
+        draw(&mut s);
+        let found = s.lint().unwrap();
+        let patch = find(&found, "travel").unwrap().patch.clone().unwrap();
+        let predicted = optimized_travel_share(&s.drawing().unwrap(), s.speeds()).unwrap();
+        assert!(predicted < find(&found, "travel").unwrap().value);
+        s.update("order", &patch["settings"]["order"]).unwrap();
+        draw(&mut s);
+        assert_eq!(travel_share(&s.stats().unwrap(), s.speeds()), predicted);
+    }
+
+    #[test]
     fn segments_finer_than_the_pen_are_needless() {
         let line = |step: f64| vec![(0..2000).map(|i| [10.0 + i as f64 * step, 50.0]).collect()];
         let all = lint(&page(line(0.02)), "hatch", |_| {});
@@ -742,9 +840,12 @@ mod tests {
             paths: Paths::new(),
         });
         let found = all(&d, &settings);
-        let unused = find(&found, "unused_pens").unwrap();
+        let idle = find(&found, "idle_pens").unwrap();
         let message = "These pens draw nothing at these settings: Red.";
-        assert_eq!((unused.message.as_str(), &unused.patch), (message, &None));
+        assert_eq!((idle.message.as_str(), &idle.patch), (message, &None));
+        // The one-pen note and the idle note never stand together, so the note's patch cannot
+        // leave the same code behind.
+        assert!(find(&found, "unused_pens").is_none());
     }
 
     #[test]

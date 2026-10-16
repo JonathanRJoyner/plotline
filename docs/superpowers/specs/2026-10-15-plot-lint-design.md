@@ -65,9 +65,10 @@ Overdraw counts one pen against itself, because pens that share a drawing overla
 | `specks` | warning | at least 10 paths, and 1 % of the paths, are shorter than their pen width, in a drawing where dots are under half the paths | `order.min_length_mm` set to the widest pen's width |
 | `dark` | info | the dark coverage is under 0.35, and `empty` did not fire | the spacing lowered in proportion to reach about 0.5, no closer than the widest pen; else a point count (`count`) or stroke budget (`max_lines`) raised in proportion; else none |
 | `lifts` | info | pen lifts take over half the estimated plot time | none: the message names a long-stroke style |
-| `travel` | warning with `order.optimize` off, info with it on | pen-up travel takes over 30 % of the estimated plot time | `order.optimize` on when it is off |
+| `travel` | warning with `order.optimize` off, info with it on | pen-up travel takes over 30 % of the estimated plot time | `order.optimize` on when it is off and the nearest-neighbour order of each layer, worked out by the ordering stage, gives a lower travel share; else none |
 | `vertices` | info | in some layer with at least 1000 segments, over half are shorter than an eighth of its pen width | none |
-| `unused_pens` | info | Pen use is one pen and there are more pens; or some pen's layer has no paths | Pen use set to light to dark in the first case; none in the second |
+| `unused_pens` | info | Pen use is one pen and there are more pens | Pen use set to light to dark |
+| `idle_pens` | info | Pen use is not one pen and some pen's layer has no paths | none |
 
 The messages are English sentences with the measured numbers in them, written for a person and read by the assistant as well. `value` is the number the rule tests: the spacing, the overdrawn share, the dark coverage, a time share, a count.
 
