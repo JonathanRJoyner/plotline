@@ -11,8 +11,9 @@ export type Step = { target?: string; title: string; text: string };
 export const STEPS: Step[] = [
   { title: "Welcome to plotline", text: "plotline turns an image into lines a pen plotter can draw. This tour shows where everything is. Tour in the toolbar opens it again." },
   { target: "image", title: "Open an image", text: "Open a PNG, JPEG or WebP, or drop or paste one anywhere on the page. Sample image opens a still life to try things on." },
-  { target: "style", title: "Pick a style", text: "Each style turns the image's tone into a different kind of mark. The line under the menu says what the chosen one does." },
+  { target: "style", title: "Pick a style", text: "Each style turns the image's tone into a different kind of mark. The line under the menu says what the chosen one does. A switch keeps the settings you changed wherever the new style has them, so the Voronoi styles reuse their points without placing them again." },
   { target: "styles", title: "Try every style", text: "Try all styles draws every style small on your image, page and pens, so you can choose by eye. Click a picture to switch to that style. Closing the window stops the drawing and leaves your own drawing as it was." },
+  { target: "reset", title: "Start over", text: "Reset to defaults puts every setting of the chosen style back to its default, Pen use included. The image, page and pens stay as they are, and Undo takes the reset back." },
   { target: "settings", title: "Shape the drawing", text: "The style's own settings come first. Path order and Image, with the levels, gamma and blur, are collapsed below. A change reruns only the stages after it." },
   { target: "run", title: "Run it", text: "Run draws the image with these settings. Stop ends a run after its current step." },
   { target: "undo", title: "Undo a change", text: "Undo and Redo step back and forth through changes to the style, its settings, the page and the pens, so trying something costs nothing. Ctrl+Z and Ctrl+Shift+Z do the same, except while you type in a field." },

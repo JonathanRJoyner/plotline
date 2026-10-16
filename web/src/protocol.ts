@@ -22,7 +22,7 @@ export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
 // The commands that change what a drawing is made from: each one redraws once it succeeds.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "update", "loadPreset", "apply", "restore"]);
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "resetSettings", "update", "loadPreset", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
 
@@ -50,6 +50,7 @@ export class Protocol {
       setCanvas: (canvas: Canvas) => s.setCanvas(JSON.stringify(canvas)),
       setPens: (pens: Pen[]) => s.setPens(JSON.stringify(pens)),
       setStyle: (name: string) => s.setStyle(name),
+      resetSettings: () => s.resetSettings(),
       update: (stage: string, values: Record<string, unknown>) => s.update(stage, JSON.stringify(values)),
       // The session calls, not `methods`, so the whole patch redraws once. A refusal partway leaves
       // the earlier parts applied; only a stale suggestion can cause one.

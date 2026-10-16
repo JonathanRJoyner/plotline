@@ -197,13 +197,35 @@ impl Session {
         &self.style
     }
 
-    /// Switch to the built-in style called `name` and reset every stage to its defaults. The cache
-    /// is kept, so a stage the styles share, with the same settings and inputs, is not run again.
+    /// Switch to the built-in style called `name`. Every stage starts from the new style's
+    /// defaults, and a stage the old style also has keeps each value that differs from the old
+    /// style's default, so a style's own defaults still apply where the user changed nothing. A
+    /// stage name means one schema, so the kept values stay valid. The cache is kept, so a shared
+    /// stage with the same settings and inputs, such as the Voronoi points, is not run again.
     pub fn set_style(&mut self, name: &str) -> Result<(), SessionError> {
         let style = get_style(name).ok_or_else(|| SessionError::UnknownStyle(name.to_string()))?;
-        self.settings = style.defaults();
+        let old = self.style.defaults();
+        let mut settings = style.defaults();
+        for (stage, values) in settings.as_object_mut().expect("defaults are an object") {
+            let (Some(Value::Object(current)), Some(Value::Object(defaults))) =
+                (self.settings.get(stage), old.get(stage))
+            else {
+                continue;
+            };
+            for (key, value) in current {
+                if !defaults.get(key).is_some_and(|d| same(d, value)) {
+                    values[key] = value.clone();
+                }
+            }
+        }
+        self.settings = settings;
         self.style = style;
         Ok(())
+    }
+
+    /// Put every stage of the style, Pen use included, back to the style's defaults.
+    pub fn reset_settings(&mut self) {
+        self.settings = self.style.defaults();
     }
 
     /// Every stage's full settings object, keyed by stage name.
@@ -362,9 +384,9 @@ impl Session {
         )
     }
 
-    /// Apply the preset `v`: its style, which resets every stage to its defaults, its canvas, its
-    /// pens, then its settings stage by stage in the style's order, so a key the preset leaves out
-    /// keeps its default. Returns one warning for each setting a stage does not have, then one for
+    /// Apply the preset `v`: its style with every stage at its defaults, its canvas, its pens,
+    /// then its settings stage by stage in the style's order, so a key the preset leaves out
+    /// takes its default. Returns one warning for each setting a stage does not have, then one for
     /// each stage the style does not have, sorted by name; all of them are dropped.
     ///
     /// Fails before anything changes when [`presets::parse`] rejects `v`. An unknown style or a
@@ -373,6 +395,7 @@ impl Session {
     pub fn load_preset(&mut self, v: &Value) -> Result<Vec<String>, SessionError> {
         let data = presets::parse(v)?;
         self.set_style(&data.style)?;
+        self.reset_settings();
         self.set_canvas(data.canvas);
         self.set_pens(data.pens)?;
         self.set_machine(data.machine)?;
@@ -415,6 +438,15 @@ impl Session {
     /// Empty the stage cache.
     pub fn clear_cache(&mut self) {
         self.cache.lock().unwrap().clear();
+    }
+}
+
+/// Whether two setting values are equal, numbers by value: JavaScript writes `1.0` as `1`, which
+/// JSON reads as an integer.
+fn same(a: &Value, b: &Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
     }
 }
 
@@ -473,8 +505,41 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("its stages are tone, split, points, render, order"));
-        s.set_style("grid").unwrap();
-        assert_eq!(s.settings()["tone"]["resolution"], 1000);
+        s.set_style("grid").unwrap(); // the same style: nothing changes
+        assert_eq!(s.settings()["tone"]["resolution"], 128);
+        s.set_style("waves").unwrap();
+        s.update("split", &json!({"mode": "light_to_dark"}))
+            .unwrap();
+        s.reset_settings();
+        assert_eq!(s.settings(), &s.style().defaults());
+        assert_eq!(s.settings()["tone"]["gamma"], 1.9);
+    }
+    #[test]
+    fn a_switch_keeps_changed_values_and_takes_the_new_style_defaults() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("hatch").unwrap();
+        s.set_style("waves").unwrap();
+        assert_eq!(s.settings()["tone"]["gamma"], 1.9);
+        s.set_style("hatch").unwrap();
+        assert_eq!(s.settings()["tone"]["gamma"], 1.0);
+        // An integer equal to the default is no change; JavaScript sends 1.0 as 1.
+        s.update("tone", &json!({"gamma": 1})).unwrap();
+        s.set_style("waves").unwrap();
+        assert_eq!(s.settings()["tone"]["gamma"], 1.9);
+        s.update("tone", &json!({"gamma": 1.4})).unwrap();
+        s.update("split", &json!({"mode": "light_to_dark"}))
+            .unwrap();
+        s.set_style("hatch").unwrap();
+        assert_eq!(s.settings()["tone"]["gamma"], 1.4);
+        assert_eq!(s.settings()["split"]["mode"], "light_to_dark");
+        // A preset starts from its style's defaults, whatever the session held.
+        let mut v = Session::new(1 << 20).preset();
+        let stages = v["settings"].as_object_mut().unwrap();
+        stages.remove("tone");
+        stages.remove("split");
+        assert!(s.load_preset(&v).unwrap().is_empty());
+        assert_eq!(s.settings()["tone"]["gamma"], 1.0);
+        assert_eq!(s.settings()["split"]["mode"], "one_pen");
     }
     #[test]
     #[allow(clippy::len_zero)] // the brief's assertion, kept as written
@@ -547,6 +612,27 @@ mod tests {
         while r.next_frame().is_some() {}
         assert_eq!(s.state(), RunState::Done);
         s.set_style("line").unwrap();
+        let mut r = s.start().unwrap();
+        let mut voronoi = vec![];
+        while let Some(f) = r.next_frame() {
+            if f.stage == "voronoi" {
+                voronoi.push(f.label);
+            }
+        }
+        assert_eq!(s.state(), RunState::Done);
+        assert_eq!(voronoi, ["cached"]);
+    }
+    #[test]
+    fn a_changed_relaxation_survives_a_switch_to_line() {
+        let mut s = Session::new(256 << 20);
+        s.set_image(gradient(64, 48));
+        s.set_style("stipple").unwrap();
+        s.update("voronoi", &json!({"iterations": 5})).unwrap();
+        let mut r = s.start().unwrap();
+        while r.next_frame().is_some() {}
+        assert_eq!(s.state(), RunState::Done);
+        s.set_style("line").unwrap();
+        assert_eq!(s.settings()["voronoi"]["iterations"], 5);
         let mut r = s.start().unwrap();
         let mut voronoi = vec![];
         while let Some(f) = r.next_frame() {

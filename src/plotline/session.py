@@ -219,11 +219,16 @@ class Session:
         self._core.set_pens([asdict(pen) for pen in pens])
 
     def set_style(self, name: str) -> None:
-        """Switch to the built-in style called ``name`` and reset the settings to its defaults.
-        The cache is kept, so a stage that the styles share, with the same settings and
-        inputs, is not run again. Raises
-        ``ValueError`` for an unknown name."""
+        """Switch to the built-in style called ``name``. A stage that the old style also has
+        keeps each value changed from the old style's default; every other value takes the new
+        style's default. The cache is kept, so a shared stage with the same settings and inputs,
+        such as the Voronoi points, is not run again. Raises ``ValueError`` for an unknown
+        name."""
         self._core.set_style(name)
+
+    def reset_settings(self) -> None:
+        """Put every stage of the style, Pen use included, back to the style's defaults."""
+        self._core.reset_settings()
 
     def update(self, stage: str, **values: Any) -> None:
         """Change settings of one stage, leaving the rest as they were. The whole stage is

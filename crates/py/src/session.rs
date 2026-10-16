@@ -109,6 +109,10 @@ impl Session {
         self.inner.set_style(name).map_err(session_error)
     }
 
+    fn reset_settings(&mut self) {
+        self.inner.reset_settings();
+    }
+
     fn settings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         value_to_py(py, self.inner.settings())
     }

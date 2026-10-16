@@ -216,7 +216,12 @@ fn enum_values(prop: &Value, defs: &Value) -> Option<Vec<Value>> {
 /// The session is shared between draws, so its cache gives stages upstream of the change back
 /// instead of running them again, which matters for the relaxation of every Voronoi style.
 fn draw(s: &mut Session, style: &str, stage: &str, patch: &Value) -> Value {
-    s.set_style(style).unwrap(); // resets every stage to its defaults
+    s.set_style(style).unwrap();
+    // A switch keeps changed values, so put every stage back to its defaults first.
+    let defaults = s.style().defaults();
+    for (name, values) in defaults.as_object().unwrap() {
+        s.update(name, values).unwrap();
+    }
     s.update(stage, patch).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
