@@ -54,7 +54,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Plotter-ready output.** An SVG in millimetres holds one layer per pen that draws, each labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI, the command line and the MCP server write one G-code file per pen.
 - **Several pens.** Pen use shares a drawing between your pens: light to dark in list order, or each pen by its colour, so cyan, magenta, yellow and black pens can draw a colour image. By default the first pen draws alone.
 - **Real pens.** A bank of common fineliners, technical pens, gel pens, ballpoints and markers gives each pen its maker's line width, and a list of common inks gives it a colour.
-- **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a look and share it.
+- **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a look and share it. An exported SVG or JSON drawing carries the preset of the run that made it, and loads as a preset too.
 - **One engine.** The engine is written in Rust and compiled twice: to a native extension for the Python package, and to WebAssembly for the browser. The Python package and the command line are thin layers over it.
 
 | Style | What it draws |
@@ -121,7 +121,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Meet a budget of plot time, paths, pen-down metres or dots by changing the style's density setting | `--fit-minutes 60`, `--fit-paths 2000`, `--fit-metres 50` or `--fit-dots 20000` |
 | List a style's settings | `plotline describe grid` |
 | Save the run's look as a preset | `--save-preset my-look.json` |
-| Start a later run from a preset | `--preset my-look.json` |
+| Start a later run from a preset, or from an exported SVG or JSON drawing | `--preset my-look.json` or `--preset drawing.svg` |
 | See an image's statistics and suggested changes as JSON | `plotline analyse your-photo.jpg` |
 | Fail when the plot lint finds a warning or an error | `--strict` |
 | Draw for a machine: its drawable area becomes the page | `--machine my-printer.json`, a machine or a preset that has one |
