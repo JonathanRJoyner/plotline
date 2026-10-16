@@ -10,7 +10,7 @@ New entries go under Unreleased until the next release.
 
 ### Output
 
-- **Embedded presets:** an exported SVG or JSON drawing carries the preset of the run that made it, in a `<metadata>` element in the SVG and a `preset` key in the JSON. Load preset in the GUI, `--preset` on the command line, `Session.load_preset` and the MCP `load_preset` tool read such a file as a preset, so a drawing brings its look back.
+- **Embedded presets:** an exported SVG or JSON drawing carries the preset of the run that made it, in a `<metadata>` element in the SVG and a `preset` key in the JSON. Load preset in the GUI, `--preset` on the command line, `Session.load_preset` and the MCP `load_preset` tool read such a file as a preset, so a drawing brings its setup back.
 - **Pen lift by G-code lines:** a machine whose pen is lifted by a servo or a solenoid sets `pen_lift` to `gcode` and gives its own pen-down and pen-up lines, which the G-code writer puts where it would move Z. In the GUI, Settings > Pen lift > Lift by.
 - **Split moves:** a machine's `max_segment_mm` cuts every move into pieces no longer than it, for firmware that would draw a long straight move as a curve, as on a hanging plotter. In the GUI, Settings > G-code > Longest move.
 - Both are off by default: existing machines, presets and G-code are unchanged, and the preset version stays 3.
