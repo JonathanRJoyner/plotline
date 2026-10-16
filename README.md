@@ -35,13 +35,18 @@ plotline converts raster images into vector line art, such as stippling, single 
     <td align="center" valign="top"><img src="docs/images/spiral.png" alt="The still life drawn with the spiral style"><br><sub><b>spiral</b>: one rippling spiral</sub></td>
     <td align="center" valign="top"><img src="docs/images/ink.png" alt="The still life drawn with the ink style"><br><sub><b>ink</b>: dark areas as filled shapes, at threshold 0.3</sub></td>
   </tr>
+  <tr>
+    <td align="center" valign="top"><img src="docs/images/scribble.png" alt="The still life drawn with the scribble style"><br><sub><b>scribble</b>: loops along one line</sub></td>
+    <td align="center" valign="top"><img src="docs/images/mosaic.png" alt="The still life drawn with the mosaic style"><br><sub><b>mosaic</b>: patches of parallel lines</sub></td>
+    <td align="center" valign="top"><img src="docs/images/truchet.png" alt="The still life drawn with the truchet style"><br><sub><b>truchet</b>: nested arcs on tiles in random turns</sub></td>
+  </tr>
 </table>
 
 <p align="center"><sub>plotline drew every picture above with a 0.3 mm pen, from images it renders in code.</sub></p>
 
 ## Features
 
-- **Eighteen styles,** from dots on a grid to one continuous spiral. The table below describes each one.
+- **Twenty-one styles,** from dots on a grid to one continuous spiral. The table below describes each one, and the [style guide](docs/styles.md) shows each on the same picture with its settings and pen tips.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Suggestions.** The engine measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
 - **Plot lint.** After every run the engine checks the drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, and marks off the page or the machine. Where a setting fixes one, it says which.
@@ -60,6 +65,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `hatch` | Straight parallel lines over the dark areas, in three levels that cross over darker tones. |
 | `waves` | Parallel lines that ripple more where the image is darker, one pen stroke per line. |
 | `spiral` | One spiral from the centre out that ripples the same way. |
+| `truchet` | Quarter-circle arcs on square tiles in random turns, joining into winding curves, with more nested arcs where the image is darker. |
 | `ink` | Line art, lettering and inked drawings. It outlines every ink shape and fills it with rings, and draws strokes thinner than the pen once down the middle, so the drawing keeps its own shapes and weights. |
 | `stipple` | Points that spread evenly while staying dense in dark areas (weighted Voronoi relaxation), each drawn as a dot sized by the ink under it. |
 | `line` | The same points joined into one unbroken line that does not cross itself. |
@@ -67,6 +73,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `tree` | The points joined by the shortest tree. |
 | `mesh` | A triangle mesh over the points. |
 | `cells` | The outlines of the points' Voronoi cells. |
+| `scribble` | Loops traced along the one line through the points, small and close where the image is darker, wide and loose where it is lighter. |
 | `sketch` | Straight strokes chained from dark to dark, like a quick pencil sketch. |
 | `halftone` | Dots on a regular grid, each sized by the ink, like a printed halftone. |
 | `dither` | Dots placed by error diffusion. |
@@ -74,8 +81,9 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `contours` | Level lines of the image, like a topographic map. |
 | `flow` | Evenly spaced lines that follow the image's edges, closer together where it is darker. |
 | `hilbert` | One space-filling curve over the whole page that folds tighter where the image is darker. |
+| `mosaic` | The image cut into patches that follow its shapes, each filled with parallel lines at its own angle, closer together where it is darker. |
 
-`stipple`, `line`, `dashes`, `tree`, `mesh` and `cells` share one placement of points, so switching between them reuses the points. A style switch keeps the settings you changed wherever the new style has the same stage, Pen use included, and gives the rest the new style's defaults; Reset to defaults puts them all back.
+`stipple`, `line`, `dashes`, `tree`, `mesh`, `cells` and `scribble` share one placement of points, so switching between them reuses the points. A style switch keeps the settings you changed wherever the new style has the same stage, Pen use included, and gives the rest the new style's defaults; Reset to defaults puts them all back.
 
 ## In the browser
 

@@ -1,5 +1,5 @@
-//! Golden files: the grid, stipple and Hilbert curve styles' output on small synthetic images,
-//! compared to files in `crates/core/golden`.
+//! Golden files: the grid, stipple, Hilbert curve, scribble, mosaic and truchet styles' output on
+//! small synthetic images, compared to files in `crates/core/golden`.
 //!
 //! Only the coordinates are compared with a tolerance (1e-3 mm). Everything else must match
 //! exactly: every top-level key except `layers`, the number of layers, and the pen and the path
@@ -94,6 +94,31 @@ fn styles_match_golden_files() {
             "hilbert",
             gradient(64, 48),
             json!({"tone": {"resolution": 64}, "hilbert": {"cell_mm": 2.0}}),
+        ),
+        (
+            "scribble_gradient",
+            "scribble",
+            gradient(64, 48),
+            // Few points and wide spacings keep the file small; it pins the loops on the tour.
+            json!({
+                "tone": {"resolution": 64},
+                "voronoi": {"count": 100, "iterations": 10},
+                "scribble": {"radius_mm": 0.2, "white_radius_mm": 0.3, "spacing_mm": 10.0, "white_spacing_mm": 20.0, "flatten": 0.5, "tilt_deg": 30.0}
+            }),
+        ),
+        (
+            "mosaic_gradient",
+            "mosaic",
+            gradient(64, 48),
+            // A spacing of 0.8 mm keeps the file under 100 KB.
+            json!({"tone": {"resolution": 64}, "mosaic": {"spacing_mm": 0.8}}),
+        ),
+        (
+            "truchet_gradient",
+            "truchet",
+            gradient(64, 48),
+            // A few big tiles, so that the file stays small.
+            json!({"tone": {"resolution": 64}, "truchet": {"tile_mm": 20.0, "spacing_mm": 1.5}}),
         ),
     ];
     for (name, style, image, patch) in cases {

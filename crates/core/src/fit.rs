@@ -301,9 +301,10 @@ impl Solver {
 
     /// The next `u` while every sample lies on one side of the target: a secant step from the
     /// sample nearest the target, clamped to the range. From an empty drawing, halfway to the
-    /// range end that adds marks. When a sample already lies past the nearest one in the
-    /// direction that should bring the metric closer, the metric fell off a cliff between them,
-    /// as it cannot in a monotone curve, so the step goes halfway to it instead.
+    /// range end that adds marks. Samples as near as the nearest are a plateau, and the step
+    /// starts from its far end. When a sample already lies past the nearest one in the direction
+    /// that should bring the metric closer, the metric fell off a cliff between them, as it cannot
+    /// in a monotone curve, so the step goes halfway to it instead.
     fn outward(&self) -> f64 {
         let (lo, hi) = (ln(self.density.min), ln(self.density.max));
         let mut near: Vec<(f64, f64)> = (self.samples.iter())
@@ -317,13 +318,22 @@ impl Solver {
         }
         // Raising the metric means raising a direct setting and lowering an inverse one.
         let toward = if f0 < 0.0 { self.sign() } else { -self.sign() };
+        // A count stays put over a range of values, and stepping back across that plateau as if
+        // from a cliff stalled the search short of the target.
+        let along = |s: &&(f64, f64)| s.0 * toward;
+        let plateau = near.iter().filter(|s| s.1 == f0);
+        let (u0, f0) = *plateau
+            .max_by(|a, b| along(a).total_cmp(&along(b)))
+            .unwrap();
         let cliff = (near.iter())
             .filter(|&&(u, _)| (u - u0) * toward > 0.0)
             .min_by(|a, b| (a.0 - u0).abs().total_cmp(&(b.0 - u0).abs()));
         if let Some(&(u1, _)) = cliff {
             return (u0 + u1) / 2.0;
         }
-        let measured = near.get(1).map(|&(u1, f1)| (f0 - f1) / (u0 - u1));
+        let measured = (near.iter())
+            .find(|s| s.1 != f0)
+            .map(|&(u1, f1)| (f0 - f1) / (u0 - u1));
         let slope = match measured {
             Some(s) if s * self.sign() > 0.0 && (0.25..=4.0).contains(&s.abs()) => s,
             _ => self.sign(),
@@ -685,6 +695,22 @@ mod tests {
         assert_eq!(s.samples().len(), MAX_TRIALS);
         let near = |v: f64| (s.samples().iter()).any(|x| (x.value - v).abs() < 0.01);
         assert!(near(1.195) && near(1.205), "{:?}", s.samples());
+    }
+
+    #[test]
+    fn a_plateau_is_crossed_not_taken_for_a_cliff() {
+        // Paths come in whole numbers: 50 from a spacing of 2.3 to 2.5, 52 below it.
+        let steps = |v: f64| {
+            if v < 2.3 {
+                52.0
+            } else if v <= 2.5 {
+                50.0
+            } else {
+                17.0
+            }
+        };
+        let s = solve(density(false, 0.2, 10.0, false), 7.641, 52.0, steps);
+        assert_eq!(s.best().unwrap().metric, 52.0, "{:?}", s.samples());
     }
 
     #[test]

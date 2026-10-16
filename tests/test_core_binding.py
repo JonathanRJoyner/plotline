@@ -50,6 +50,9 @@ def test_styles_and_schema():
         "contours",
         "flow",
         "hilbert",
+        "scribble",
+        "mosaic",
+        "truchet",
     ]
     assert (
         _core.describe("grid")["stages"][0]["schema"]["properties"]["resolution"]["default"] == 1000

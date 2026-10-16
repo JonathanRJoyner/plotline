@@ -13,14 +13,17 @@ use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
 use crate::stages::hilbert::HilbertStage;
 use crate::stages::ink::InkStage;
+use crate::stages::mosaic::MosaicStage;
 use crate::stages::order::OrderStage;
 use crate::stages::poisson::PoissonPlacer;
+use crate::stages::scribble::ScribbleStage;
 use crate::stages::sketch::SketchStage;
 use crate::stages::slow::{SlowPaths, SlowPoint};
 use crate::stages::spiral::SpiralStage;
 use crate::stages::split::SplitStage;
 use crate::stages::stipple::StippleRenderer;
 use crate::stages::tone::ToneStage;
+use crate::stages::truchet::TruchetStage;
 use crate::stages::tsp::TspRenderer;
 use crate::stages::voronoi::VoronoiPlacer;
 use crate::stages::waves::WaveStage;
@@ -155,6 +158,27 @@ pub fn line_style() -> Style {
     )
 }
 
+/// Loops traced along the one line through evenly spread points: tone, split, voronoi, tsp,
+/// scribble, order. The first four stages have the defaults of `line`, so a switch reuses its
+/// points and its tour.
+pub fn scribble_style() -> Style {
+    Style::new(
+        "scribble",
+        "Scribble",
+        "Loops traced along one line through the points, small and close where the image is dark, \
+         wide and loose where it is light.",
+        vec![
+            Arc::new(ToneStage),
+            Arc::new(SplitStage),
+            Arc::new(VoronoiPlacer),
+            Arc::new(TspRenderer),
+            Arc::new(ScribbleStage),
+            Arc::new(OrderStage),
+        ],
+    )
+    .expect("the scribble style is valid")
+}
+
 /// Short strokes that follow the image's edges: tone, split, voronoi, dashes, order.
 pub fn dashes_style() -> Style {
     point_style(
@@ -281,6 +305,30 @@ pub fn hilbert_style() -> Style {
     )
 }
 
+/// The image cut into patches, each filled with lines at its own angle: tone, split, mosaic, order.
+pub fn mosaic_style() -> Style {
+    tone_style(
+        "mosaic",
+        "Mosaic",
+        "The image cut into patches that follow its shapes, each filled with parallel lines at its \
+         own angle, closer together where it is darker.",
+        Arc::new(MosaicStage),
+    )
+    .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
+}
+
+/// Quarter-circle arcs on tiles in random turns, nested more deeply where it is darker, joined into
+/// curves: tone, split, truchet, order.
+pub fn truchet_style() -> Style {
+    tone_style(
+        "truchet",
+        "Truchet tiles",
+        "Quarter-circle arcs on square tiles in random turns, joining into winding curves, with \
+         more nested arcs where the image is darker.",
+        Arc::new(TruchetStage),
+    )
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -314,6 +362,9 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(contours_style()),
         Arc::new(flow_style()),
         Arc::new(hilbert_style()),
+        Arc::new(scribble_style()),
+        Arc::new(mosaic_style()),
+        Arc::new(truchet_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -372,7 +423,7 @@ mod tests {
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
                 "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
-                "hilbert"
+                "hilbert", "scribble", "mosaic", "truchet"
             ]
         );
         assert!(get_style("_slow").is_some());
@@ -447,6 +498,7 @@ mod tests {
         let gamma = |name: &str| get_style(name).unwrap().defaults()["tone"]["gamma"].clone();
         assert_eq!(gamma("waves"), json!(1.9));
         assert_eq!(gamma("spiral"), json!(1.9));
+        assert_eq!(gamma("mosaic"), json!(1.9));
         assert_eq!(gamma("hatch"), json!(1.0));
         assert_eq!(gamma("grid"), json!(1.0));
     }
@@ -518,11 +570,14 @@ mod tests {
         // Equal settings give equal cache keys, so switching between these styles at their
         // defaults reuses the points.
         let first = get_style("stipple").unwrap().defaults();
-        for name in ["line", "dashes", "tree", "mesh", "cells"] {
+        for name in ["line", "dashes", "tree", "mesh", "cells", "scribble"] {
             let d = get_style(name).unwrap().defaults();
             assert_eq!(d["tone"], first["tone"], "{name}");
             assert_eq!(d["voronoi"], first["voronoi"], "{name}");
         }
+        // The scribble follows the tour of `line`, so a switch between them reuses that too.
+        let tour = |name: &str| get_style(name).unwrap().defaults()["tsp"].clone();
+        assert_eq!(tour("scribble"), tour("line"));
     }
     /// Prints the time of `stipple` and `line` at their defaults on a 1000 by 750 radial image.
     /// Run with `cargo test --release -p plotline-core --lib default_timings -- --ignored

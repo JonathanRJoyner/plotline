@@ -143,10 +143,40 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "used only when levels is auto, which is off by default",
     ),
     (
+        "scribble",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
+        "mosaic",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
+        "truchet",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
+        "truchet",
+        "tone",
+        "resolution",
+        "a tile's arc count is rounded from the mean of 16 samples of its ink, and resampling the 64 by 48 noise image to 2500 pixels instead of 1000 moves none of those means across a rounding point",
+    ),
+    (
         "line",
         "order",
         "min_length_mm",
         "the one line runs through every point, far longer than the 5 mm it is tested at",
+    ),
+    (
+        "scribble",
+        "order",
+        "min_length_mm",
+        "the one scribble runs along the line through every point, far longer than the 5 mm it is tested at",
     ),
     (
         "sketch",

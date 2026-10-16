@@ -118,7 +118,7 @@ pub fn clamp_to(rect: [f64; 4], p: [f64; 2]) -> [f64; 2] {
 }
 
 /// The part of the line `o * normal + t * dir` inside `rect`, as a `t` interval, or `None`.
-fn clip(rect: [f64; 4], o: f64, dir: [f64; 2], normal: [f64; 2]) -> Option<(f64, f64)> {
+pub(super) fn clip(rect: [f64; 4], o: f64, dir: [f64; 2], normal: [f64; 2]) -> Option<(f64, f64)> {
     let [x, y, w, h] = rect;
     let (mut t0, mut t1) = (f64::NEG_INFINITY, f64::INFINITY);
     for (lo, hi, base, d) in [
