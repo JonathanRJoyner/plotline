@@ -190,6 +190,20 @@ impl Session {
         self.canvas = c;
     }
 
+    /// The share `[x, y]` of the source image, from its top-left corner, under the page point
+    /// `mm`; see [`Canvas::image_point`]. `None` without an image or where the page shows none.
+    pub fn image_point(&self, mm: [f64; 2]) -> Option<[f64; 2]> {
+        let image = self.image.as_ref()?;
+        self.canvas.image_point(mm, image.width, image.height)
+    }
+
+    /// The page point in mm where the share `[x, y]` of the source image is drawn; see
+    /// [`Canvas::page_point`]. `None` without an image.
+    pub fn page_point(&self, share: [f64; 2]) -> Option<[f64; 2]> {
+        let image = self.image.as_ref()?;
+        Some(self.canvas.page_point(share, image.width, image.height))
+    }
+
     /// The pens, in drawing order.
     pub fn pens(&self) -> &[Pen] {
         &self.pens
