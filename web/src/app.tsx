@@ -128,11 +128,29 @@ function keepHelp(on: boolean) {
   } catch { /* ignored */ }
 }
 
-type ExportProps = { status: StatusStore; machine: boolean; onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void };
+// The plotter units to the millimetre of the HPGL export, kept like the theme. HPGL's own unit is
+// 0.025 mm, which is 40 to the mm. Missing storage, or a value that is no number above 0, gives 40.
+const HPGL_UNITS = "plotline.hpglUnits";
+const DEFAULT_HPGL_UNITS = 40;
+function savedHpglUnits(): number {
+  try {
+    const n = Number(localStorage.getItem(HPGL_UNITS));
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_HPGL_UNITS;
+  } catch {
+    return DEFAULT_HPGL_UNITS;
+  }
+}
+function keepHpglUnits(n: number) {
+  try {
+    localStorage.setItem(HPGL_UNITS, String(n));
+  } catch { /* ignored */ }
+}
 
-function Export({ status, machine, onExport, onGcode }: ExportProps) {
+type ExportProps = { status: StatusStore; machine: boolean; onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void };
+
+function Export({ status, machine, onExport, onHpgl, onGcode }: ExportProps) {
   const { stats, layers } = useStatus(status);
-  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onGcode={onGcode} />;
+  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onHpgl={onHpgl} onGcode={onGcode} />;
 }
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
@@ -282,6 +300,7 @@ export function App() {
   const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
   const [hidden, setHidden] = useState(new Set<number>());
   const [help, setHelp] = useState(helpShown);
+  const [hpglUnits, setHpglUnits] = useState(savedHpglUnits);
   const [settingsOpens, setSettingsOpens] = useState(0);
   const [pensOpens, setPensOpens] = useState(0);
   const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
@@ -441,6 +460,11 @@ export function App() {
     if (text !== undefined) download(`plotline-${state?.style ?? "drawing"}.${format}`, text, format === "svg" ? "image/svg+xml" : "application/json");
   }
 
+  async function exportHpgl() {
+    const text = await call<string>("hpgl", [hpglUnits]);
+    if (text !== undefined) download("drawing.hpgl", text, "text/plain");
+  }
+
   async function exportGcode(layer: number) {
     const text = await call<string>("gcode", [layer]);
     const pen = (status.value.layers[layer]?.name ?? String(layer + 1)).replace(/[^\w.-]+/g, "_");
@@ -544,12 +568,13 @@ export function App() {
         >
           <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
         </PensPanel>
-        <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
+        <Export status={status} machine={state.machine !== null} onExport={exportAs} onHpgl={exportHpgl} onGcode={exportGcode} />
         <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
       </aside>
       <SettingsDialog
         opens={settingsOpens} machine={state.machine} error={errors.machine} speeds={state.speeds} onPick={pickMachine}
         onEdit={(m) => call("setMachine", [m], "machine")} onSpeeds={(s) => call("setSpeeds", [s])}
+        hpglUnits={hpglUnits} onHpglUnits={(n) => { setHpglUnits(n); keepHpglUnits(n); }}
       />
       <PensDialog
         opens={pensOpens} pens={state.pens} bank={bank} inks={inks} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}

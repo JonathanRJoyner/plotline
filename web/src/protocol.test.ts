@@ -215,6 +215,20 @@ test("gcode needs a drawing, whose layers the state lists", async () => {
   expect(ok("gcode", 0).value as string).toContain("G1 Z4 F1200");
 });
 
+test("hpgl needs a drawing but no machine, and a resolution above 0", async () => {
+  const { call, ok, ended } = setup();
+  ok("setCanvas", { width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" });
+  expect(call("hpgl", 40).ok).toBe(false);
+  ok("update", "tone", { resolution: 64 });
+  ok("setImage", ...image());
+  await ended(1);
+  const text = ok("hpgl", 40).value as string;
+  expect(text.startsWith("IN;\nSP1;\nPU")).toBe(true);
+  expect(text.endsWith("PU;\nSP0;\n")).toBe(true);
+  expect(ok("hpgl", 10).value).not.toBe(text);
+  expect(call("hpgl", 0).ok).toBe(false);
+});
+
 test("the lint findings come with the end event and the state, and their patches apply", async () => {
   const { posted, ok, ended } = setup();
   expect(ok("preset").state.lint).toEqual([]);

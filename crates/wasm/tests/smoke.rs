@@ -163,6 +163,21 @@ fn machines_and_gcode() {
     assert!(s.machine().is_none());
 }
 #[wasm_bindgen_test]
+fn hpgl_is_one_program_without_a_machine() {
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(64, 48, &plotline_wasm::synthetic_gradient(64, 48))
+        .unwrap();
+    s.set_canvas(r#"{"width_mm":100,"height_mm":75,"margin_mm":5,"fit":"fit"}"#)
+        .unwrap();
+    s.update("tone", r#"{"resolution":64}"#).unwrap();
+    assert!(s.hpgl(40.0).is_err());
+    let mut run = s.start().unwrap();
+    while run.next_frame().is_some() {}
+    let h = s.hpgl(40.0).unwrap();
+    assert!(h.starts_with("IN;\nSP1;\nPU") && h.ends_with("PU;\nSP0;\n"));
+    assert!(s.hpgl(0.0).is_err());
+}
+#[wasm_bindgen_test]
 fn still_life_analysis_matches_native() {
     // The same literals are pinned in crates/core/src/session.rs on the native target.
     let still_life = plotline_core::synthetic::still_life(600, 875);

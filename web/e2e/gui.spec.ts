@@ -322,6 +322,37 @@ test("a machine lifted by G-code lines writes them, with long moves cut", async 
   expect(longer).toEqual([]);
 });
 
+test("HPGL exports one file with a pen for the layer, at the resolution in Settings", async ({ page }) => {
+  await sample(page);
+  const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "HPGL", exact: true }).click()]);
+  const text = readFileSync(await file.path(), "utf8");
+  expect(text.startsWith("IN;\n")).toBe(true);
+  expect(text).toContain("SP1;");
+  expect(text.endsWith("PU;\nSP0;\n")).toBe(true);
+  // A quarter of the units to the mm gives a smaller file, and a value that is no use snaps back.
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("button", { name: "HPGL", exact: true }).click();
+  const units = dialog.getByRole("spinbutton", { name: /^Plotter units per mm/ });
+  await expect(units).toHaveValue("40");
+  await units.fill("0");
+  await units.blur();
+  await expect(units).toHaveValue("40");
+  await units.fill("10");
+  await units.blur();
+  await expect(units).toHaveValue("10");
+  await dialog.getByRole("button", { name: "Close" }).click();
+  const [coarser] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "HPGL", exact: true }).click()]);
+  const small = readFileSync(await coarser.path(), "utf8");
+  expect(small.length).toBeLessThan(text.length);
+  // Kept in the browser, so a reload keeps it.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await dialog.getByRole("button", { name: "HPGL", exact: true }).click();
+  await expect(units).toHaveValue("10");
+});
+
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.
 const STEPS = [...readFileSync(new URL("../src/tour.tsx", import.meta.url), "utf8").matchAll(/\{ (?:target: "([^"]+)", )?title: "([^"]+)"/g)]
   .map(([, target, title]) => ({ target, title }));
