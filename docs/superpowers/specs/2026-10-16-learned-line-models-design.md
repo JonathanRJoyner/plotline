@@ -13,7 +13,7 @@ The work has two parts, built in this order:
 
 ## Measurements
 
-A throwaway spike on 2026-10-16 converted two published models to ONNX and ran them with tract 0.21 (MIT or Apache-2.0) in release builds, natively and in WebAssembly under Node. The input was the still life rendered in code.
+A throwaway spike on 2026-10-16 converted two published models to ONNX and ran them with tract 0.23 (MIT or Apache-2.0) in release builds, natively and in WebAssembly under Node. The input was the still life rendered in code.
 
 | Model, input | WebAssembly with SIMD | WebAssembly without SIMD | Peak memory |
 |---|---|---|---|
@@ -27,17 +27,20 @@ A throwaway spike on 2026-10-16 converted two published models to ONNX and ran t
 | File | Raw | Gzipped |
 |---|---|---|
 | Engine module today | 1.98 MB | 0.75 MB |
-| Engine module with tract inside | 15.1 MB | 4.2 MB |
-| tract alone as its own module, SIMD | 13.3 MB | 3.5 MB |
+| Engine module with tract inside | 14.9 MB | 4.1 MB |
+| Second engine build with tract, size-tuned, SIMD | 10.1 MB | 3.1 MB |
+| tract alone as its own module, size-tuned, SIMD | 8.3 MB | 2.4 MB |
 | contour model, fp32 | 17.2 MB | 15.9 MB |
 | TEED model, fp32 | 0.25 MB | 0.22 MB |
 
 What follows from them:
 
-- tract runs both models. Its output is within 2.7e-4 of PyTorch's (the largest gap, contour at 1024 pixels), and native and WebAssembly outputs differ by at most 5.1e-6. After rounding to 8 bits that still flips 1 to 11 pixels per image, so a learned style's output is not bit-identical across platforms.
+- tract runs both models, every operator supported. Its output is within 1.4e-3 of PyTorch's, no pixel off by more than 1/255, and native and WebAssembly outputs differ by at most 5.1e-6. After rounding to 8 bits that still flips 1 to 11 pixels per image, so a learned style's output is not bit-identical across platforms.
 - A whole 2048-pixel image takes 3.3 GB, close to WebAssembly's 4 GB ceiling, so models run in tiles (see "Tiles").
 - SIMD makes the models about four times faster, and every current browser supports WebAssembly SIMD, so the model module is built with it.
-- tract inside the engine module would take every visitor's download from 0.75 MB to 4.2 MB gzipped, against a CI limit of 2.3 MB raw. tract therefore goes in a module of its own, fetched only when a model first runs.
+- tract inside the engine module would take every visitor's download from 0.75 MB to 4.1 MB gzipped, against a CI limit of 2.3 MB raw. tract therefore goes in a module of its own, fetched only when a model first runs. A module holding tract alone is 0.7 MB smaller gzipped than a second engine build with tract, and keeps one engine in memory.
+- "Size-tuned" is `opt-level = "s"` for every crate but `tract-linalg`, which stays at 3, and `wasm-opt -Os`; it runs as fast as `-O3`. Relaxed SIMD is not used, because its results can differ between machines.
+- tract's own NNEF format would save another 0.55 MB gzipped for a fixed tile size, but a file of your own arrives as ONNX, so the module keeps the ONNX loader.
 
 ## The style
 

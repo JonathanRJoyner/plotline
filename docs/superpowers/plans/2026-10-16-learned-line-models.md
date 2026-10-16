@@ -6,7 +6,7 @@
 
 **Architecture:** The core gains a `models` module: the `ModelRuntime` trait, a `ModelStore` the session owns and runs reach through `RunContext`, the catalogue, and a stand-in runtime for tests. A new `model` stage places the image as the tone stage does, runs the model one 512-pixel tile per step and returns a `ToneMap`. A new crate, `crates/models`, implements the trait with tract natively (linked into the Python extension) and, built with SIMD as its own WebAssembly module, for the browser, where the engine calls it through a JavaScript bridge in the worker. Front ends download, show the licence and keep files; the core checks every file.
 
-**Tech Stack:** Rust (tract-onnx 0.21, sha2, serde, schemars, wasm-bindgen), pyo3, Python (click, urllib, hashlib), TypeScript, Preact, vitest, Playwright.
+**Tech Stack:** Rust (tract-onnx 0.23, sha2, serde, schemars, wasm-bindgen), pyo3, Python (click, urllib, hashlib), TypeScript, Preact, vitest, Playwright.
 
 **Spec:** `docs/superpowers/specs/2026-10-16-learned-line-models-design.md`
 
@@ -25,7 +25,7 @@
   - empty model: `choose a model; get one from Styles, then Get models, or run \`plotline models list\``
   - licence screen line: `Provided as is, without warranty of any kind.`
   - Load your own line: `You're responsible for the licence of any model you load.`
-- The main engine module stays at or under 2,300,000 bytes. `plotline_models.wasm` is built with `-C target-feature=+simd128`.
+- The main engine module stays at or under 2,300,000 bytes (it is 1,984,967 today, so 315 KB of headroom). `plotline_models.wasm` is built with `-C target-feature=+simd128`, never relaxed SIMD, size-tuned (`opt-level = "s"` for its crates except `tract-linalg` at 3, `wasm-opt -Os`), and stays at or under 9,000,000 bytes (8,318,424 in the spike).
 - `learned` stays out of the gallery and its stats snapshot; `tests/snapshots/gallery-stats.json` must not change.
 - A user-visible GUI feature adds its tour step (`STEPS` in `web/src/tour.tsx`) and its flow in `web/e2e/gui.spec.ts`. A contract adds its law to `crates/core/tests/laws.rs`.
 - Cite in docstrings: Chan, Durand and Isola, CVPR 2022 (contour); Soria, Li, Rouhani and Sappa, Proc. ICCV Workshops 2023, pp. 1364-1373 (TEED); the overlap-tile strategy with mirrored borders from O. Ronneberger, P. Fischer and T. Brox, "U-Net: convolutional networks for biomedical image segmentation", MICCAI 2015, pp. 234-241.
@@ -190,7 +190,7 @@ git commit -m "Add the learned style: a model's lines drawn as centrelines"
 
 **Interfaces:**
 - Consumes: Task 1's `ModelRuntime`, `ModelError`, `TILE`.
-- Produces: `pub fn tiny_conv_onnx_with(in_channels: usize, out_channels: usize) -> Vec<u8>` and `pub fn tiny_conv_onnx() -> Vec<u8>` (`tiny_conv_onnx_with(3, 1)`). `pub struct TractRuntime` (`Default`), implementing `ModelRuntime` with `tract-onnx = "0.21"`: `load` fixes the input fact to `f32 [1, 3, side, side]`, optimises, checks the output is `[1, 1, side, side]`, and keeps the runnable plan in a `Mutex<HashMap<String, _>>`. `tiny_conv_onnx_with` builds, with `tract_onnx::pb` types and prost encoding, a model whose single 3 × 3 convolution (padding 1) maps `in_channels` to `out_channels` with the fixed weights `w[o][c][y][x] = (o + c + 1) as f32 * 0.01 * ((y * 3 + x) as f32 - 4.0)` and bias 0.5, followed by a Sigmoid. The crate has `crate-type = ["cdylib", "rlib"]` and a `web` feature that Task 7 fills.
+- Produces: `pub fn tiny_conv_onnx_with(in_channels: usize, out_channels: usize) -> Vec<u8>` and `pub fn tiny_conv_onnx() -> Vec<u8>` (`tiny_conv_onnx_with(3, 1)`). `pub struct TractRuntime` (`Default`), implementing `ModelRuntime` with `tract-onnx = "0.23"`, its default `transformers` feature off: `load` fixes the input fact to `f32 [1, 3, side, side]`, optimises, checks the output is `[1, 1, side, side]`, and keeps the runnable plan in a `Mutex<HashMap<String, _>>`. `tiny_conv_onnx_with` builds, with `tract_onnx::pb` types and prost encoding, a model whose single 3 × 3 convolution (padding 1) maps `in_channels` to `out_channels` with the fixed weights `w[o][c][y][x] = (o + c + 1) as f32 * 0.01 * ((y * 3 + x) as f32 - 4.0)` and bias 0.5, followed by a Sigmoid. The crate has `crate-type = ["cdylib", "rlib"]` and a `web` feature that Task 7 fills.
 
 - [ ] **Step 1: Write the failing tests in `crates/models/src/lib.rs`**
 
@@ -341,11 +341,11 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement the exports, the bridge and the worker change; add the model build to the `wasm`, `web`, pages and release jobs**
 
-The size check in `ci.yml` stays on `plotline_wasm_bg.wasm` only; print `plotline_models_bg.wasm`'s size beside it without a limit.
+On wasm32, enable tract's `getrandom-js` feature (the spike's working setup; confirm the feature name in tract 0.23's manifest). Add the size tuning as `[profile.release.package.<crate>]` entries in the workspace `Cargo.toml` and `wasm-opt = ["-Os"]` in `crates/models`' wasm-pack metadata; neither touches the engine module's crates. The size check in `ci.yml` gains a second line: `plotline_models_bg.wasm` at or under 9000000.
 
 - [ ] **Step 4: Run the checks and the size**
 
-Run: `cd web && npm run wasm && npm run check`; then the CI size check by hand: `stat -c %s web/pkg/plotline_wasm_bg.wasm` (expected: at or under 2300000).
+Run: `cd web && npm run wasm && npm run check`; then the CI size checks by hand: `stat -c %s web/pkg/plotline_wasm_bg.wasm` (expected: at or under 2300000) and `stat -c %s web/pkg-models/plotline_models_bg.wasm` (expected: at or under 9000000).
 
 - [ ] **Step 5: Commit**
 
