@@ -12,7 +12,7 @@ use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::machine::Machine;
 use plotline_core::runner::Shared;
 use plotline_core::{
-    image, pens, preview, registry, synthetic, Canvas, Drawing, Frame, Layer, Pen, RunState,
+    image, pens, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen, RunState,
     SessionError, DEFAULT_CACHE_BYTES,
 };
 use serde_json::{json, Value};
@@ -138,7 +138,16 @@ impl Session {
     /// image is set.
     pub fn start(&mut self) -> Result<Run, JsError> {
         Ok(Run {
-            inner: self.inner.start()?,
+            inner: Box::new(self.inner.start()?),
+        })
+    }
+
+    /// Cancel the latest run and start a fit of the style's density setting to `target` of
+    /// `metric`: `minutes`, `paths`, `metres` or `dots`. The settings are left as they are; once
+    /// the run is done, `result()` holds the value to apply with `update`.
+    pub fn fit(&mut self, metric: &str, target: f64) -> Result<Run, JsError> {
+        Ok(Run {
+            inner: Box::new(self.inner.fit(metric, target)?),
         })
     }
 
@@ -223,10 +232,10 @@ impl Session {
     }
 }
 
-/// One run, driven a frame at a time by [`Run::next_frame`].
+/// One run or fit, driven a frame at a time by [`Run::next_frame`].
 #[wasm_bindgen]
 pub struct Run {
-    inner: plotline_core::Run,
+    inner: Box<dyn Job>,
 }
 
 #[wasm_bindgen]
@@ -239,7 +248,9 @@ impl Run {
 
     /// Ask the run to stop; the next frame is `undefined`.
     pub fn cancel(&self) {
-        self.inner.cancel();
+        self.inner
+            .cancel_flag()
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `idle`, `running`, `done`, `cancelled` or `error`.
@@ -250,6 +261,12 @@ impl Run {
     /// The failing stage's message, once the run has ended in error.
     pub fn error(&self) -> Option<String> {
         self.inner.error()
+    }
+
+    /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}` JSON, once
+    /// it is done; `undefined` for a plain run.
+    pub fn result(&self) -> Option<String> {
+        self.inner.fit().map(|r| json!(r).to_string())
     }
 }
 

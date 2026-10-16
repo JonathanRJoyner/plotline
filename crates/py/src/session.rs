@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use numpy::{PyArray3, PyReadonlyArray3};
-use plotline_core::{image, Canvas, Pen, RunState, Speeds, DEFAULT_CACHE_BYTES};
+use plotline_core::{image, Canvas, Job, Pen, RunState, Speeds, DEFAULT_CACHE_BYTES};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use serde::de::DeserializeOwned;
@@ -138,10 +138,16 @@ impl Session {
     /// `RuntimeError` when no image is set.
     fn start(&mut self) -> PyResult<Run> {
         let run = self.inner.start().map_err(session_error)?;
-        Ok(Run {
-            cancel: run.cancel_flag(),
-            run: Mutex::new(run),
-        })
+        Ok(Run::new(Box::new(run)))
+    }
+
+    /// Cancel the latest run and start a fit of the style's density setting to `target` of
+    /// `metric`: `minutes`, `paths`, `metres` or `dots`. The settings are left as they are; once
+    /// the run is done, `result()` holds the value to apply. Raises `RuntimeError` when no image
+    /// is set and `ValueError` for a fit the engine refuses.
+    fn fit(&mut self, metric: &str, target: f64) -> PyResult<Run> {
+        let fit = self.inner.fit(metric, target).map_err(session_error)?;
+        Ok(Run::new(Box::new(fit)))
     }
 
     fn state(&self) -> &'static str {
@@ -215,22 +221,30 @@ impl Session {
     }
 }
 
-/// One run, driven a frame at a time. The engine run is not `Sync`, so it sits behind a lock
-/// that `next_frame` holds, with the interpreter lock released, for the whole engine call. The
-/// other methods never wait for that lock: `cancel` sets the run's cancel flag directly, and
-/// `state` and `error` report a run that is busy in `next_frame` as running with no error.
+/// One run or fit, driven a frame at a time. The engine job is not `Sync`, so it sits behind a
+/// lock that `next_frame` holds, with the interpreter lock released, for the whole engine call.
+/// The other methods never wait for that lock: `cancel` sets the job's cancel flag directly, and
+/// `state`, `error` and `result` report a job that is busy in `next_frame` as running with no
+/// error or result.
 #[pyclass]
 pub struct Run {
-    run: Mutex<plotline_core::Run>,
+    run: Mutex<Box<dyn Job>>,
     cancel: Arc<AtomicBool>,
 }
 
 impl Run {
-    /// `f` of the run, or `busy` while another thread is inside `next_frame`.
-    fn peek<T>(&self, busy: T, f: impl FnOnce(&plotline_core::Run) -> T) -> T {
+    fn new(job: Box<dyn Job>) -> Run {
+        Run {
+            cancel: job.cancel_flag(),
+            run: Mutex::new(job),
+        }
+    }
+
+    /// `f` of the job, or `busy` while another thread is inside `next_frame`.
+    fn peek<T>(&self, busy: T, f: impl FnOnce(&dyn Job) -> T) -> T {
         match self.run.try_lock() {
-            Ok(run) => f(&run),
-            Err(TryLockError::Poisoned(e)) => f(&e.into_inner()),
+            Ok(run) => f(&**run),
+            Err(TryLockError::Poisoned(e)) => f(&**e.into_inner()),
             Err(TryLockError::WouldBlock) => busy,
         }
     }
@@ -260,5 +274,12 @@ impl Run {
 
     fn error(&self) -> Option<String> {
         self.peek(None, |run| run.error())
+    }
+
+    /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}`, once it is
+    /// done; `None` for a plain run.
+    fn result<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let fit = self.peek(None, |run| run.fit());
+        fit.map(|r| serde_to_py(py, &r)).transpose()
     }
 }

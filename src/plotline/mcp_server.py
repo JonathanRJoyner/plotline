@@ -17,7 +17,7 @@ import json
 import math
 import warnings
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -31,7 +31,7 @@ from typing_extensions import TypedDict  # pydantic refuses typing.TypedDict bef
 
 import plotline
 from plotline import registry
-from plotline.session import Session
+from plotline.session import RunHandle, Session
 from plotline.types import Cancelled, Canvas, Frame, Pen, RunState
 
 INSTRUCTIONS = (
@@ -42,9 +42,10 @@ INSTRUCTIONS = (
     "draws the image and returns its stats, the plot lint's findings and a preview at true pen "
     "width; apply a finding's patch the same way as a suggestion's. Look at the preview, "
     "change settings with run(settings=...), and repeat; only the stages after a changed setting "
-    "run again. Use preview with region_mm to inspect detail. export writes the result. All "
-    "lengths are millimetres, the page origin is its top-left corner and y grows down. Paths must "
-    "be absolute."
+    "run again. To meet a budget of plot time, paths, pen-down metres or dots, call fit, which "
+    "sets the style's density setting. Use preview with region_mm to inspect detail. export "
+    "writes the result. All lengths are millimetres, the page origin is its top-left corner and y "
+    "grows down. Paths must be absolute."
 )
 
 
@@ -194,6 +195,56 @@ def build_server(session: Session | None = None) -> MCPServer:
             )
             return _array([asdict(pen) for pen in session.pens])
 
+    def change(
+        style: str | None, settings: dict[str, dict[str, Any]] | None, reset: bool = False
+    ) -> None:
+        """Switch to ``style``, reset the settings when ``reset`` is set, and apply ``settings``;
+        when a change is refused, put the style and settings back and raise."""
+        old_style, old_settings = session.style.name, session.settings
+        try:
+            if style is not None and style != old_style:
+                session.set_style(style)
+            if reset:
+                session.reset_settings()
+            for stage, values in (settings or {}).items():
+                session.update(stage, **values)
+        except Exception:
+            session.set_style(old_style)
+            for stage, values in old_settings.items():
+                session.update(stage, **values)
+            raise
+
+    async def follow(ctx: Context, start: Callable[[], RunHandle]) -> RunHandle:
+        """Start a run with ``start``, report its frames as progress at most every 100 ms, and
+        wait for it to end. Raises the run's error, or ``Cancelled`` when it was cancelled or a
+        newer run took the drawing. A client cancel cancels the run."""
+        with ExitStack() as stack:
+            latest: deque[Frame] = deque(maxlen=1)
+            stack.callback(session.subscribe(latest.append))
+            handle = start()
+            stack.callback(handle.cancel)  # a run that has ended stays as it ended
+            sent: Frame | None = None
+            count = 0
+            while handle.state is RunState.running:
+                await anyio.sleep(0.1)
+                if latest and latest[-1] is not sent:
+                    sent = latest[-1]
+                    count += 1
+                    await ctx.report_progress(count, None, f"{sent.stage}: {sent.label}")
+            if handle.state is not RunState.done:
+                raise handle.error or Cancelled("the run was cancelled")
+            # A newer run that started while this call slept owns the engine's drawing now.
+            if session.state is RunState.running or session.result is not handle.result:
+                raise Cancelled("the run was cancelled")
+            return handle
+
+    def shown() -> list[str | Image]:
+        """The result's stats, with the plot lint's findings under lint, as JSON and a preview
+        of it."""
+        png = session.preview_png(_page_px(session))
+        result = {**asdict(session.stats()), "lint": session.lint()}
+        return [json.dumps(result), Image(data=png, format="png")]
+
     @server.tool()
     async def run(
         ctx: Context,
@@ -209,41 +260,30 @@ def build_server(session: Session | None = None) -> MCPServer:
         puts every setting back to the style's defaults first. settings is {stage: {setting:
         value}} and changes only the values given; only the stages after a changed setting run
         again. When a change is refused, nothing changes and nothing runs."""
-        with _errors(), ExitStack() as stack:
-            old_style, old_settings = session.style.name, session.settings
-            try:
-                if style is not None and style != old_style:
-                    session.set_style(style)
-                if reset:
-                    session.reset_settings()
-                for stage, values in (settings or {}).items():
-                    session.update(stage, **values)
-            except Exception:
-                session.set_style(old_style)
-                for stage, values in old_settings.items():
-                    session.update(stage, **values)
-                raise
+        with _errors():
+            change(style, settings, reset)
+            await follow(ctx, session.run)
+            return shown()
 
-            latest: deque[Frame] = deque(maxlen=1)
-            stack.callback(session.subscribe(latest.append))
-            handle = session.run()
-            stack.callback(handle.cancel)  # a run that has ended stays as it ended
-            sent: Frame | None = None
-            count = 0
-            while handle.state is RunState.running:
-                await anyio.sleep(0.1)
-                if latest and latest[-1] is not sent:
-                    sent = latest[-1]
-                    count += 1
-                    await ctx.report_progress(count, None, f"{sent.stage}: {sent.label}")
-            if handle.state is not RunState.done:
-                raise handle.error or Cancelled("the run was cancelled")
-            # A newer run that started while this call slept owns the engine's drawing now.
-            if session.state is RunState.running or session.result is not handle.result:
-                raise Cancelled("the run was cancelled")
-            png = session.preview_png(_page_px(session))
-            result = {**asdict(session.stats()), "lint": session.lint()}
-            return [json.dumps(result), Image(data=png, format="png")]
+    @server.tool()
+    async def fit(
+        ctx: Context,
+        metric: Literal["minutes", "paths", "metres", "dots"],
+        target: float,
+        style: str | None = None,
+        settings: dict[str, dict[str, Any]] | None = None,
+    ) -> list[str | Image]:
+        """Find the value of the style's density setting that brings a metric of the drawing near
+        target: minutes of estimated plot time, paths, metres of pen-down length, or dots for a
+        style that places points. style and settings apply first, as in run. The style reruns
+        with the setting changed, up to eight times, and keeps the run nearest the target; the
+        setting keeps its value. Returns the stage, key, chosen value and the value and metric of
+        every trial as JSON, then the stats and a preview as run does. The time estimate leaves
+        out acceleration, so a time target runs optimistic on styles of short strokes or dots."""
+        with _errors():
+            change(style, settings)
+            handle = await follow(ctx, lambda: session.fit(metric, target))
+            return [json.dumps(handle.fit), *shown()]
 
     @server.tool()
     async def preview(

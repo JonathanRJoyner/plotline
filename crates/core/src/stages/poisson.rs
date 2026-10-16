@@ -44,7 +44,7 @@ const NONE: usize = usize::MAX;
 #[serde(default, deny_unknown_fields)]
 pub struct PoissonSettings {
     /// Distance between points over full ink; lighter areas space them further apart.
-    #[schemars(range(min = 0.2, max = 20.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.2, max = 20.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
     /// Where the packing starts.
     #[schemars(range(min = 0, max = 9999))]

@@ -63,6 +63,8 @@ export class Protocol {
       },
       setSpeeds: (speeds: Speeds) => s.setSpeeds(JSON.stringify(speeds)),
       run: () => this.start(),
+      // The settings stay as they are: the page applies the value the run's end carries.
+      fit: (metric: string, target: number) => this.start(() => s.fit(metric, target)),
       cancel: () => this.current?.cancel(),
       preset: () => JSON.parse(s.preset()),
       loadPreset: (preset: unknown) => s.loadPreset(JSON.stringify(preset)),
@@ -97,8 +99,8 @@ export class Protocol {
   // Starts a run; `handle` lets it go after the reply, which reports it running. `drive` would
   // finish a small drawing before its first await. `drive` posts the run's events and frees it,
   // and the catch gives it its one `end` even if it throws.
-  private start(): void {
-    const run = this.session.start();
+  private start(begin = () => this.session.start()): void {
+    const run = begin();
     const id = ++this.counter;
     this.current = run;
     this.go = () => {

@@ -40,7 +40,8 @@ A style switch keeps the settings you changed in the stages both styles share, P
 
 ### Front ends
 
+- **Budgets:** give a plot time in minutes, a path count, metres of pen-down line or a dot count, and plotline finds the value of the style's density setting that meets it, in up to eight runs. The GUI has a target field with a Fit to target button, `plotline run` takes `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots`, and the MCP server has a `fit` tool. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says.
 - **Browser GUI** with a live preview that shows each stage working, true to pen width and colour, with the pen-up travel overlay, stats and plot-time estimate, a settings panel generated from the stage declarations, the pens and settings dialogs, suggestions, presets, export and a guided tour. **Try all styles** draws every style small on the current image, page and pens, and a click switches to one; **undo and redo** (Ctrl+Z, Ctrl+Shift+Z and toolbar buttons) step through changes to the style, settings, page and pens. `plotline gui` serves it locally, and the same files are the hosted page at <https://jonathanrjoyner.github.io/plotline/>. The engine runs in the visitor's browser, so no image is uploaded.
 - **Command line:** `plotline run`, `styles`, `describe`, `analyse`, `gui` and `mcp`.
-- **MCP server** over stdio, in the `mcp` extra, with eleven tools: `list_styles`, `describe_style`, `load_image`, `set_page`, `set_pens`, `run`, `preview`, `get_session`, `analyse_image`, `load_preset` and `export`.
+- **MCP server** over stdio, in the `mcp` extra, with twelve tools: `list_styles`, `describe_style`, `load_image`, `set_page`, `set_pens`, `run`, `fit`, `preview`, `get_session`, `analyse_image`, `load_preset` and `export`.
 - **Python library:** `Session`, the style registry and the value types, with type information.

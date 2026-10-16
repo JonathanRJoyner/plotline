@@ -174,3 +174,26 @@ fn still_life_analysis_matches_native() {
     assert_eq!(a["stats"]["height_px"], 875);
     assert!(a["suggestions"].is_array());
 }
+#[wasm_bindgen_test]
+fn a_fit_takes_the_native_steps() {
+    // The same literals as fit::tests::the_samples_are_pinned in the core crate.
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(64, 48, &plotline_wasm::synthetic_gradient(64, 48))
+        .unwrap();
+    s.set_canvas(r#"{"width_mm":100,"height_mm":75,"margin_mm":5,"fit":"fit"}"#)
+        .unwrap();
+    s.set_style("waves").unwrap();
+    s.update("tone", r#"{"resolution":64}"#).unwrap();
+    let mut run = s.fit("metres", 10.0).unwrap();
+    while run.next_frame().is_some() {}
+    assert_eq!(run.state(), "done");
+    let r: serde_json::Value = serde_json::from_str(&run.result().unwrap()).unwrap();
+    let values: Vec<f64> = (r["samples"].as_array().unwrap().iter())
+        .map(|x| x["value"].as_f64().unwrap())
+        .collect();
+    assert_eq!(values, [2.0, 1.472, 0.655, 0.883, 0.843]);
+    // serde_json's parser can move a float's last bit, so the metric is checked within 1e-12.
+    let achieved = r["achieved"].as_f64().unwrap();
+    assert!((achieved - 9.934812216679127).abs() < 1e-12, "{achieved}");
+    assert!(s.start().unwrap().result().is_none());
+}

@@ -15,7 +15,13 @@ export type Finding = {
 export type RunEvent = { type: "run"; id: number };
 export type FrameEvent = { type: "frame"; id: number; stage: string; progress: number; label: string; pen: number; points?: Float64Array; coords?: Float64Array; offsets?: Uint32Array };
 export type ResultEvent = { type: "result"; id: number; canvas: Canvas; layers: Layer[]; tone: Tone | null };
-export type EndEvent = { type: "end"; id: number; state: "done" | "cancelled" | "error"; error: string | null; stats: Stats | null; lint: Finding[] };
+/** What a fit chose, in the shape of the engine's `FitResult`. */
+export type FitResult = {
+  stage: string; key: string; metric: string; target: number; value: unknown; achieved: number;
+  samples: { value: number; metric: number }[];
+};
+/** `fit` is set when a fit ends done; the page applies its value with `update`. */
+export type EndEvent = { type: "end"; id: number; state: "done" | "cancelled" | "error"; error: string | null; stats: Stats | null; fit?: FitResult | null; lint: Finding[] };
 export type Event = RunEvent | FrameEvent | ResultEvent | EndEvent;
 /** One style drawn for the styles dialog: its preview as PNG bytes, or why it failed. */
 export type ThumbEvent = { type: "thumb"; id: number; style: string; png: Uint8Array | null; error: string | null };

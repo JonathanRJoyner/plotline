@@ -33,7 +33,7 @@ const VERTEX_BUDGET: usize = 20_000_000;
 #[serde(default, deny_unknown_fields)]
 pub struct ContourSettings {
     /// Contour levels between white and full ink.
-    #[schemars(range(min = 1, max = 64))]
+    #[schemars(range(min = 1, max = 64), extend("x-density" = "direct"))]
     pub levels: u32,
     /// Blur before tracing; more gives rounder, calmer lines.
     #[schemars(range(min = 0.0, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]

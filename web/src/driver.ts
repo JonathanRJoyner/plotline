@@ -47,7 +47,8 @@ function postResult(session: Session, id: number, post: Post): void {
   }
 }
 
-// Posts `run`, every throttled `frame`, the `result` when the run is done, and one `end`.
+// Posts `run`, every throttled `frame`, the `result` when the run is done, and one `end`, which
+// carries what a fit chose.
 // Frees the run on every path. A later `session.start()` ends this loop with `cancelled`.
 export async function drive(
   session: Session, run: Run, id: number, post: Post,
@@ -79,8 +80,9 @@ export async function drive(
     const state = run.state() as EndEvent["state"];
     if (state === "done") postResult(session, id, post);
     const stats = session.stats();
+    const fit = run.result();
     const lint = session.lint();
-    post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, lint: lint ? JSON.parse(lint) : [] }, []);
+    post({ type: "end", id, state, error: run.error() ?? null, stats: stats ? JSON.parse(stats) : null, fit: fit ? JSON.parse(fit) : null, lint: lint ? JSON.parse(lint) : [] }, []);
   } finally {
     run.free();
   }

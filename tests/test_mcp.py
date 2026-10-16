@@ -163,6 +163,24 @@ async def test_run_and_preview(tmp_path):
             assert out.read_bytes().startswith(start)
 
 
+async def test_fit_returns_the_value_and_the_curve():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        await call(c, "set_page", width_mm=100, height_mm=75, margin_mm=5)
+        settings = {"tone": {"resolution": 64}}
+        r = await call(c, "fit", metric="metres", target=10, style="waves", settings=settings)
+        assert not r.is_error, text(r)
+        fit = json.loads(r.content[0].text)
+        assert (fit["stage"], fit["key"], fit["value"]) == ("waves", "spacing_mm", 0.843)
+        assert [x["value"] for x in fit["samples"]] == [2.0, 1.472, 0.655, 0.883, 0.843]
+        assert json.loads(r.content[1].text)["pen_down_mm"] / 1000 == fit["achieved"]
+        assert png(r.content[2]).startswith(b"\x89PNG")
+        assert data(await call(c, "get_session"))["settings"]["waves"]["spacing_mm"] == 0.843
+        r = await call(c, "fit", metric="dots", target=10)
+        assert r.is_error and "places no dots" in text(r)
+
+
 async def test_refused_setting_changes_nothing():
     session = Session()
     session.set_image(_core.synthetic_gradient(8, 8))
@@ -351,6 +369,7 @@ async def test_stdio_server_lists_the_tools():
         "set_page",
         "set_pens",
         "run",
+        "fit",
         "preview",
         "get_session",
         "load_preset",
