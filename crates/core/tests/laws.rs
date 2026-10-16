@@ -961,7 +961,7 @@ fn every_look_plots_clean() {
         })
         .collect();
     let strategy = (select(looks), 0..LOOK_IMAGES.len());
-    check("looks", 6, strategy, |((style, look), image)| {
+    check("looks", 12, strategy, |((style, look), image)| {
         let mut s = Session::new(256 << 20);
         s.set_image(match image {
             0 => still_life(600, 875),

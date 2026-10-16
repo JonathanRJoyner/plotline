@@ -81,7 +81,7 @@ A style skips a look the rules do not give it. Section 7 records what each style
 
 ## 5. Law
 
-`every_look_plots_clean` in `crates/core/tests/laws.rs` draws a style and one of its looks other than Balanced from the registry, and one of the three test images, and runs it on A4 at the default pen: the plot lint finds no warning or error. Balanced is left out because it is the defaults, which this work does not change and some of which warn (`contours` on the scene overdraws). A pull request runs a fixed number of cases; the weekly run's 25 times covers every look on every image with high probability.
+`every_look_plots_clean` in `crates/core/tests/laws.rs` draws a style and one of its looks other than Balanced from the registry, and one of the three test images, and runs it on A4 at the default pen: the plot lint finds no warning or error. Balanced is left out because it is the defaults, which this work does not change and some of which warn (`contours` on the scene overdraws). There are 72 cases (24 looks on 3 images). A pull request runs 12 of them, about 24 s, and the weekly run's 300 miss any one case with a chance of about 1.5 %.
 
 A registry test checks every style's looks: each applies, is then the session's look, and no two of a style's looks have equal settings.
 
