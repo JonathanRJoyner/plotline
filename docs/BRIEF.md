@@ -102,7 +102,7 @@ The session holds the state: the image, canvas and pens, the chosen style and se
 
 ### 6.3 Front ends
 
-- **CLI:** `plotline run <style> image.png --out drawing.svg [--look NAME] --set stage.key=value … [--strict]` (with `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots` to meet a budget, and `--machine FILE --gcode DIR` for G-code), `plotline styles`, `plotline describe <style>`, `plotline analyse IMAGE`, `plotline gui`, `plotline mcp`.
+- **CLI:** `plotline run <style> image.png --out drawing.svg [--look NAME] --set stage.key=value … [--strict]` (with `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots` to meet a budget, and `--machine FILE --gcode DIR` for G-code), `plotline styles`, `plotline describe <style>`, `plotline analyse IMAGE`, `plotline testchart --out chart.svg [--pen NAME:WIDTH_MM:COLOR] [--machine FILE]` (a calibration chart for the first pen, §14 "Test chart"), `plotline gui`, `plotline mcp`.
 - **GUI:** see §8.
 - **MCP:** see §9.
 - **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. The generic G-code writer is the first (§14), and an HPGL writer, which writes the whole drawing as one file for plotters that read that format ([HPGL export](decisions/2026-10-16-hpgl-export.md)), came next; which toolchains follow is open (§12).
@@ -155,7 +155,7 @@ What the preview should do:
 - **Settings panel** generated from stage declarations, grouped by stage, with advanced settings collapsed. Changing a setting reruns from that stage.
 - **Looks:** a Look select under the style picks one of the style's measured starting points: Balanced, Faithful, Quick or Fine ([decision](decisions/2026-10-16-looks.md)).
 - **Presets:** save and load full settings as a small file. They should be shareable.
-- **Export:** layered SVG, plus the other formats in §10.
+- **Export:** layered SVG, plus the other formats in §10. A Test chart button in the same panel replaces the drawing with the calibration chart for the first pen ([test chart](decisions/2026-10-16-test-chart.md)).
 
 The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D was chosen over WebGL on 2026-10-12, see the decision log. The built assets must ship inside the Python package so `pip install plotline` is all a user needs, and the same assets are deployed as the hosted page.
 
@@ -170,6 +170,7 @@ The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D was chosen o
 - `fit(metric, target, style, settings)`, which applies the style and settings as `run` does, then finds the value of the style's density setting that brings `minutes`, `paths`, `metres` or `dots` near the target (§14, "Budget solver"), and returns the chosen value with every trial, the stats and a preview
 - `optimize(metric, target, style, settings)`, which applies the style and settings as `run` does, then searches the style's density setting for the value whose drawing's tones follow the image best, every trial within the target when one is given (§14, "Optimize"), and returns what it found, with a patch it does not apply, then the stats and a preview of the current settings
 - `set_machine(machine)`, which sets the machine G-code is written for, or clears it with `null`, and makes the page the machine's drawable area (§14, "Machines outside the GUI")
+- `testchart()`, which draws the test chart for the page and the first pen, with no image, and returns the stats with the lint findings and a preview as `run` does ([test chart](decisions/2026-10-16-test-chart.md))
 - `get_session()`, which returns the style, its look, settings, page, pens, machine, image size, run state and stats
 - `analyse_image()`, which returns the loaded image's statistics and suggested changes; each suggestion's patch applies with `run(style=..., settings=...)` or `set_page`, and its `pens` with `set_pens`
 - `load_preset(path)`, which reads a preset, an exported SVG or an exported JSON drawing ([embedded presets](decisions/2026-10-16-embedded-presets.md)) and returns the style and the warnings for any settings it dropped
@@ -229,7 +230,7 @@ The ten questions the brief opened with (frontend stack, performance strategy, c
 5. **Standalone Rust CLI binary.** Users without Python could get the CLI as one executable. Not before the Python surface settles.
 6. **Python stage API.** Stages written in Python through callbacks would run natively but not in the browser. Decide when someone asks for one.
 7. **JSON-declared styles.** Compositions of existing stages as data, so a new style needs no code. Decide after the Voronoi family shows which compositions people want.
-8. **Additions after 0.1.** The 0.1 candidates were settled on 2026-10-15 (§14, "0.1 scope"): the MCP `load_preset` tool was already built, and the rest wait until after 0.1. They are a paper colour for the preview, Ramer–Douglas–Peucker simplification in the ordering stage, and a `plotline testchart` command. The run's settings embedded in exports were built on 2026-10-16 ([embedded presets](decisions/2026-10-16-embedded-presets.md)). Also proposed for after 0.1: edge and outline layers, a compare view in the GUI, and a saved pen library. None of them is scheduled yet. HPGL export, proposed here too, was built on 2026-10-16 ([HPGL export](decisions/2026-10-16-hpgl-export.md)).
+8. **Additions after 0.1.** The 0.1 candidates were settled on 2026-10-15 (§14, "0.1 scope"): the MCP `load_preset` tool was already built, and the rest wait until after 0.1. They are a paper colour for the preview, Ramer–Douglas–Peucker simplification in the ordering stage. The run's settings embedded in exports and the test chart (`plotline testchart`) were built on 2026-10-16 ([embedded presets](decisions/2026-10-16-embedded-presets.md), [test chart](decisions/2026-10-16-test-chart.md)). Also proposed for after 0.1: edge and outline layers, a compare view in the GUI, and a saved pen library. None of them is scheduled yet. HPGL export, once on this list, was built on 2026-10-16 ([HPGL export](decisions/2026-10-16-hpgl-export.md)).
 
 ## 13. Suggested milestones
 

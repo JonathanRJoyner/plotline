@@ -146,11 +146,14 @@ function keepHpglUnits(n: number) {
   } catch { /* ignored */ }
 }
 
-type ExportProps = { status: StatusStore; machine: boolean; onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void };
+type ExportProps = {
+  status: StatusStore; machine: boolean; error?: string;
+  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void; onTestchart: () => void;
+};
 
-function Export({ status, machine, onExport, onHpgl, onGcode }: ExportProps) {
+function Export({ status, machine, error, onExport, onHpgl, onGcode, onTestchart }: ExportProps) {
   const { stats, layers } = useStatus(status);
-  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onHpgl={onHpgl} onGcode={onGcode} />;
+  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} error={error} onExport={onExport} onHpgl={onHpgl} onGcode={onGcode} onTestchart={onTestchart} />;
 }
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
@@ -568,7 +571,10 @@ export function App() {
         >
           <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
         </PensPanel>
-        <Export status={status} machine={state.machine !== null} onExport={exportAs} onHpgl={exportHpgl} onGcode={exportGcode} />
+        <Export
+          status={status} machine={state.machine !== null} error={errors.testchart}
+          onExport={exportAs} onHpgl={exportHpgl} onGcode={exportGcode} onTestchart={() => call("testchart", [], "testchart")}
+        />
         <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
       </aside>
       <SettingsDialog

@@ -1,7 +1,7 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
@@ -452,14 +452,15 @@ export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps):
 }
 
 type ExportProps = {
-  drawing: boolean; layers: Pen[]; machine: boolean;
-  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void;
+  drawing: boolean; layers: Pen[]; machine: boolean; error?: string;
+  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void; onTestchart: () => void;
 };
 
 // SVG, JSON and one HPGL file for the whole drawing; then, once a machine is set, one G-code file
 // per layer. With several pens each G-code file gets a row told apart by its number and swatch,
-// since pens can share a name.
-export function ExportPanel({ drawing, layers, machine, onExport, onHpgl, onGcode }: ExportProps): JSX.Element {
+// since pens can share a name. The test chart replaces the drawing with a calibration page for the
+// first pen, so it needs no image.
+export function ExportPanel({ drawing, layers, machine, error, onExport, onHpgl, onGcode, onTestchart }: ExportProps): JSX.Element {
   return (
     <fieldset data-tour="export">
       <legend>Export</legend>
@@ -478,6 +479,10 @@ export function ExportPanel({ drawing, layers, machine, onExport, onHpgl, onGcod
             ))}
           </div>
         )}
+      <div>
+        <button type="button" data-tour="testchart" title="Replace the drawing with a page of labelled test patches for the first pen" onClick={onTestchart}><Ruler /> Test chart</button>
+      </div>
+      {error && <p class="error">{error}</p>}
     </fieldset>
   );
 }

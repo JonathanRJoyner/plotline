@@ -137,6 +137,34 @@ def test_run_writes_all_outputs(tmp_path, image):
     assert "paths:" in r.output and "tone:" in r.stderr
 
 
+def test_testchart_writes_the_chart_for_a_pen_and_a_page(tmp_path):
+    out, js, png = tmp_path / "c.svg", tmp_path / "c.json", tmp_path / "c.png"
+    r = run(
+        "testchart", "--out", str(out), "--json", str(js), "--preview", str(png),
+        "--pen", "Fine:0.5:blue", "--width", "148", "--height", "210",
+    )  # fmt: skip
+    assert r.exit_code == 0, r.output
+    assert r.output.startswith("paths: ") and "estimated: " in r.output
+    root = ET.parse(out).getroot()
+    assert root.get("width") == "148mm" and root[0].get("stroke") == inks()["blue"]
+    assert json.loads(js.read_text())["layers"][0]["pen"]["width_mm"] == 0.5
+    assert png.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_testchart_takes_a_machine_and_refuses_a_small_page(tmp_path):
+    machine, out = tmp_path / "m.json", tmp_path / "c.svg"
+    machine.write_text(json.dumps(MACHINE))
+    r = run("testchart", "--out", str(out), "--machine", str(machine))
+    assert r.exit_code == 0, r.output
+    assert ET.parse(out).getroot().get("width") == "200mm"
+    out.unlink()
+    r = run(
+        "testchart", "--out", str(out), "--pen", "Fat:2:black", "--width", "74", "--height", "105"
+    )
+    assert r.exit_code == 1 and "the page is too small for the test chart" in r.stderr
+    assert not out.exists()
+
+
 def test_preset_is_applied_and_style_kept(tmp_path, image):
     run(
         "run",

@@ -197,6 +197,12 @@ impl Session {
         })
     }
 
+    /// Cancel the latest run and make the test chart for the page and the first pen the latest
+    /// drawing, finished. Needs no image. Fails when the chart does not fit the page.
+    pub fn testchart(&mut self) -> Result<(), JsError> {
+        Ok(self.inner.testchart()?)
+    }
+
     /// Cancel the latest run and start a search of the style's density setting for the value
     /// whose drawing follows the tone map most closely, every trial within `target` of `metric`
     /// when both are given. The settings are left as they are; once the run is done, `result()`

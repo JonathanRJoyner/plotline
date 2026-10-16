@@ -37,7 +37,8 @@ pub fn session_error(e: SessionError) -> PyErr {
         | SessionError::Gcode(_)
         | SessionError::Hpgl(_)
         | SessionError::NoPens
-        | SessionError::Fit(_) => value_error(e),
+        | SessionError::Fit(_)
+        | SessionError::Testchart(_) => value_error(e),
         SessionError::NoImage | SessionError::NoMachine | SessionError::NoDrawing => {
             runtime_error(e)
         }
