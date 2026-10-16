@@ -309,6 +309,19 @@ def echo_stats(session: Session) -> None:
         "Also write one G-code file per pen into DIR. Needs a machine, from --machine or --preset."
     ),
 )
+@click.option(
+    "--hpgl",
+    type=click.Path(),
+    metavar="FILE",
+    help="Also write the drawing as one HPGL file, with a pen selected for each layer.",
+)
+@click.option(
+    "--hpgl-units",
+    type=click.FloatRange(min=0, min_open=True, max=1000),
+    default=40.0,
+    show_default=True,
+    help="Plotter units per mm in the HPGL file, above 0 and at most 1000.",
+)
 @fit_options
 @click.option(
     "--optimize",
@@ -343,6 +356,8 @@ def run(
     save_preset: str | None,
     machine: str | None,
     gcode: str | None,
+    hpgl: str | None,
+    hpgl_units: float,
     fit_minutes: float | None,
     fit_paths: float | None,
     fit_metres: float | None,
@@ -421,6 +436,8 @@ def run(
         if gcode is not None:
             files = session.export_gcode(gcode)
             click.echo(f"gcode: {len(files)} {'file' if len(files) == 1 else 'files'} in {gcode}")
+        if hpgl is not None:
+            session.export_hpgl(hpgl, hpgl_units)
     echo_stats(session)
     if (match := session.tone_match()) is not None:
         click.echo(f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}")
