@@ -1,8 +1,9 @@
 """The command line interface: list the styles, describe one, analyse an image, run a style on it,
 and serve the web interface and the MCP server.
 
-``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. ``analyse``
-prints the session's analysis of an image. ``styles`` and ``describe`` read the style registry.
+``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. ``testchart``
+writes a calibration chart for a pen. ``analyse`` prints the session's analysis of an image.
+``styles`` and ``describe`` read the style registry.
 ``gui`` serves the web bundle that a release wheel carries. ``mcp`` serves a session to an AI
 assistant on stdio. The work all happens in the session layer, so this module holds no algorithm
 code.
@@ -211,26 +212,7 @@ def analyse(
         click.echo(json.dumps(session.analysis(), indent=2))
 
 
-def read_machine(path: str) -> dict[str, Any]:
-    """Read the machine in the JSON file at ``path``, which holds either a machine or a preset
-    (``"format": "plotline-preset"``) whose ``machine`` is used. A preset with no machine raises
-    ``click.BadParameter``; the engine checks the machine when the session is given it."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if isinstance(data, dict) and data.get("format") == "plotline-preset":
-        data = data.get("machine")
-        if data is None:
-            raise click.BadParameter(f"{path} is a preset with no machine", param_hint="--machine")
-    return data
-
-
-@main.command()
-@click.argument("style")
-@click.argument("image", type=click.Path())
-@click.option("--out", required=True, type=click.Path(), help="Where to write the SVG.")
-@click.option("--json", "json_out", type=click.Path(), help="Also write the paths as JSON.")
-@click.option("--preview", type=click.Path(), help="Also write a PNG preview.")
-@page_options
-@click.option(
+pen_option = click.option(
     "--pen",
     "pens",
     multiple=True,
@@ -243,6 +225,55 @@ def read_machine(path: str) -> dict[str, Any]:
         "set split.mode to share the drawing between them."
     ),
 )
+
+machine_option = click.option(
+    "--machine",
+    type=click.Path(),
+    help=(
+        "A JSON file with a machine, or a preset that has one, which sets the plot speeds and "
+        "makes the page the machine's drawable area. --width and --height still override that."
+    ),
+)
+
+
+def read_machine(path: str) -> dict[str, Any]:
+    """Read the machine in the JSON file at ``path``, which holds either a machine or a preset
+    (``"format": "plotline-preset"``) whose ``machine`` is used. A preset with no machine raises
+    ``click.BadParameter``; the engine checks the machine when the session is given it."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and data.get("format") == "plotline-preset":
+        data = data.get("machine")
+        if data is None:
+            raise click.BadParameter(f"{path} is a preset with no machine", param_hint="--machine")
+    return data
+
+
+def use_machine(session: Session, path: str) -> None:
+    """Give ``session`` the machine in the file at ``path``, which also sets the speeds, and make
+    the page the machine's drawable area."""
+    machine = read_machine(path)
+    session.set_machine(machine)
+    area = machine["area"]
+    session.set_canvas(replace(session.canvas, width_mm=area["width"], height_mm=area["height"]))
+
+
+def echo_stats(session: Session) -> None:
+    """Print the path count, pen-down and pen-up distances and estimated time of the result."""
+    stats = session.stats()
+    click.echo(
+        f"paths: {stats.path_count}  pen down: {stats.pen_down_mm:.1f} mm  "
+        f"pen up: {stats.pen_up_mm:.1f} mm  estimated: {stats.estimated_seconds:.1f} s"
+    )
+
+
+@main.command()
+@click.argument("style")
+@click.argument("image", type=click.Path())
+@click.option("--out", required=True, type=click.Path(), help="Where to write the SVG.")
+@click.option("--json", "json_out", type=click.Path(), help="Also write the paths as JSON.")
+@click.option("--preview", type=click.Path(), help="Also write a PNG preview.")
+@page_options
+@pen_option
 @click.option(
     "--set",
     "sets",
@@ -269,14 +300,7 @@ def read_machine(path: str) -> dict[str, Any]:
     type=click.Path(),
     help="Write the style, page, pens and settings used to a preset file.",
 )
-@click.option(
-    "--machine",
-    type=click.Path(),
-    help=(
-        "A JSON file with a machine, or a preset that has one, which sets the plot speeds and "
-        "makes the page the machine's drawable area. --width and --height still override that."
-    ),
-)
+@machine_option
 @click.option(
     "--gcode",
     type=click.Path(),
@@ -285,14 +309,30 @@ def read_machine(path: str) -> dict[str, Any]:
         "Also write one G-code file per pen into DIR. Needs a machine, from --machine or --preset."
     ),
 )
+@click.option(
+    "--hpgl",
+    type=click.Path(),
+    metavar="FILE",
+    help="Also write the drawing as one HPGL file, with a pen selected for each layer.",
+)
+@click.option(
+    "--hpgl-units",
+    type=click.FloatRange(min=0, min_open=True, max=1000),
+    default=40.0,
+    show_default=True,
+    help="Plotter units per mm in the HPGL file, above 0 and at most 1000.",
+)
 @fit_options
 @click.option(
     "--optimize",
     is_flag=True,
     help=(
         "Also search the style's density setting for the value whose drawing follows the "
-        "image's tones best, in eight runs, and print it with the --set option that applies it. "
-        "With a --fit option, every trial stays within its target instead of fitting it. "
+        "image's tones best, in up to nine runs, and print it and its plot time with the --set "
+        "option that applies it. Values that plot for over twice as long, or an hour if that is "
+        "more, or that the plot lint warns about, are left out. "
+        "With a --fit option, every trial stays within its target instead of fitting it, and "
+        "--fit-minutes replaces the time limit. "
         "The drawing written is the one the given settings make."
     ),
 )
@@ -319,6 +359,8 @@ def run(
     save_preset: str | None,
     machine: str | None,
     gcode: str | None,
+    hpgl: str | None,
+    hpgl_units: float,
     fit_minutes: float | None,
     fit_paths: float | None,
     fit_metres: float | None,
@@ -349,11 +391,7 @@ def run(
             except ValueError as error:
                 raise click.BadParameter(str(error), param_hint=["--look"]) from error
         if machine is not None:
-            loaded = read_machine(machine)
-            session.set_machine(loaded)
-            area = loaded["area"]
-            page = replace(session.canvas, width_mm=area["width"], height_mm=area["height"])
-            session.set_canvas(page)
+            use_machine(session, machine)
         set_page(session, width, height, margin, fit)
         if pens:
             session.set_pens(pens)
@@ -401,11 +439,9 @@ def run(
         if gcode is not None:
             files = session.export_gcode(gcode)
             click.echo(f"gcode: {len(files)} {'file' if len(files) == 1 else 'files'} in {gcode}")
-    stats = session.stats()
-    click.echo(
-        f"paths: {stats.path_count}  pen down: {stats.pen_down_mm:.1f} mm  "
-        f"pen up: {stats.pen_up_mm:.1f} mm  estimated: {stats.estimated_seconds:.1f} s"
-    )
+        if hpgl is not None:
+            session.export_hpgl(hpgl, hpgl_units)
+    echo_stats(session)
     if (match := session.tone_match()) is not None:
         click.echo(f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}")
     findings = session.lint()
@@ -415,6 +451,43 @@ def run(
             click.echo(f"  fix: {fix}", err=True)
     if strict and any(f["severity"] != "info" for f in findings):
         sys.exit(1)
+
+
+@main.command()
+@click.option("--out", required=True, type=click.Path(), help="Where to write the SVG.")
+@click.option("--json", "json_out", type=click.Path(), help="Also write the paths as JSON.")
+@click.option("--preview", type=click.Path(), help="Also write a PNG preview.")
+@page_options
+@pen_option
+@machine_option
+def testchart(
+    out: str,
+    json_out: str | None,
+    preview: str | None,
+    width: float | None,
+    height: float | None,
+    margin: float | None,
+    fit: str | None,
+    pens: list[Pen],
+    machine: str | None,
+) -> None:
+    """Write a test chart for the first pen: small labelled patches of line spacings, dot sizes
+    and repeated passes, scaled to the pen. Plot it and compare by eye where lines merge, how big
+    dots come out and how many passes the paper takes, and time the plot against the estimate."""
+    session = Session()
+    with _errors():
+        if machine is not None:
+            use_machine(session, machine)
+        set_page(session, width, height, margin, fit)
+        if pens:
+            session.set_pens(pens)
+        session.testchart()
+        session.export_svg(out)
+        if json_out is not None:
+            session.export_json(json_out)
+        if preview is not None:
+            Path(preview).write_bytes(session.preview_png())
+    echo_stats(session)
 
 
 def _text(value: Any) -> str:

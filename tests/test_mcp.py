@@ -166,6 +166,41 @@ async def test_export_gcode(tmp_path):
         assert "G1 Z4 F1200" in file.read_text(encoding="utf-8")
 
 
+async def test_export_hpgl(tmp_path):
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    out = tmp_path / "o.hpgl"
+    async with Client(build_server(session)) as c:
+        r = await call(c, "export", path=str(out), format="hpgl")
+        assert r.is_error
+        assert "no drawing" in text(r)
+        assert not out.exists()
+
+        settings = {"tone": {"resolution": 64}, "points": {"spacing_mm": 5}}
+        assert not (await call(c, "run", settings=settings)).is_error
+        r = await call(c, "export", path=str(out), format="hpgl")
+        assert not r.is_error, text(r)
+        assert data(r) == {"path": str(out), "format": "hpgl", "bytes": out.stat().st_size}
+        whole = out.read_text(encoding="ascii")
+        assert whole.startswith("IN;\nSP1;\n") and whole.endswith("PU;\nSP0;\n")
+
+        # A file that exists is kept, and the resolution is read.
+        r = await call(c, "export", path=str(out), format="hpgl", units_per_mm=10)
+        assert r.is_error
+        assert "overwrite=true" in text(r)
+        assert out.read_text(encoding="ascii") == whole
+        r = await call(c, "export", path=str(out), format="hpgl", units_per_mm=10, overwrite=True)
+        assert not r.is_error, text(r)
+        assert out.read_text(encoding="ascii") == session.hpgl(10)
+
+        for bad in (0, 1000.5):
+            r = await call(
+                c, "export", path=str(out), format="hpgl", units_per_mm=bad, overwrite=True
+            )
+            assert r.is_error
+            assert "above 0 and at most 1000" in text(r)
+
+
 async def test_file_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -264,6 +299,24 @@ async def test_run_and_preview(tmp_path):
             assert out.read_bytes().startswith(start)
 
 
+async def test_testchart_draws_without_an_image_and_a_small_page_is_an_error():
+    session = Session()
+    async with Client(build_server(session)) as c:
+        r = await call(c, "testchart")
+        assert not r.is_error
+        stats = json.loads(r.content[0].text)
+        assert stats["path_count"] > 0
+        assert "overdraw" in [f["code"] for f in stats["lint"]]
+        assert png(r.content[1]).startswith(b"\x89PNG")
+        assert session.result is not None
+        # The chart is the result, so the exports work.
+        assert data(await call(c, "get_session"))["stats"]["path_count"] == stats["path_count"]
+        await call(c, "set_page", width_mm=74, height_mm=105)
+        await call(c, "set_pens", pens=[{"name": "Fat", "width_mm": 2, "color": "black"}])
+        r = await call(c, "testchart")
+        assert r.is_error and "the page is too small for the test chart" in text(r)
+
+
 async def test_fit_returns_the_value_and_the_curve():
     session = Session()
     session.set_image(_core.synthetic_gradient(64, 48))
@@ -292,7 +345,7 @@ async def test_optimize_suggests_a_density_and_changes_nothing():
         assert not r.is_error, text(r)
         found = json.loads(r.content[0].text)
         assert (found["stage"], found["key"], found["current"]) == ("hatch", "spacing_mm", 1.0)
-        assert len(found["trials"]) == 8 and "tone" in json.loads(r.content[1].text)
+        assert len(found["trials"]) == 9 and "tone" in json.loads(r.content[1].text)
         assert data(await call(c, "get_session"))["settings"]["hatch"]["spacing_mm"] == 1.0
         r = await call(c, "optimize", metric="minutes")
         assert r.is_error and "both a metric and a target" in text(r)
@@ -557,6 +610,7 @@ async def test_stdio_server_lists_the_tools():
         "set_pens",
         "set_machine",
         "run",
+        "testchart",
         "fit",
         "optimize",
         "preview",

@@ -2,7 +2,7 @@
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
 import { describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
-import { drive, free, macrotask } from "./driver";
+import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
@@ -57,6 +57,7 @@ export class Protocol {
       listInks: () => JSON.parse(listInks()),
       setMachine: (machine: Machine | null) => s().setMachine(JSON.stringify(machine)),
       gcode: (layer: number) => s().gcode(layer),
+      hpgl: (unitsPerMm: number) => s().hpgl(unitsPerMm),
       describe: (name: string) => JSON.parse(describe(name)),
       setImageBytes: (bytes: Uint8Array) => this.setSource((t) => t.setImageBytes(bytes)),
       setImage: (width: number, height: number, rgb: Float32Array) => this.setSource((t) => t.setImage(width, height, rgb)),
@@ -83,6 +84,14 @@ export class Protocol {
       // The settings stay as they are, and the page only offers what the search found.
       optimize: (metric?: string, target?: number) => this.start(() => s().optimize(metric ?? null, target ?? null), "optimize"),
       cancel: () => this.current?.cancel(),
+      // The calibration chart for the page and the first pen. The engine cancels the run, and the
+      // events a finished run posts follow the reply. A refusal changes nothing.
+      testchart: () => {
+        s().testchart();
+        const id = ++this.counter;
+        this.current = null;
+        this.go = () => postDone(s(), id, this.post);
+      },
       preset: () => JSON.parse(s().preset()),
       loadPreset: (preset: unknown) => s().loadPreset(JSON.stringify(preset)),
       // The text of a preset file, an exported SVG or an exported JSON drawing.

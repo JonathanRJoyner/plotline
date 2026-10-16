@@ -625,11 +625,24 @@ pub fn check(
         .map(|l| l.fine_segments as f64 / l.segments as f64)
         .fold(0.0, f64::max);
     if fine > 0.5 {
-        let message = format!(
+        let mut message = format!(
             "{} % of the segments are shorter than an eighth of the pen width, so the paths hold more vertices than the pen can show.",
             percent(fine)
         );
-        add("vertices", Severity::Info, message, fine, None);
+        // An eighth of the narrowest pen, rounded down to 0.001 mm, which every pen's marks hide.
+        let narrowest = d
+            .layers
+            .iter()
+            .map(|l| l.pen.width_mm)
+            .fold(f64::MAX, f64::min);
+        let tolerance = ((narrowest * FINE * 1000.0 + 1e-9).floor() / 1000.0).max(0.001);
+        let patch = (cx.number("order", "simplify_mm").unwrap_or(0.0) < tolerance)
+            .then(|| cx.set("order", "simplify_mm", tolerance))
+            .flatten();
+        if patch.is_some() {
+            message += " Path order's simplify setting removes them.";
+        }
+        add("vertices", Severity::Info, message, fine, patch);
     }
     let mode = cx.settings["split"]["mode"].as_str().unwrap_or("one_pen");
     if mode == "one_pen" && pens.len() > 1 {
@@ -1066,6 +1079,37 @@ mod tests {
     }
 
     #[test]
+    fn simplifying_removes_needless_vertices_until_it_is_on() {
+        let d = page(vec![(0..2000)
+            .map(|i| [10.0 + i as f64 * 0.02, 50.0])
+            .collect()]);
+        let all = lint(&d, "hatch", |_| {});
+        let vertices = find(&all, "vertices").unwrap();
+        // A 0.3 mm pen: 0.0375 mm rounded down to 0.001.
+        let patch = json!({"settings": {"order": {"simplify_mm": 0.037}}});
+        assert_eq!(vertices.patch, Some(patch));
+        assert!(vertices
+            .message
+            .ends_with("Path order's simplify setting removes them."));
+        // With it on there is nothing more to patch, and the message does not say to turn it on.
+        for on in [0.037, 0.5] {
+            let all = lint(&d, "hatch", |s| s["order"]["simplify_mm"] = json!(on));
+            let vertices = find(&all, "vertices").unwrap();
+            assert_eq!(vertices.patch, None);
+            assert!(!vertices.message.contains("simplify"));
+        }
+        // The narrowest pen sets the tolerance, and it is never under 0.001.
+        let mut thin = d.clone();
+        thin.layers.push(Layer {
+            pen: Pen::new("Thin", 0.004, "#000000").unwrap(),
+            paths: Paths::new(),
+        });
+        let all = lint(&thin, "hatch", |_| {});
+        let patch = json!({"settings": {"order": {"simplify_mm": 0.001}}});
+        assert_eq!(find(&all, "vertices").unwrap().patch, Some(patch));
+    }
+
+    #[test]
     fn pens_that_draw_nothing() {
         let mut d = page(lines(5.0));
         let red = Pen::new("Red", 0.5, "#ff0000").unwrap();
@@ -1236,6 +1280,11 @@ mod tests {
             .set_pens(vec![Pen::new("Wide", 1.0, "#000000").unwrap()])
             .unwrap();
         fixes(thick, "overdraw");
+        // Waves sample far finer than a wide pen can show.
+        let mut fine = session(false, "waves", json!({}));
+        fine.set_pens(vec![Pen::new("Wide", 1.0, "#000000").unwrap()])
+            .unwrap();
+        fixes(fine, "vertices");
         let mut two = session(false, "hatch", json!({}));
         let red = Pen::new("Red", 0.3, "#ff0000").unwrap();
         two.set_pens(vec![black(), red]).unwrap();

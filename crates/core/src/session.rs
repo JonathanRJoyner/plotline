@@ -20,6 +20,7 @@ use thiserror::Error;
 use crate::analysis::{self, Analysis, ImageStats};
 use crate::cache::{CacheStats, StageCache};
 use crate::export::gcode::{self, GcodeError};
+use crate::export::hpgl::{self, HpglError};
 use crate::export::{json, svg};
 use crate::fit::{places_points, Density, FitRun, Metric};
 use crate::image::{self, ImageError};
@@ -34,6 +35,7 @@ use crate::settings::{merge, validate, SettingsError};
 use crate::stage::Artifact;
 use crate::stats::{self, Speeds, Stats};
 use crate::style::{same, Look, Style, StyleError};
+use crate::testchart;
 use crate::tone_match::ToneMatch;
 use crate::types::{Canvas, Drawing, Fit, Image, Pen, TypeError};
 
@@ -61,6 +63,9 @@ pub enum SessionError {
     /// A layer could not be written as G-code.
     #[error(transparent)]
     Gcode(#[from] GcodeError),
+    /// The drawing could not be written as HPGL.
+    #[error(transparent)]
+    Hpgl(#[from] HpglError),
     /// G-code was asked for with no machine set.
     #[error("no machine is set")]
     NoMachine,
@@ -93,6 +98,9 @@ pub enum SessionError {
     /// A fit was refused; the message says why.
     #[error("{0}")]
     Fit(String),
+    /// The test chart could not be made; the message says why.
+    #[error("{0}")]
+    Testchart(String),
 }
 
 /// One working context: an image, a canvas, pens, a style with its settings, the plot speeds, the
@@ -373,10 +381,23 @@ impl Session {
         ))
     }
 
+    /// Cancel the latest run and make the [test chart](testchart) for the canvas and the first pen
+    /// the latest drawing, in state [`RunState::Done`]. It needs no image. Fails, changing nothing,
+    /// when the chart does not fit the page or the pen is too thin.
+    pub fn testchart(&mut self) -> Result<(), SessionError> {
+        let drawing =
+            testchart::chart(&self.canvas, &self.pens[0]).map_err(SessionError::Testchart)?;
+        self.claim();
+        let mut shared = self.shared.lock().unwrap();
+        shared.drawing = Some(Arc::new(drawing));
+        shared.state = RunState::Done;
+        Ok(())
+    }
+
     /// Cancel the latest run and return a search of the style's density setting for the value
-    /// whose drawing follows the tone map most closely, with every trial's `metric` (as for
-    /// [`Session::fit`]) at most `target` when a budget is given; see
-    /// [`optimize`](crate::optimize). It works over a snapshot of the session and claims the result
+    /// whose drawing follows the tone map most closely, within the time and lint limits and with
+    /// every trial's `metric` (as for [`Session::fit`]) at most `target` when a budget is given;
+    /// see [`optimize`](crate::optimize). It works over a snapshot of the session and claims the result
     /// slot as [`Session::start`] does, and ends with the drawing of the current settings. The
     /// settings stay as they are: [`OptimizeRun::result`] suggests a patch, applied only with
     /// [`Session::update`].
@@ -526,6 +547,14 @@ impl Session {
         let m = self.machine.as_ref().ok_or(SessionError::NoMachine)?;
         let d = self.drawing().ok_or(SessionError::NoDrawing)?;
         Ok(gcode::to_gcode(&d, layer, m)?)
+    }
+
+    /// The last finished drawing as one HPGL program with `units_per_mm` plotter units to the
+    /// millimetre; see [`hpgl::to_hpgl`]. Fails without a drawing and for a resolution that is not
+    /// above 0 and at most [`hpgl::MAX_UNITS_PER_MM`].
+    pub fn hpgl(&self, units_per_mm: f64) -> Result<String, SessionError> {
+        let d = self.drawing().ok_or(SessionError::NoDrawing)?;
+        Ok(hpgl::to_hpgl(&d, units_per_mm)?)
     }
 
     /// The stats of the last finished drawing at the session's speeds.
@@ -1114,7 +1143,8 @@ mod tests {
         }
         assert_eq!(labels.len(), crate::optimize::TRIALS);
         assert!(
-            labels[0].starts_with("try 1 of 8: spacing_mm 1: tone error"),
+            labels[0].starts_with("try 1 of 9: spacing_mm 1: tone error")
+                && labels[0].ends_with(" min"),
             "{labels:?}"
         );
         let found = job.result().unwrap();
@@ -1125,6 +1155,10 @@ mod tests {
         let drawn = s.drawing().unwrap();
         assert_eq!(found.current, json!(1.0));
         assert!(found.error <= found.current_error.unwrap());
+        assert_eq!(
+            found.current_minutes,
+            s.stats().unwrap().estimated_seconds / 60.0
+        );
         assert_eq!(found.patch.is_some(), found.value != found.current);
         assert!(!drawn.layers[0].paths.is_empty());
         // A budget the first trial breaks keeps every chosen trial within it.
@@ -1163,6 +1197,55 @@ mod tests {
             (0.08399718265758667, 0.730502253480983)
         );
         assert_eq!(auto.error, 0.09068600548308096);
+    }
+
+    #[test]
+    fn the_test_chart_becomes_the_drawing() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.drawing().is_none());
+        s.testchart().unwrap(); // no image is needed
+        assert_eq!(s.state(), RunState::Done);
+        assert!(s.error().is_none());
+        assert!(s.svg().unwrap().starts_with("<svg"));
+        assert!(s.stats().unwrap().path_count > 0);
+        // The PASSES patches are drawn over by design.
+        let codes: Vec<&str> = s.lint().unwrap().iter().map(|f| f.code).collect();
+        assert!(codes.contains(&"overdraw"), "{codes:?}");
+    }
+    #[test]
+    fn a_refused_test_chart_keeps_the_old_drawing() {
+        let mut s = Session::new(1 << 20);
+        s.testchart().unwrap();
+        let before = s.drawing().unwrap();
+        s.set_image(gradient(8, 8));
+        s.set_style("_slow").unwrap();
+        s.update("b", &json!({"frames": 3, "delay_ms": 0})).unwrap();
+        let mut run = s.start().unwrap();
+        s.set_canvas(Canvas::new(74.0, 105.0, 10.0, Fit::Fit).unwrap());
+        s.set_pens(vec![Pen::new("fat", 2.0, "#000000").unwrap()])
+            .unwrap();
+        let e = s.testchart().unwrap_err();
+        assert!(matches!(e, SessionError::Testchart(_)));
+        assert!(e.to_string().contains("too small"), "{e}");
+        assert!(Arc::ptr_eq(&s.drawing().unwrap(), &before));
+        // The refusal did not claim the slot, so the run it would have cancelled still runs.
+        assert_eq!(s.state(), RunState::Running);
+        while run.next_frame().is_some() {}
+        assert_eq!(s.state(), RunState::Done);
+    }
+    #[test]
+    fn a_test_chart_cancels_the_latest_run() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(gradient(8, 8));
+        s.set_style("_slow").unwrap();
+        s.update("b", &json!({"frames": 1000, "delay_ms": 0}))
+            .unwrap();
+        let mut run = s.start().unwrap();
+        run.next_frame();
+        s.testchart().unwrap();
+        assert!(run.next_frame().is_none());
+        assert_eq!(run.state(), RunState::Cancelled);
+        assert_eq!(s.state(), RunState::Done);
     }
 
     #[test]
@@ -1264,5 +1347,21 @@ mod tests {
             "{g}"
         );
         assert!(s.gcode(1).unwrap_err().to_string().contains("no layer 1"));
+    }
+
+    #[test]
+    fn hpgl_needs_a_drawing_but_no_machine() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.hpgl(40.0).unwrap_err().to_string().contains("drawing"));
+        s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.set_image(gradient(64, 48));
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+        let h = s.hpgl(40.0).unwrap();
+        assert!(h.starts_with("IN;\nSP1;\nPU"), "{h}");
+        assert!(h.ends_with("PU;\nSP0;\n"), "{h}");
+        let err = s.hpgl(0.0).unwrap_err();
+        assert!(matches!(err, SessionError::Hpgl(_)), "{err}");
     }
 }

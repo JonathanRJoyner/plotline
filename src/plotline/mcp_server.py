@@ -46,7 +46,8 @@ INSTRUCTIONS = (
     "budget of plot time, paths, pen-down metres or dots, call fit, which sets the style's "
     "density setting. To make the drawing's tones follow the image more closely, call optimize, "
     "which suggests a density, or set tone.response to auto. Use preview with region_mm to "
-    "inspect detail. export writes the result. set_machine describes a pen plotter or "
+    "inspect detail. export writes the result. testchart draws a calibration chart for the "
+    "first pen, to plot and compare by eye. set_machine describes a pen plotter or "
     "pen-fitted printer; export with gcode then writes one file per pen. All lengths are "
     "millimetres, the page origin is its top-left corner and y grows down. Paths must be "
     "absolute."
@@ -345,6 +346,19 @@ def build_server(session: Session | None = None) -> MCPServer:
             return shown()
 
     @server.tool()
+    async def testchart() -> list[str | Image]:
+        """Draw a test chart for the page and the first pen and return the stats as JSON, with
+        the lint, and a preview, as run does. It needs no image and replaces the result. Plot it
+        and compare by eye. SPACING MM shows lines at 0.5 to 4 pen widths apart, to see where
+        they merge. DOT MM shows grids of dots 1 to 6 pen widths wide, to see how big a dot
+        really comes out. PASSES draws a solid fill 1 to 8 times over, to see how many passes the
+        paper takes; the lint reports overdraw on it by design. The stats' plot time is the
+        estimate to check against a stopwatch. Fails when the page is too small."""
+        with _errors():
+            session.testchart()
+            return shown()
+
+    @server.tool()
     async def fit(
         ctx: Context,
         metric: Literal["minutes", "paths", "metres", "dots"],
@@ -375,12 +389,15 @@ def build_server(session: Session | None = None) -> MCPServer:
         look: str | None = None,
     ) -> list[str | Image]:
         """Search the style's density setting for the value whose drawing's tones follow the
-        image most closely, by the tone match's error, in eight runs: the current value, then a
-        golden-section search from a quarter to four times it. Given metric and target, as for
-        fit, a trial over the target does not count. style, look and settings apply first, as in
-        run.
-        Nothing else changes: returns {stage, key, value, error, current, current_error, budget,
-        trials, reason, patch} as JSON, or null when no trial stayed within the target, then the
+        image most closely, by the tone match's error, in up to nine runs: the current value, then
+        half-octave steps from a quarter to four times it. A trial does not count when it plots for
+        over twice the current value's time or an hour, whichever is more, or has a plot lint
+        warning or error the current value does not. Given metric and target, as for fit, a trial
+        over the target does not count either, and a minutes target replaces the time limit.
+        style, look and settings apply first, as in run.
+        Nothing else changes: returns {stage, key, value, error, minutes, current, current_error,
+        current_minutes, budget, trials, reason, patch} as JSON, with plot times in minutes, or
+        null when no trial stayed within the target, then the
         stats and a preview of the current settings as run does. Apply the patch with
         run(settings=patch["settings"]) if it suits; fidelity to the image is not always the
         aim."""
@@ -451,15 +468,19 @@ def build_server(session: Session | None = None) -> MCPServer:
     @server.tool()
     async def export(
         path: str,
-        format: Literal["svg", "json", "png", "preset", "gcode"],
+        format: Literal["svg", "json", "png", "preset", "gcode", "hpgl"],
         overwrite: bool = False,
+        units_per_mm: float = 40.0,
     ) -> dict[str, Any]:
-        """Write the result as svg, json (the paths) or png (a preview), or the settings as a
-        preset, to the absolute path. A file that exists is kept unless overwrite is true. With
-        format gcode the path is a folder, made if it is missing, and the result is written into
-        it as one file per pen, plot_1_<pen>.gcode and so on, for the machine from set_machine;
-        if any of those files exists, none is written unless overwrite is true. Returns the path
-        and size of each file for gcode, and the size of the file for the other formats."""
+        """Write the result as svg, json (the paths), png (a preview) or hpgl (one plotter file,
+        with a pen selected for each layer), or the settings as a preset, to the absolute path.
+        units_per_mm is the plotter units to the millimetre of hpgl, above 0 and at most 1000,
+        40 for most plotters, and no other format reads it. A file that exists is kept unless
+        overwrite is true. With format gcode the path is a folder, made if it is missing, and the
+        result is written into it as one file per pen, plot_1_<pen>.gcode and so on, for the
+        machine from set_machine; if any of those files exists, none is written unless overwrite
+        is true. Returns the path and size of each file for gcode, and the size of the file for
+        the other formats."""
         with _errors():
             p = _absolute(path)
             if format == "gcode":
@@ -472,6 +493,8 @@ def build_server(session: Session | None = None) -> MCPServer:
                 session.export_svg(p)
             elif format == "json":
                 session.export_json(p)
+            elif format == "hpgl":
+                session.export_hpgl(p, units_per_mm)
             elif format == "png":
                 p.write_bytes(session.preview_png(_page_px(session)))
             else:

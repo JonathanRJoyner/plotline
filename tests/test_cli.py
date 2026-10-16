@@ -137,6 +137,34 @@ def test_run_writes_all_outputs(tmp_path, image):
     assert "paths:" in r.output and "tone:" in r.stderr
 
 
+def test_testchart_writes_the_chart_for_a_pen_and_a_page(tmp_path):
+    out, js, png = tmp_path / "c.svg", tmp_path / "c.json", tmp_path / "c.png"
+    r = run(
+        "testchart", "--out", str(out), "--json", str(js), "--preview", str(png),
+        "--pen", "Fine:0.5:blue", "--width", "148", "--height", "210",
+    )  # fmt: skip
+    assert r.exit_code == 0, r.output
+    assert r.output.startswith("paths: ") and "estimated: " in r.output
+    root = ET.parse(out).getroot()
+    assert root.get("width") == "148mm" and root[0].get("stroke") == inks()["blue"]
+    assert json.loads(js.read_text())["layers"][0]["pen"]["width_mm"] == 0.5
+    assert png.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_testchart_takes_a_machine_and_refuses_a_small_page(tmp_path):
+    machine, out = tmp_path / "m.json", tmp_path / "c.svg"
+    machine.write_text(json.dumps(MACHINE))
+    r = run("testchart", "--out", str(out), "--machine", str(machine))
+    assert r.exit_code == 0, r.output
+    assert ET.parse(out).getroot().get("width") == "200mm"
+    out.unlink()
+    r = run(
+        "testchart", "--out", str(out), "--pen", "Fat:2:black", "--width", "74", "--height", "105"
+    )
+    assert r.exit_code == 1 and "the page is too small for the test chart" in r.stderr
+    assert not out.exists()
+
+
 def test_preset_is_applied_and_style_kept(tmp_path, image):
     run(
         "run",
@@ -221,7 +249,7 @@ def test_run_prints_the_tone_match_and_an_optimize_suggestion(tmp_path, image):
     r = run(*args, "--optimize")
     assert r.exit_code == 0, r.output
     line = next(x for x in r.stdout.splitlines() if x.startswith("optimize: "))
-    assert "spacing_mm" in line
+    assert "spacing_mm" in line and " min" in line
     lines = r.stdout.splitlines()
     apply = [x for x in lines if x.startswith("  apply: --set hatch.spacing_mm=")]
     assert len(apply) == ("already follows" not in line)
@@ -407,6 +435,23 @@ def test_a_preset_file_gives_its_machine_and_two_pens_give_two_files(tmp_path, i
     r = coarse(tmp_path, image, "--preset", str(saved), "--gcode", str(out / "two"), *pens)
     assert r.exit_code == 0 and f"gcode: 2 files in {out / 'two'}" in r.stdout, r.output
     assert sorted(f.name for f in (out / "two").iterdir()) == ["plot_1_A.gcode", "plot_2_B.gcode"]
+
+
+def test_hpgl_is_written_with_the_given_resolution(tmp_path, image):
+    out = tmp_path / "o.hpgl"
+    assert coarse(tmp_path, image, "--hpgl", str(out)).exit_code == 0
+    text = out.read_text(encoding="ascii")
+    assert text.startswith("IN;\nSP1;\nPU") and text.endswith("PU;\nSP0;\n")
+    first = [int(v) for v in text.splitlines()[2][2:-1].split(",")]
+    assert coarse(tmp_path, image, "--hpgl", str(out), "--hpgl-units", "10").exit_code == 0
+    coarser = [int(v) for v in out.read_text(encoding="ascii").splitlines()[2][2:-1].split(",")]
+    # A quarter of the units to the mm, so the first point is a quarter as far from the corner.
+    assert all(abs(a - 4 * b) <= 2 for a, b in zip(first, coarser, strict=True))
+    out.unlink()
+    for bad in ("0", "-5", "1000.5"):
+        r = coarse(tmp_path, image, "--hpgl", str(out), "--hpgl-units", bad)
+        assert r.exit_code == 2 and "--hpgl-units" in r.output
+    assert not out.exists()
 
 
 def test_a_gcode_run_needs_a_machine_that_works(tmp_path, image):
