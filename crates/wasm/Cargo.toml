@@ -16,3 +16,8 @@ plotline-core = { path = "../core" }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+# wasm-pack's default is -O. -O3 makes the module 7 KB larger and the Voronoi relaxation about 12
+# percent faster (brief §14, "Wasm size limit").
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O3"]

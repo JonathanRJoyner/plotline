@@ -30,7 +30,7 @@ cargo test --locked -p plotline-core
 cargo deny check licenses
 ```
 
-WebAssembly, in `crates/wasm`. The built `web/pkg/plotline_wasm_bg.wasm` must stay at or under 2,000,000 bytes:
+WebAssembly, in `crates/wasm`. The built `web/pkg/plotline_wasm_bg.wasm` must stay at or under 2,300,000 bytes:
 
 ```sh
 wasm-pack test --node
