@@ -79,6 +79,44 @@ test("a style switch keeps a changed setting, and Reset to defaults restores it"
   await expect(count).toHaveValue(initial);
 });
 
+test("a look changes the density setting, Undo takes it back, and Reset to defaults shows Balanced", async ({ page }) => {
+  let id = await sample(page);
+  // The style the page opens on has a Fine look; the menu lists the labels the engine gives.
+  const look = page.getByRole("combobox", { name: "Look", exact: true });
+  const shown = look.locator("option:checked");
+  const spacing = page.getByRole("spinbutton", { name: /^spacing( mm)?$/i });
+  await expect(look.getByRole("option", { name: "Fine" })).toHaveCount(1);
+  await expect(shown).toHaveText("Balanced");
+  const balanced = await spacing.inputValue();
+  await look.selectOption({ label: "Fine" });
+  id = await ran(page, id);
+  await expect(shown).toHaveText("Fine");
+  await expect(spacing).not.toHaveValue(balanced);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  id = await ran(page, id);
+  await expect(shown).toHaveText("Balanced");
+  await expect(spacing).toHaveValue(balanced);
+  // A changed setting is no look, and the menu then shows Custom.
+  await spacing.fill("1.7");
+  await spacing.blur();
+  id = await ran(page, id);
+  await expect(shown).toHaveText("Custom");
+  await look.selectOption({ label: "Fine" });
+  id = await ran(page, id);
+  await expect(shown).toHaveText("Fine");
+  await page.getByRole("button", { name: "Reset to defaults" }).click();
+  await ran(page, id);
+  await expect(shown).toHaveText("Balanced");
+  await expect(spacing).toHaveValue(balanced);
+});
+
+test("a style with no look but Balanced hides the Look menu", async ({ page }) => {
+  const id = await sample(page);
+  await expect(page.getByRole("combobox", { name: "Look", exact: true })).toBeVisible();
+  await pick(page, "ink", id);
+  await expect(page.getByRole("combobox", { name: "Look", exact: true })).toHaveCount(0);
+});
+
 test("Fit to target meets its target", async ({ page }) => {
   test.setTimeout(120_000);
   await pick(page, "hatch", await sample(page));
@@ -175,6 +213,40 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await page.keyboard.press("Control+z");
   await expect(styleSelect(page)).toHaveValue(first);
   await ran(page, id);
+});
+
+test("a machine lifted by G-code lines writes them, with long moves cut", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("combobox", { name: /^Machine/ }).selectOption("new");
+  await dialog.getByRole("button", { name: "Pen lift", exact: true }).click();
+  await dialog.getByRole("combobox", { name: /^Lift by/ }).selectOption("gcode");
+  const down = dialog.getByRole("textbox", { name: "Pen down" });
+  await expect(down).toHaveValue("M280 P0 S30");
+  await down.fill("M3 S40");
+  await down.blur();
+  await dialog.getByRole("button", { name: "G-code", exact: true }).click();
+  const longest = dialog.getByRole("spinbutton", { name: /^Longest move/ });
+  await longest.fill("2");
+  await longest.blur();
+  await expect(longest).toHaveValue("2"); // a refused value would snap back to empty
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Sample image" }).click();
+  await ran(page, 0);
+  const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "G-code", exact: true }).click()]);
+  const lines = readFileSync(await file.path(), "utf8").split("\n").filter((l) => l && !l.startsWith(";"));
+  expect(lines).toContain("M3 S40");
+  expect(lines).toContain("M280 P0 S90");
+  expect(lines.filter((l) => l.includes("Z"))).toEqual([]);
+  // Every move after the first travel, whose start the file does not know, is at most 2 mm.
+  const points = lines.flatMap((l) => {
+    const m = /^G[01] X(\S+) Y(\S+)/.exec(l);
+    return m ? [[Number(m[1]), Number(m[2])]] : [];
+  });
+  expect(points.length).toBeGreaterThan(10);
+  const longer = points.slice(1).filter(([x, y], i) => Math.hypot(x - points[i][0], y - points[i][1]) > 2.002);
+  expect(longer).toEqual([]);
 });
 
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.

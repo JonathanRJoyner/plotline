@@ -12,6 +12,7 @@ export const STEPS: Step[] = [
   { title: "Welcome to plotline", text: "plotline turns an image into lines a pen plotter can draw. This tour shows where everything is. Tour in the toolbar opens it again." },
   { target: "image", title: "Open an image", text: "Open a PNG, JPEG or WebP, or drop or paste one anywhere on the page. Sample image opens a still life to try things on." },
   { target: "style", title: "Pick a style", text: "Each style turns the image's tone into a different kind of mark. The line under the menu says what the chosen one does. A switch keeps the settings you changed wherever the new style has them, so the Voronoi styles reuse their points without placing them again." },
+  { target: "look", title: "Pick a look", text: "Most styles offer a few looks, chosen by measuring test images: Balanced is the defaults, Faithful follows the image's tones most closely, Quick plots in about half an hour, and Fine draws the densest marks that still plot cleanly. A look changes only the few settings that set it, so the image, page, pens and Pen use stay; Custom shows once you change one of them, and Undo takes a look back." },
   { target: "styles", title: "Try every style", text: "Try all styles draws every style small on your image, page and pens, so you can choose by eye. Click a picture to switch to that style. Closing the window stops the drawing and leaves your own drawing as it was." },
   { target: "reset", title: "Start over", text: "Reset to defaults puts every setting of the chosen style back to its default, Pen use included. The image, page and pens stay as they are, and Undo takes the reset back." },
   { target: "settings", title: "Shape the drawing", text: "The style's own settings come first. Path order and Image, with the levels, gamma and blur, are collapsed below. A change reruns only the stages after it." },
@@ -26,8 +27,8 @@ export const STEPS: Step[] = [
   { target: "page", title: "Set the page", text: "The paper size, orientation and margin. Fit keeps the whole image on the page; fill covers the drawing area and crops the rest." },
   { target: "pens", title: "Choose pens", text: "Edit pens opens the pens dialog: pick a maker's pen from the bank at its published line width, or set a width yourself, and choose an ink colour. The tick hides a pen in the preview. Pen use shares the drawing between the pens: light to dark in list order, or each pen by its colour; pens plot in list order, so list light inks first." },
   { target: "export", title: "Export", text: "SVG writes the drawing in millimetres, one layer per pen that draws, for your plotter's own software. JSON writes the paths for other programs." },
-  { target: "presets", title: "Keep a look", text: "A preset is a small file with the style, page, pens and settings, so you can come back to a look or share it. The page also remembers your last setup." },
-  { target: "machine", title: "Plot from G-code", text: "Settings holds a pen-fitted 3D printer: its drawable area, pen heights and feeds. Once one is set, Export writes a G-code file per pen." },
+  { target: "presets", title: "Keep a setup", text: "A preset is a small file with the style, page, pens and settings, so you can come back to a setup or share it. The page also remembers your last setup." },
+  { target: "machine", title: "Plot from G-code", text: "Settings holds your machine: its drawable area, its feeds, and how it lifts the pen, by Z moves or by its own lines for a servo or a solenoid. Once one is set, Export writes a G-code file per pen." },
   { target: "help", title: "Help on every setting", text: "Hover over a setting's name to read its help, or turn on Show help to see it under every control." },
 ];
 
