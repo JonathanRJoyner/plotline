@@ -232,8 +232,7 @@ pub fn lookup(samples: &[(f64, f64)]) -> Option<Vec<f32>> {
     }
     let ys = pava(&fitted);
     let (lo, hi) = (*ys.first()?, *ys.last()?);
-    // Written so that a fit gone to NaN counts as no response too.
-    if !(hi - lo >= MIN_RANGE) {
+    if hi - lo < MIN_RANGE {
         return None;
     }
     let inverse = |target: f64| {
