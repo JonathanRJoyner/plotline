@@ -215,6 +215,40 @@ test("Undo and Redo step through style changes", async ({ page }) => {
   await ran(page, id);
 });
 
+test("a machine lifted by G-code lines writes them, with long moves cut", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("combobox", { name: /^Machine/ }).selectOption("new");
+  await dialog.getByRole("button", { name: "Pen lift", exact: true }).click();
+  await dialog.getByRole("combobox", { name: /^Lift by/ }).selectOption("gcode");
+  const down = dialog.getByRole("textbox", { name: "Pen down" });
+  await expect(down).toHaveValue("M280 P0 S30");
+  await down.fill("M3 S40");
+  await down.blur();
+  await dialog.getByRole("button", { name: "G-code", exact: true }).click();
+  const longest = dialog.getByRole("spinbutton", { name: /^Longest move/ });
+  await longest.fill("2");
+  await longest.blur();
+  await expect(longest).toHaveValue("2"); // a refused value would snap back to empty
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Sample image" }).click();
+  await ran(page, 0);
+  const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "G-code", exact: true }).click()]);
+  const lines = readFileSync(await file.path(), "utf8").split("\n").filter((l) => l && !l.startsWith(";"));
+  expect(lines).toContain("M3 S40");
+  expect(lines).toContain("M280 P0 S90");
+  expect(lines.filter((l) => l.includes("Z"))).toEqual([]);
+  // Every move after the first travel, whose start the file does not know, is at most 2 mm.
+  const points = lines.flatMap((l) => {
+    const m = /^G[01] X(\S+) Y(\S+)/.exec(l);
+    return m ? [[Number(m[1]), Number(m[2])]] : [];
+  });
+  expect(points.length).toBeGreaterThan(10);
+  const longer = points.slice(1).filter(([x, y], i) => Math.hypot(x - points[i][0], y - points[i][1]) > 2.002);
+  expect(longer).toEqual([]);
+});
+
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.
 const STEPS = [...readFileSync(new URL("../src/tour.tsx", import.meta.url), "utf8").matchAll(/\{ (?:target: "([^"]+)", )?title: "([^"]+)"/g)]
   .map(([, target, title]) => ({ target, title }));
