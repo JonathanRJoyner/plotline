@@ -227,6 +227,43 @@ test("Response auto corrects the tone map for the style", async ({ page }) => {
   await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
 });
 
+test("Focus marks points on the preview, a click on one removes it, and Undo brings it back", async ({ page }) => {
+  let id = await sample(page);
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  const rings = page.locator(".focus-rings .ring");
+  const count = page.locator(".focus-line");
+  await expect(rings).toHaveCount(0);
+  await expect(count).toHaveCount(0);
+  // Focus mode: a click on the drawn image, the middle of the page, marks a point there.
+  await page.locator("label.chip", { hasText: "Focus" }).click();
+  await page.locator(".preview canvas").click();
+  await expect(count).toContainText("1 focus point");
+  await expect(rings).toHaveCount(1);
+  id = await ran(page, id);
+  // A second point, off the first and away from its removal target, and the count says so.
+  const box = (await page.locator(".preview canvas").boundingBox())!;
+  await page.locator(".preview canvas").click({ position: { x: box.width / 2 + 120, y: box.height / 2 - 80 } });
+  await expect(count).toContainText("2 focus points");
+  await expect(rings).toHaveCount(2);
+  id = await ran(page, id);
+  // A click on a point removes it; Clear takes the rest.
+  await page.getByRole("button", { name: "Remove focus point 1" }).click();
+  await expect(count).toContainText("1 focus point");
+  await expect(rings).toHaveCount(1);
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Remove focus point 1" }).click();
+  await expect(rings).toHaveCount(0);
+  await expect(count).toHaveCount(0);
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(rings).toHaveCount(1);
+  await expect(count).toContainText("1 focus point");
+  id = await ran(page, id);
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(rings).toHaveCount(0);
+  await ran(page, id);
+});
+
 test("the thumbnail grid picks a style", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);

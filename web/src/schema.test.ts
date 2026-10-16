@@ -66,6 +66,11 @@ test("splitStages puts the style's own stages first, then order, then tone as Im
   expect(splitStages([st("a")])).toEqual({ own: [st("a")], shared: [], pens: [] });
 });
 
+test("a property marked x-hidden has no control", () => {
+  const schema = { properties: { blur: { type: "number" }, focus: { type: "array", default: [], "x-hidden": true }, gamma: { type: "number" } } };
+  expect(controlsFor(schema).map((c) => c.key)).toEqual(["blur", "gamma"]);
+});
+
 test("underscores in enum values read as spaces", () => {
   const [c] = controlsFor({ properties: { mode: { enum: ["one_pen", "by_colour"], default: "one_pen" } } });
   expect(c.kind === "select" && c.options.map((o) => o.label)).toEqual(["one pen", "by colour"]);
