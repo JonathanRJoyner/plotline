@@ -12,7 +12,7 @@ Eighteen styles, each a pipeline of cached stages, so changing a late setting re
 - **The Voronoi point family:** `stipple`, `line` (one unbroken line that does not cross itself), `dashes`, `tree`, `mesh` and `cells`. They share one placement of points, so switching between them reuses the points.
 - **Sketch Lines:** `sketch`.
 - **Other placers:** `halftone`, `dither` and `circles`.
-- **Tone only:** `contours`, `flow` and `hilbert`.
+- **Tone only:** `contours`, `flow` and `hilbert`. `hilbert` fills the page's own rectangle with a generalized Hilbert curve, so with one pen it is one unbroken line.
 
 Every run ends with path ordering, which cuts pen-up travel, joins paths whose ends nearly touch and drops paths below a minimum length.
 
