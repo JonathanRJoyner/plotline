@@ -252,6 +252,35 @@ test("a refused patch redraws nothing", async () => {
   expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
 });
 
+test("applyLook sets the look's settings, the state names it, and the page can undo it through restore", async () => {
+  const { posted, call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("setStyle", "waves");
+  await ended(2);
+  const before = ok("preset").state;
+  expect(before.look).toBe("balanced");
+  const runs = () => posted.filter((m) => m.type === "run").length;
+  const { state } = ok("applyLook", "fine");
+  expect(state.look).toBe("fine");
+  expect((state.settings.waves as { spacing_mm: number }).spacing_mm).toBe(1);
+  expect(state.settings.tone).toEqual(before.settings.tone); // only the look's keys change
+  expect(runs()).toBe(3);
+  await ended(3);
+  // An unknown look changes nothing and redraws nothing.
+  const refused = call("applyLook", "no such look");
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toContain("balanced");
+  expect(ok("preset").state.look).toBe("fine");
+  expect(runs()).toBe(3);
+  // A setting off the look's value is Custom, and a restore of the earlier setup shows Balanced.
+  expect(ok("update", "waves", { spacing_mm: 1.7 }).state.look).toBeNull();
+  await ended(4);
+  const { style, canvas, pens, machine, settings } = before;
+  expect(ok("restore", { style, canvas, pens, machine, settings }).state.look).toBe("balanced");
+  await ended(5);
+});
+
 test("thumbs draws styles without touching the drawing, and cancelThumbs stops it", async () => {
   let thumbs = 0;
   const { posted, ok, ended } = setup((m, call) => { if (m.type === "thumb" && ++thumbs === 2) expect(call("cancelThumbs").ok).toBe(true); });

@@ -11,9 +11,10 @@
 //! `Tone` and `Pens`. A style may split once, and a split style gives paths, not layers, since the
 //! runner makes the layers from the lanes.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+use serde::Serialize;
 use serde_json::{json, Value};
 use thiserror::Error;
 
@@ -74,6 +75,58 @@ pub enum StyleError {
     LayersAfterSplit { style: String, name: String },
 }
 
+/// The looks a style may have, in the order they are listed: name, label, description.
+pub const LOOKS: [(&str, &str, &str); 4] = [
+    (
+        "balanced",
+        "Balanced",
+        "The style's defaults: a good start on most images.",
+    ),
+    (
+        "faithful",
+        "Faithful",
+        "Follows the image's tones most closely, as measured on test images.",
+    ),
+    (
+        "quick",
+        "Quick",
+        "Sparser marks that plot in about half an hour on A4 at the default speeds.",
+    ),
+    (
+        "fine",
+        "Fine",
+        "The densest marks that still plot cleanly with a 0.3 mm pen and keep the tones.",
+    ),
+];
+
+/// A named starting point within a style: values for the settings its looks set.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Look {
+    /// The stable identifier, one of the names in [`LOOKS`].
+    pub name: String,
+    /// The name shown to users.
+    pub label: String,
+    /// What the look is for, the same for every style.
+    pub description: String,
+    /// `{stage: {key: value}}` for every key any look of the style sets: this look's value, or the
+    /// style's default where this look leaves the key alone.
+    pub settings: Value,
+}
+
+/// Whether two setting values are equal, numbers by value: JavaScript writes `1.0` as `1`, which
+/// JSON reads as an integer. Objects compare key by key.
+pub(crate) fn same(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| same(v, w)))
+        }
+        _ => match (a.as_f64(), b.as_f64()) {
+            (Some(x), Some(y)) => x == y,
+            _ => a == b,
+        },
+    }
+}
+
 /// A named recipe: stages that run in order, each reading artifacts by kind.
 pub struct Style {
     /// The stable identifier.
@@ -90,6 +143,9 @@ pub struct Style {
     split: Option<usize>,
     /// Settings this style starts from in place of its stages' own defaults, by stage name.
     overrides: Value,
+    /// The looks the style declares besides Balanced, in order, each with its patch
+    /// `{stage: {key: value}}` over the defaults.
+    looks: Vec<(String, Value)>,
 }
 
 impl Style {
@@ -177,6 +233,7 @@ impl Style {
             sources,
             split,
             overrides: json!({}),
+            looks: Vec::new(),
         })
     }
 
@@ -195,6 +252,84 @@ impl Style {
         self
     }
 
+    /// The style with the look `name` added: `patch` (`{stage: {key: value}}`) merged over the
+    /// style's defaults, so declare looks after any [`Style::with_defaults`]. Panics for a name
+    /// that is not in [`LOOKS`] or is `"balanced"`, which every style has; a look declared twice
+    /// or out of the order of [`LOOKS`]; a stage the style does not have or a value its schema
+    /// refuses; and a look with the same settings as another, which includes a patch that only
+    /// repeats the defaults. Built-in styles are fixed at compile time, so a panic shows up in
+    /// every test run.
+    pub fn with_look(mut self, name: &str, patch: Value) -> Style {
+        let style = self.name.clone();
+        let rank = |look: &str| LOOKS.iter().position(|(n, _, _)| *n == look);
+        let Some(index) = rank(name).filter(|&i| i > 0) else {
+            panic!("style {style:?}: {name:?} is not a look a style declares");
+        };
+        if self.looks.iter().any(|(n, _)| n == name) {
+            panic!("style {style:?}: look {name:?} is declared twice");
+        }
+        if let Some((last, _)) = self.looks.last().filter(|(l, _)| rank(l) > Some(index)) {
+            panic!("style {style:?}: look {name:?} is declared after {last:?}");
+        }
+        let Some(stages) = patch.as_object() else {
+            panic!("style {style:?}: look {name:?}: the patch must be an object of stages");
+        };
+        let defaults = self.defaults();
+        for (stage, values) in stages {
+            let i = self
+                .stage_index(stage)
+                .unwrap_or_else(|| panic!("style {style:?} has no stage {stage:?}"));
+            let merged = merge(&defaults[stage], values);
+            validate::<Value>(stage, &self.stages[i].schema(), &merged)
+                .unwrap_or_else(|e| panic!("style {style:?}: look {name:?}: {e}"));
+        }
+        self.looks.push((name.to_string(), patch));
+        let looks = self.looks();
+        let (last, earlier) = looks.split_last().expect("a look was just added");
+        if let Some(other) = earlier.iter().find(|l| same(&l.settings, &last.settings)) {
+            let other = &other.name;
+            panic!("style {style:?}: look {name:?} has the same settings as look {other:?}");
+        }
+        self
+    }
+
+    /// Every look of the style: Balanced, which is the defaults, then the declared looks in the
+    /// order of [`LOOKS`]. Each look's `settings` cover every key any declared look sets, and a
+    /// look that leaves a key alone has the style's default there. A style with no declared look
+    /// has only Balanced, with no settings.
+    pub fn looks(&self) -> Vec<Look> {
+        let defaults = self.defaults();
+        let mut keys = BTreeSet::new();
+        for (_, patch) in &self.looks {
+            for (stage, values) in patch.as_object().into_iter().flatten() {
+                for key in values.as_object().into_iter().flatten().map(|(k, _)| k) {
+                    keys.insert((stage, key));
+                }
+            }
+        }
+        let make = |name: &str, patch: Option<&Value>| {
+            let mut settings = json!({});
+            for &(stage, key) in &keys {
+                let set = patch.and_then(|p| p.get(stage)?.get(key));
+                settings[stage][key] = set.unwrap_or(&defaults[stage][key]).clone();
+            }
+            let (_, label, description) = LOOKS
+                .iter()
+                .find(|(n, _, _)| *n == name)
+                .expect("every look is in LOOKS");
+            Look {
+                name: name.to_string(),
+                label: label.to_string(),
+                description: description.to_string(),
+                settings,
+            }
+        };
+        let declared = self.looks.iter().map(|(n, patch)| make(n, Some(patch)));
+        std::iter::once(make("balanced", None))
+            .chain(declared)
+            .collect()
+    }
+
     /// Where stage `stage_index` reads each of its required kinds from, in the order of its
     /// `requires`. Panics if the index is out of range.
     pub fn sources(&self, stage_index: usize) -> &[(Kind, Source)] {
@@ -208,8 +343,9 @@ impl Style {
     }
 
     /// The style and each stage's settings as JSON Schema, for UIs and tool descriptions:
-    /// `{"name", "label", "description", "stages": [{"name", "label", "schema"}]}`.
-    /// A stage's schema shows the style's own defaults where the style overrides them.
+    /// `{"name", "label", "description", "stages": [{"name", "label", "schema"}], "looks":
+    /// [{"name", "label", "description", "settings"}]}`. A stage's schema shows the style's own
+    /// defaults where the style overrides them.
     pub fn schema(&self) -> Value {
         let stages: Vec<Value> = self
             .stages
@@ -229,6 +365,7 @@ impl Style {
             "label": self.label,
             "description": self.description,
             "stages": stages,
+            "looks": self.looks(),
         })
     }
 
@@ -417,5 +554,140 @@ mod tests {
             s.schema()["stages"][0]["schema"]["properties"]["knob"]["default"],
             3
         );
+    }
+
+    /// Two stages, `p` then `q`, each with the one setting `knob`, `p` defaulting to 3.
+    fn two_knobs() -> Style {
+        let p = Arc::new(Spy::new("p", &[Kind::Image], Kind::Points, points(1)));
+        let q = Arc::new(Spy::new("q", &[Kind::Points], Kind::Paths, paths(1)));
+        Style::new("s", "S", "d", vec![p, q])
+            .unwrap()
+            .with_defaults("p", json!({"knob": 3}))
+    }
+    fn names(looks: &[Look]) -> Vec<&str> {
+        looks.iter().map(|l| l.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_style_without_looks_has_only_balanced() {
+        let looks = two_knobs().looks();
+        assert_eq!(names(&looks), ["balanced"]);
+        assert_eq!(looks[0].label, "Balanced");
+        assert_eq!(looks[0].description, LOOKS[0].2);
+        assert_eq!(looks[0].settings, json!({}));
+    }
+    #[test]
+    fn looks_merge_over_the_defaults_and_fill_the_other_keys() {
+        let s = two_knobs()
+            .with_look("faithful", json!({"p": {"knob": 5}}))
+            .with_look("fine", json!({"q": {"knob": 7}}));
+        let looks = s.looks();
+        assert_eq!(names(&looks), ["balanced", "faithful", "fine"]);
+        // Every look has every key a look sets, and the style's default where it sets none.
+        let settings = |i: usize| looks[i].settings.clone();
+        assert_eq!(settings(0), json!({"p": {"knob": 3}, "q": {"knob": 0}}));
+        assert_eq!(settings(1), json!({"p": {"knob": 5}, "q": {"knob": 0}}));
+        assert_eq!(settings(2), json!({"p": {"knob": 3}, "q": {"knob": 7}}));
+        assert_eq!(looks[1].label, "Faithful");
+        assert_eq!(looks[2].description, LOOKS[3].2);
+    }
+    #[test]
+    fn a_look_differs_from_the_styles_defaults_not_the_stages() {
+        // The stage alone defaults to 0, but the style's default for p.knob is 3.
+        let s = two_knobs().with_look("quick", json!({"p": {"knob": 0}}));
+        assert_eq!(s.looks()[1].settings, json!({"p": {"knob": 0}}));
+    }
+    #[test]
+    fn looks_follow_the_order_of_the_list_not_the_order_of_keys() {
+        let s = two_knobs()
+            .with_look("faithful", json!({"q": {"knob": 1}}))
+            .with_look("quick", json!({"p": {"knob": 1}}))
+            .with_look("fine", json!({"p": {"knob": 2}, "q": {"knob": 2}}));
+        assert_eq!(names(&s.looks()), ["balanced", "faithful", "quick", "fine"]);
+    }
+    #[test]
+    fn the_schema_lists_the_looks() {
+        let s = two_knobs().with_look("fine", json!({"q": {"knob": 7}}));
+        let looks = &s.schema()["looks"];
+        assert_eq!(looks.as_array().unwrap().len(), 2);
+        assert_eq!(looks[0]["name"], "balanced");
+        assert_eq!(looks[0]["label"], "Balanced");
+        assert_eq!(looks[0]["settings"], json!({"q": {"knob": 0}}));
+        assert_eq!(looks[1]["name"], "fine");
+        assert_eq!(looks[1]["description"], LOOKS[3].2);
+        assert_eq!(looks[1]["settings"], json!({"q": {"knob": 7}}));
+        assert_eq!(two_knobs().schema()["looks"][0]["settings"], json!({}));
+    }
+    #[test]
+    fn same_compares_numbers_by_value_and_objects_by_key() {
+        assert!(same(&json!(1), &json!(1.0)));
+        assert!(!same(&json!(1), &json!(2)));
+        assert!(same(&json!("a"), &json!("a")));
+        assert!(same(&json!({"p": {"k": 1}}), &json!({"p": {"k": 1.0}})));
+        assert!(!same(&json!({"p": {"k": 1}}), &json!({"p": {"k": 2}})));
+        assert!(!same(&json!({"p": 1}), &json!({"q": 1})));
+    }
+
+    #[test]
+    #[should_panic(expected = "\"sparkly\" is not a look")]
+    fn a_look_name_must_be_listed() {
+        two_knobs().with_look("sparkly", json!({"p": {"knob": 5}}));
+    }
+    #[test]
+    #[should_panic(expected = "\"balanced\" is not a look")]
+    fn balanced_is_never_declared() {
+        two_knobs().with_look("balanced", json!({"p": {"knob": 5}}));
+    }
+    #[test]
+    #[should_panic(expected = "declared twice")]
+    fn a_look_is_declared_once() {
+        two_knobs()
+            .with_look("fine", json!({"p": {"knob": 5}}))
+            .with_look("fine", json!({"p": {"knob": 6}}));
+    }
+    #[test]
+    #[should_panic(expected = "\"faithful\" is declared after \"fine\"")]
+    fn looks_are_declared_in_the_order_of_the_list() {
+        two_knobs()
+            .with_look("fine", json!({"p": {"knob": 5}}))
+            .with_look("faithful", json!({"p": {"knob": 6}}));
+    }
+    #[test]
+    #[should_panic(expected = "has no stage \"nope\"")]
+    fn a_look_names_a_stage_of_the_style() {
+        two_knobs().with_look("fine", json!({"nope": {"knob": 5}}));
+    }
+    #[test]
+    #[should_panic(expected = "knob")]
+    fn a_look_value_passes_the_schema() {
+        two_knobs().with_look("fine", json!({"p": {"knob": "high"}}));
+    }
+    #[test]
+    #[should_panic(expected = "'nob': unknown setting")]
+    fn a_look_key_is_one_the_stage_has() {
+        two_knobs().with_look("fine", json!({"p": {"nob": 5}}));
+    }
+    #[test]
+    #[should_panic(expected = "must be an object of stages")]
+    fn a_look_patch_is_an_object() {
+        two_knobs().with_look("fine", json!(5));
+    }
+    #[test]
+    #[should_panic(expected = "same settings as look \"balanced\"")]
+    fn a_patch_that_repeats_the_defaults_is_refused() {
+        // 3 is the style's default for p.knob.
+        two_knobs().with_look("fine", json!({"p": {"knob": 3}}));
+    }
+    #[test]
+    #[should_panic(expected = "same settings as look \"balanced\"")]
+    fn an_empty_patch_is_refused() {
+        two_knobs().with_look("fine", json!({}));
+    }
+    #[test]
+    #[should_panic(expected = "same settings as look \"faithful\"")]
+    fn two_looks_with_the_same_settings_are_refused() {
+        two_knobs()
+            .with_look("faithful", json!({"p": {"knob": 5}}))
+            .with_look("fine", json!({"p": {"knob": 5}}));
     }
 }

@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, NotRequired, cast
 
 import anyio
 from mcp.server.mcpserver import Context, Image, MCPServer
@@ -37,11 +37,11 @@ from plotline.types import Cancelled, Canvas, Frame, Pen, RunState
 INSTRUCTIONS = (
     "plotline turns an image into line art for a pen plotter. Work in this order: load_image, "
     "then set_page and set_pens if the defaults do not fit, then list_styles and describe_style "
-    "to choose a style and see its settings. Call analyse_image to see the image's statistics and "
-    "suggested changes; apply a suggestion with run(style=..., settings=...) or set_page, and "
-    "set_pens first when its patch holds pens. run draws the image and returns its stats, the "
-    "tone match, the plot lint's findings and a preview at true pen width; apply a finding's "
-    "patch the same way as a suggestion's. Look at the preview, change settings with "
+    "to choose a style and see its settings and looks. Call analyse_image to see the image's "
+    "statistics and suggested changes; apply a suggestion with run(style=..., settings=...) or "
+    "set_page, and set_pens first when its patch holds pens. run draws the image and returns its "
+    "stats, the tone match, the plot lint's findings and a preview at true pen width; apply a "
+    "finding's patch the same way as a suggestion's. Look at the preview, change settings with "
     "run(settings=...), and repeat; only the stages after a changed setting run again. To meet a "
     "budget of plot time, paths, pen-down metres or dots, call fit, which sets the style's "
     "density setting. To make the drawing's tones follow the image more closely, call optimize, "
@@ -84,6 +84,10 @@ class MachineSpec(TypedDict):
     settle_ms: int
     start_gcode: str
     end_gcode: str
+    pen_lift: NotRequired[Literal["z", "gcode"]]
+    pen_down_gcode: NotRequired[str]
+    pen_up_gcode: NotRequired[str]
+    max_segment_mm: NotRequired[float | None]
 
 
 @contextmanager
@@ -229,13 +233,18 @@ def build_server(session: Session | None = None) -> MCPServer:
         height} in mm. z_down_mm is the height of the pen when it draws, z_up_mm its height when
         it travels between paths and z_safe_mm the height it lifts to before the first move and
         before end_gcode, all in mm. draw_feed, travel_feed and z_feed are the speeds for drawing,
-        travelling and Z moves, in mm per minute. settle_ms is the pause after each Z move.
+        travelling and Z moves, in mm per minute. settle_ms is the pause after each pen move.
         start_gcode and end_gcode are lines written as they are after the setup and after the last
-        lift. The page becomes the area's width and height, with the margin and fit kept, so that
-        the drawing fits the machine; set_page can change it afterwards. The machine also sets
-        the plot speeds that the stats and the lint use. export with format gcode needs a
-        machine, and a result drawn before the page changed must run again first. When any part
-        is refused, nothing changes. Returns the machine and the page."""
+        lift. For a pen lifted by a servo or a solenoid, set pen_lift to "gcode" and give
+        pen_down_gcode and pen_up_gcode, the lines written as they are in place of each Z move;
+        the Z heights and z_feed are then unused. max_segment_mm, for a machine whose firmware
+        draws a long straight move as a curve (a hanging plotter, say), cuts every move into
+        pieces no longer than it; leave it out to keep moves whole. The page becomes the area's
+        width and height, with the margin and fit kept, so that the drawing fits the machine;
+        set_page can change it afterwards. The machine also sets the plot speeds that the stats
+        and the lint use. export with format gcode needs a machine, and a result drawn before the
+        page changed must run again first. When any part is refused, nothing changes. Returns the
+        machine and the page."""
         with _errors():
             old_machine, old_speeds = session.machine, session.speeds
             try:
@@ -253,16 +262,22 @@ def build_server(session: Session | None = None) -> MCPServer:
             return {"machine": session.machine, "page": asdict(session.canvas)}
 
     def change(
-        style: str | None, settings: dict[str, dict[str, Any]] | None, reset: bool = False
+        style: str | None,
+        settings: dict[str, dict[str, Any]] | None,
+        reset: bool = False,
+        look: str | None = None,
     ) -> None:
-        """Switch to ``style``, reset the settings when ``reset`` is set, and apply ``settings``;
-        when a change is refused, put the style and settings back and raise."""
+        """Switch to ``style``, reset the settings when ``reset`` is set, start from ``look``, and
+        apply ``settings``; when a change is refused, put the style and settings back and
+        raise."""
         old_style, old_settings = session.style.name, session.settings
         try:
             if style is not None and style != old_style:
                 session.set_style(style)
             if reset:
                 session.reset_settings()
+            if look is not None:
+                session.apply_look(look)
             for stage, values in (settings or {}).items():
                 session.update(stage, **values)
         except Exception:
@@ -308,6 +323,7 @@ def build_server(session: Session | None = None) -> MCPServer:
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
         reset: bool = False,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
         px wide. The JSON's tone key is {error, ssim, floor, reach}: how the drawing's tones,
@@ -318,11 +334,13 @@ def build_server(session: Session | None = None) -> MCPServer:
         applies like an analyse_image suggestion's. A style that
         differs from the current one replaces it; a stage the two styles share keeps the values
         changed from the old style's defaults, and the rest take the new style's defaults. reset
-        puts every setting back to the style's defaults first. settings is {stage: {setting:
-        value}} and changes only the values given; only the stages after a changed setting run
-        again. When a change is refused, nothing changes and nothing runs."""
+        puts every setting back to the style's defaults first. look starts from one of the style's
+        looks, such as faithful, quick or fine, after reset and before settings; describe_style
+        lists them. settings is {stage: {setting: value}} and changes only the values given; only
+        the stages after a changed setting run again. When a change is refused, nothing changes
+        and nothing runs."""
         with _errors():
-            change(style, settings, reset)
+            change(style, settings, reset, look)
             await follow(ctx, session.run)
             return shown()
 
@@ -333,16 +351,17 @@ def build_server(session: Session | None = None) -> MCPServer:
         target: float,
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Find the value of the style's density setting that brings a metric of the drawing near
         target: minutes of estimated plot time, paths, metres of pen-down length, or dots for a
-        style that places points. style and settings apply first, as in run. The style reruns
+        style that places points. style, look and settings apply first, as in run. The style reruns
         with the setting changed, up to eight times, and keeps the run nearest the target; the
         setting keeps its value. Returns the stage, key, chosen value and the value and metric of
         every trial as JSON, then the stats and a preview as run does. The time estimate leaves
         out acceleration, so a time target runs optimistic on styles of short strokes or dots."""
         with _errors():
-            change(style, settings)
+            change(style, settings, look=look)
             handle = await follow(ctx, lambda: session.fit(metric, target))
             return [json.dumps(handle.fit), *shown()]
 
@@ -353,11 +372,13 @@ def build_server(session: Session | None = None) -> MCPServer:
         target: float | None = None,
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Search the style's density setting for the value whose drawing's tones follow the
         image most closely, by the tone match's error, in eight runs: the current value, then a
         golden-section search from a quarter to four times it. Given metric and target, as for
-        fit, a trial over the target does not count. style and settings apply first, as in run.
+        fit, a trial over the target does not count. style, look and settings apply first, as in
+        run.
         Nothing else changes: returns {stage, key, value, error, current, current_error, budget,
         trials, reason, patch} as JSON, or null when no trial stayed within the target, then the
         stats and a preview of the current settings as run does. Apply the patch with
@@ -366,7 +387,7 @@ def build_server(session: Session | None = None) -> MCPServer:
         with _errors():
             if (metric is None) != (target is None):
                 raise ValueError("give both a metric and a target, or neither")
-            change(style, settings)
+            change(style, settings, look=look)
             handle = await follow(ctx, lambda: session.optimize(metric, target))
             return [json.dumps(handle.optimum), *shown()]
 
@@ -400,13 +421,15 @@ def build_server(session: Session | None = None) -> MCPServer:
 
     @server.tool()
     async def get_session() -> dict[str, Any]:
-        """Show the style, its settings, the page in mm, the pens, the image size, the state of the
-        latest run and the stats of the result, where there is one."""
+        """Show the style, its settings, the look they are at (null for none), the page in mm, the
+        pens, the image size, the state of the latest run and the stats of the result, where there
+        is one."""
         with _errors():
             stats = asdict(session.stats()) if session.result is not None else None
             return {
                 "style": session.style.name,
                 "settings": session.settings,
+                "look": session.look,
                 "page": asdict(session.canvas),
                 "pens": [asdict(pen) for pen in session.pens],
                 "machine": session.machine,

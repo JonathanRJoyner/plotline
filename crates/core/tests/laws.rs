@@ -5,7 +5,9 @@
 //! is a small image built in code (a two-colour gradient under discs, boxes and noise, or one of
 //! the crate's synthetic pictures), a page and margin, one to three pens, a style, and a value for
 //! each of its settings, Pen use included, from the schema's range: the default, either end, or
-//! anything between. proptest shrinks a failing case and prints it.
+//! anything between. proptest shrinks a failing case and prints it. The look law is the one
+//! exception: its cases are a style, one of its looks and one of three test images at the size of
+//! the regression gallery's.
 //!
 //! Each law runs a fixed number of cases from a fixed seed, so a pull request's run is the same
 //! every time. `PLOTLINE_LAWS_SCALE` multiplies the case counts and raises the speed caps, and
@@ -18,12 +20,14 @@ use std::sync::{Arc, Mutex};
 
 use plotline_core::cache::StageCache;
 use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
+use plotline_core::lint::Severity;
+use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
 use plotline_core::style::Style;
-use plotline_core::synthetic::{flat_noise, ramp, scene, strokes};
+use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session};
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -955,6 +959,148 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         let mut r = s.start().unwrap();
         drain(&mut r)?;
         prop_assert_eq!(metrics(&s, &r)[metric], fit.achieved);
+        Ok(())
+    });
+}
+
+/// The test images of the regression gallery, by name, which the look law draws.
+const LOOK_IMAGES: [&str; 3] = ["still life", "scene", "gradient"];
+
+#[test]
+fn every_look_plots_clean() {
+    // Balanced is the defaults, which some styles' own findings warn about, so it is left out.
+    let looks: Vec<(String, String)> = (list_styles().iter())
+        .flat_map(|s| {
+            let others = s.looks().into_iter().filter(|l| l.name != "balanced");
+            others.map(|l| (s.name.clone(), l.name)).collect::<Vec<_>>()
+        })
+        .collect();
+    let strategy = (select(looks), 0..LOOK_IMAGES.len());
+    check("looks", 12, strategy, |((style, look), image)| {
+        let mut s = Session::new(256 << 20);
+        s.set_image(match image {
+            0 => still_life(600, 875),
+            1 => scene(600, 875),
+            _ => gradient(600, 875),
+        });
+        s.set_style(&style).unwrap();
+        s.apply_look(&look).unwrap();
+        run(&mut s)?;
+        let case = format!("{style} at {look} on the {}", LOOK_IMAGES[image]);
+        prop_assert_eq!(s.state(), RunState::Done, "{}: {:?}", case, s.error());
+        let found: Vec<String> = (s.lint().unwrap_or_default().iter())
+            .filter(|f| matches!(f.severity, Severity::Warning | Severity::Error))
+            .map(|f| format!("{}: {}", f.code, f.message))
+            .collect();
+        prop_assert!(found.is_empty(), "{case} plots with {}", found.join("; "));
+        Ok(())
+    });
+}
+
+/// The X/Y points of a G-code file's moves, in order, and every other line.
+fn moves(gcode: &str) -> (Vec<[f64; 2]>, Vec<&str>) {
+    let (mut points, mut rest) = (vec![], vec![]);
+    for line in gcode.lines() {
+        let word = |c: char| {
+            (line.split_whitespace())
+                .find(|w| w.starts_with(c))
+                .and_then(|w| w[1..].parse().ok())
+        };
+        let is_move = line.starts_with("G0 ") || line.starts_with("G1 ");
+        match (is_move, word('X'), word('Y')) {
+            (true, Some(x), Some(y)) => points.push([x, y]),
+            _ => rest.push(line),
+        }
+    }
+    (points, rest)
+}
+
+/// How far `p` is from the segment from `a` to `b`.
+fn off_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 > 0.0 {
+        (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
+}
+
+#[test]
+fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
+    let corner = (-100.0..100.0f64, -100.0..100.0f64);
+    let strategy = (case(all_styles()), any::<bool>(), 0.5..20.0f64, corner);
+    check("split", 12, strategy, |(c, servo, max, (x, y))| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let whole = Machine {
+            name: "Law".to_string(),
+            area: Area {
+                x,
+                y,
+                width: c.page.width,
+                height: c.page.height,
+            },
+            z_down_mm: 0.0,
+            z_up_mm: 2.0,
+            z_safe_mm: 5.0,
+            draw_feed: 1000.0,
+            travel_feed: 3000.0,
+            z_feed: 500.0,
+            settle_ms: 0,
+            start_gcode: String::new(),
+            end_gcode: String::new(),
+            pen_lift: if servo { PenLift::Gcode } else { PenLift::Z },
+            pen_down_gcode: "M280 P0 S30".to_string(),
+            pen_up_gcode: "M280 P0 S90".to_string(),
+            max_segment_mm: None,
+        };
+        let split = Machine {
+            max_segment_mm: Some(max),
+            ..whole.clone()
+        };
+        // Numbers are written to 0.001 mm, so a point may move by up to half of that each way.
+        let eps = 2e-3;
+        for layer in 0..d.layers.len() {
+            s.set_machine(Some(whole.clone())).unwrap();
+            let a = s.gcode(layer).unwrap();
+            s.set_machine(Some(split.clone())).unwrap();
+            let b = s.gcode(layer).unwrap();
+            let ((w, rest_a), (p, rest_b)) = (moves(&a), moves(&b));
+            prop_assert!(
+                rest_a == rest_b,
+                "layer {layer}: lines besides moves differ"
+            );
+            // The first travel, whose start the file does not know, is the same in both.
+            prop_assert_eq!(w.first(), p.first());
+            let mut j = 1;
+            for i in 1..w.len() {
+                loop {
+                    prop_assert!(j < p.len(), "layer {layer}: {:?} is missing", w[i]);
+                    let q = p[j];
+                    let off = off_segment(q, w[i - 1], w[i]);
+                    prop_assert!(off <= eps, "layer {layer}: {q:?} is {off} mm off its move");
+                    let step = (q[0] - p[j - 1][0]).hypot(q[1] - p[j - 1][1]);
+                    prop_assert!(
+                        step <= max + eps,
+                        "layer {layer}: a {step} mm piece > {max}"
+                    );
+                    prop_assert!(
+                        whole.area.contains(q, eps),
+                        "layer {layer}: {q:?} off the area"
+                    );
+                    j += 1;
+                    if q == w[i] {
+                        break;
+                    }
+                }
+            }
+            prop_assert_eq!(j, p.len().max(1));
+        }
         Ok(())
     });
 }
