@@ -1,11 +1,11 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Save, Settings as Gear, Target, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
-import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Pen, Stats } from "./events";
+import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Optimum, Pen, Stats, ToneMatch } from "./events";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 
 const SIZES: [string, number, number][] = [
@@ -255,7 +255,7 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
   );
 }
 
-export function StatsPanel({ stats }: { stats: Stats | null }): JSX.Element {
+export function StatsPanel({ stats, tone }: { stats: Stats | null; tone: ToneMatch | null }): JSX.Element {
   const t = Math.round(stats?.estimated_seconds ?? 0);
   if (!stats) return <p class="stats">No drawing yet</p>;
   // The plot lint's empty finding says what to try.
@@ -264,6 +264,11 @@ export function StatsPanel({ stats }: { stats: Stats | null }): JSX.Element {
     <p class="stats">
       {stats.path_count} paths · pen down {stats.pen_down_mm.toFixed(1)} mm · pen up {stats.pen_up_mm.toFixed(1)} mm
       · about {Math.floor(t / 60)} min {t % 60} s to plot
+      {tone && (
+        <span title="How far the drawing's tones are from the image's, seen from a metre or two: the tone error is in the image's own ink, 0 for a perfect match, and SSIM compares their shapes, 1 for identical.">
+          {" "}· tone error {tone.error.toFixed(3)} · SSIM {tone.ssim.toFixed(2)}
+        </span>
+      )}
     </p>
   );
 }
@@ -293,10 +298,13 @@ export function LintList({ findings, error, onApply }: { findings: Finding[]; er
 
 const UNITS = [["minutes", "min"], ["paths", "paths"], ["metres", "m"], ["dots", "dots"]] as const;
 
-type FitProps = { disabled: boolean; error?: string; fitted: FitResult | null; onFit: (metric: string, target: number) => void };
+type FitProps = {
+  disabled: boolean; error?: string; fitted: FitResult | null; optimum: Optimum | null;
+  onFit: (metric: string, target: number) => void; onOptimize: (metric?: string, target?: number) => void; onApply: (patch: Patch) => void;
+};
 
 // A budget: a target in one of the units, which Fit meets by changing the style's density setting.
-export function FitPanel({ disabled, error, fitted, onFit }: FitProps): JSX.Element {
+export function FitPanel({ disabled, error, fitted, optimum, onFit, onOptimize, onApply }: FitProps): JSX.Element {
   const [target, setTarget] = useState("");
   const [metric, setMetric] = useState("minutes");
   const unit = (m: string) => UNITS.find(([name]) => name === m)?.[1] ?? m;
@@ -315,9 +323,21 @@ export function FitPanel({ disabled, error, fitted, onFit }: FitProps): JSX.Elem
       >
         <Target /> Fit to target
       </button>
-      {error ? <span class="error">{error}</span> : fitted && (
+      <button
+        type="button" disabled={disabled} data-tour="optimize"
+        title="Reruns the style eight times with its density setting changed and suggests the value whose drawing's tones follow the image best, within the target if one is typed. Nothing changes until you apply it."
+        onClick={() => (Number(target) > 0 ? onOptimize(metric, Number(target)) : onOptimize())}
+      >
+        <Wand /> Optimize
+      </button>
+      {error ? <span class="error">{error}</span> : fitted ? (
         <span>
           {fitted.stage}.{fitted.key} set to {String(fitted.value)}: {Number(fitted.achieved.toPrecision(4))} {unit(fitted.metric)} for a target of {fitted.target} {unit(fitted.metric)} in {fitted.samples.length} runs
+        </span>
+      ) : optimum && (
+        <span>
+          {optimum.reason}
+          {optimum.patch && <button type="button" onClick={() => onApply(optimum.patch!)}><Check /> Apply</button>}
         </span>
       )}
     </form>
@@ -340,6 +360,7 @@ export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX
     <div class="status">
       <span class={run.error ? "error" : undefined}>{run.id > 0 ? `Run ${run.id}: ` : ""}{stopping ? "stopping…" : run.state}{run.error ? `: ${run.error}` : ""}</span>
       {run.state === "running" && progress.fit && <span>Fit: {progress.fit.label}</span>}
+      {run.state === "running" && progress.optimize && <span>Optimize: {progress.optimize.label}</span>}
       <ol>
         {stages.map((s) => {
           const p = progress[s.name];

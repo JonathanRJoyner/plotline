@@ -136,7 +136,7 @@ test("a run that fails to post still ends once", async () => {
   ok("setImage", ...image());
   await ended(1);
   const ends = posted.filter((m) => m.type === "end");
-  expect(ends).toEqual([{ type: "end", id: 1, state: "error", error: "boom", stats: null, lint: [] }]);
+  expect(ends).toEqual([{ type: "end", id: 1, state: "error", error: "boom", stats: null, tone: null, lint: [] }]);
 });
 
 test("cancel stops the current run", async () => {
