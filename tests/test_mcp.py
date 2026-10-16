@@ -245,6 +245,24 @@ async def test_run_and_preview(tmp_path):
             assert out.read_bytes().startswith(start)
 
 
+async def test_testchart_draws_without_an_image_and_a_small_page_is_an_error():
+    session = Session()
+    async with Client(build_server(session)) as c:
+        r = await call(c, "testchart")
+        assert not r.is_error
+        stats = json.loads(r.content[0].text)
+        assert stats["path_count"] > 0
+        assert "overdraw" in [f["code"] for f in stats["lint"]]
+        assert png(r.content[1]).startswith(b"\x89PNG")
+        assert session.result is not None
+        # The chart is the result, so the exports work.
+        assert data(await call(c, "get_session"))["stats"]["path_count"] == stats["path_count"]
+        await call(c, "set_page", width_mm=74, height_mm=105)
+        await call(c, "set_pens", pens=[{"name": "Fat", "width_mm": 2, "color": "black"}])
+        r = await call(c, "testchart")
+        assert r.is_error and "the page is too small for the test chart" in text(r)
+
+
 async def test_fit_returns_the_value_and_the_curve():
     session = Session()
     session.set_image(_core.synthetic_gradient(64, 48))
@@ -452,6 +470,7 @@ async def test_stdio_server_lists_the_tools():
         "set_pens",
         "set_machine",
         "run",
+        "testchart",
         "fit",
         "preview",
         "get_session",

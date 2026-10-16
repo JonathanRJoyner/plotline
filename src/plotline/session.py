@@ -321,6 +321,22 @@ class Session:
         self._core.set_speeds(asdict(self.speeds))
         return self._spawn(self._start(lambda: self._core.fit(metric, target)))
 
+    def testchart(self) -> Drawing:
+        """Make the test chart for the canvas and the first pen and return it; it is also kept in
+        ``result``, so the exports, ``stats`` and ``lint`` work on it as on any drawing. The chart
+        is a page of small labelled patches: line spacings, dot sizes and repeated passes, all
+        scaled to the pen. Plot it to see where lines merge, how big dots come out, how many
+        passes the paper takes, and whether ``stats`` gives the plot time. It needs no image. A
+        run under way is cancelled and waited for first. Raises ``ValueError`` when the page is
+        too small for the chart, leaving ``result`` as it was.
+        """
+        if self._handle is not None:
+            self._handle.cancel()
+            self._handle.wait()
+        self._core.testchart()
+        self.result = result = _drawing(_have(self._core.drawing()))
+        return result
+
     def cancel(self) -> None:
         """Ask the latest run to stop, which ends it in ``cancelled``. Nothing happens when there
         has been no run, and a run that has ended stays as it ended."""

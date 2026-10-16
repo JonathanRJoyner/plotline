@@ -44,7 +44,8 @@ INSTRUCTIONS = (
     "change settings with run(settings=...), and repeat; only the stages after a changed setting "
     "run again. To meet a budget of plot time, paths, pen-down metres or dots, call fit, which "
     "sets the style's density setting. Use preview with region_mm to inspect detail. export "
-    "writes the result. set_machine describes a pen plotter or pen-fitted printer; export with "
+    "writes the result. testchart draws a calibration chart for the first pen, to plot and "
+    "compare by eye. set_machine describes a pen plotter or pen-fitted printer; export with "
     "gcode then writes one file per pen. All lengths are millimetres, the page origin is its "
     "top-left corner and y grows down. Paths must be absolute."
 )
@@ -315,6 +316,19 @@ def build_server(session: Session | None = None) -> MCPServer:
         with _errors():
             change(style, settings, reset)
             await follow(ctx, session.run)
+            return shown()
+
+    @server.tool()
+    async def testchart() -> list[str | Image]:
+        """Draw a test chart for the page and the first pen and return the stats as JSON, with
+        the lint, and a preview, as run does. It needs no image and replaces the result. Plot it
+        and compare by eye. SPACING MM shows lines at 0.5 to 4 pen widths apart, to see where
+        they merge. DOT MM shows grids of dots 1 to 6 pen widths wide, to see how big a dot
+        really comes out. PASSES draws a solid fill 1 to 8 times over, to see how many passes the
+        paper takes; the lint reports overdraw on it by design. The stats' plot time is the
+        estimate to check against a stopwatch. Fails when the page is too small."""
+        with _errors():
+            session.testchart()
             return shown()
 
     @server.tool()

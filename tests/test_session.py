@@ -270,6 +270,29 @@ def test_a_failed_run_keeps_the_previous_result():
     assert s.state == RunState.error and s.result is first
 
 
+def test_testchart_is_the_result_and_needs_no_image():
+    s = Session()
+    drawing = s.testchart()
+    assert s.result is drawing and len(drawing.layers) == 1 and drawing.tone is None
+    assert drawing.layers[0].pen == s.pens[0]
+    assert s.stats().path_count == len(drawing.layers[0].paths) > 0
+    assert s.svg().startswith("<svg")
+    assert "overdraw" in [f["code"] for f in s.lint()]
+    assert s.preview_png(200).startswith(b"\x89PNG")
+
+
+def test_testchart_cancels_a_run_and_a_small_page_leaves_the_result():
+    s = slow(Session(), frames=1000)
+    handle = s.run()
+    chart = s.testchart()
+    assert handle.wait() is RunState.cancelled and s.result is chart
+    s.set_canvas(Canvas(74, 105, 10))
+    s.set_pens([Pen("Fat", 2.0, "#000000")])
+    with pytest.raises(ValueError, match="the page is too small for the test chart"):
+        s.testchart()
+    assert s.result is chart
+
+
 def test_cancelled_state_on_cancelled_run():
     s = slow(Session(), frames=5)
     s.subscribe(lambda frame: s.cancel())

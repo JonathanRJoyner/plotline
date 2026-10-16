@@ -170,6 +170,12 @@ impl Session {
         Ok(Run::new(Box::new(fit)))
     }
 
+    /// Cancel the latest run and make the test chart for the page and the first pen the latest
+    /// drawing. Needs no image. Raises `ValueError` when the chart does not fit the page.
+    fn testchart(&mut self) -> PyResult<()> {
+        self.inner.testchart().map_err(session_error)
+    }
+
     fn state(&self) -> &'static str {
         state_name(self.inner.state())
     }
