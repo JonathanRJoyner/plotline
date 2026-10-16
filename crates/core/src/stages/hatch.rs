@@ -100,7 +100,9 @@ impl Stage for HatchStage {
             lines.extend(family.into_iter().map(|(a, b)| (a, b, level)));
         }
         let total = lines.len();
-        let bridge = s.spacing_mm;
+        // Neighbouring samples are up to a step apart, so with a spacing under half a pixel a
+        // bridge of the spacing alone broke every run into single samples, which draw nothing.
+        let bridge = s.spacing_mm.max(1.5 * step);
         Ok(Box::new(ChunkRun::new(
             total,
             "lines",
@@ -236,6 +238,15 @@ mod tests {
         // At 5 mm spacing two lines cross the map, each bridging the gap; at 1 mm, ten lines break.
         assert_eq!(lines(5.0), 2);
         assert_eq!(lines(1.0), 20);
+    }
+
+    #[test]
+    fn a_spacing_under_half_a_pixel_still_draws_the_ink() {
+        // The samples are 1 mm apart on this 2 mm map, wider than the 0.2 mm spacing.
+        let patch = json!({"angle_deg": 0.0, "levels": 1, "spacing_mm": 0.2});
+        let (_, paths) = run_tone_stage(&HatchStage, tone_map(10, 5, |_, _| 1.0), patch);
+        assert_eq!(paths.len(), 50);
+        assert!(paths.iter().all(|p| (p[1][0] - p[0][0]).abs() > 19.0));
     }
 
     #[test]
