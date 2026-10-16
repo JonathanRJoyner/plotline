@@ -1,4 +1,4 @@
-//! Measures the looks (see "Looks" in the brief's decision log): for every listed style with a
+//! Measures the looks (see `docs/decisions/2026-10-16-looks.md`): for every listed style with a
 //! density setting, the values of its Faithful, Quick and Fine looks, from drawings of the
 //! regression gallery's three test images on A4 with the default 10 mm margin, the default
 //! 0.3 mm pen and the default speeds.
