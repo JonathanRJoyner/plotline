@@ -11,6 +11,12 @@
 //! doi:10.1006/cviu.1996.0060) and the tone at the border. For a colour image it also picks the
 //! pens that draw it best; see [`ImageStats::palette`].
 //!
+//! It keeps a saliency map, the spectral residual of X. Hou and L. Zhang, "Saliency detection: a
+//! spectral residual approach", *Proc. CVPR*, 2007, pp. 1-8, doi:10.1109/CVPR.2007.383267,
+//! written from the paper's description. [`suggest`] searches it for a crop to the subject after
+//! R. Suh, H. Ling, B. B. Bederson and D. W. Jacobs, "Automatic thumbnail cropping and its
+//! effectiveness", *Proc. UIST*, 2003, pp. 95-104, doi:10.1145/964696.964707; see [`framing`].
+//!
 //! Every value is a deterministic function of the pixels: integer histograms with fixed bin
 //! edges, sums in row-major order, and `sqrt` (exact in IEEE 754) as the only float library call
 //! besides `exp` and `ln` for the palette's powers, which go through [`crate::math`] (`libm`), so
@@ -22,8 +28,8 @@ use serde_json::{json, Value};
 use crate::math;
 use crate::pens::INKS;
 use crate::preview::rgb;
-use crate::stages::split;
-use crate::types::{Canvas, Fit, Image, Pen};
+use crate::stages::{split, tone};
+use crate::types::{Canvas, Fit, Image, Pen, MAX_CROP};
 
 /// Bins for the black and white points.
 const LEVEL_BINS: usize = 4096;
@@ -40,6 +46,26 @@ const PALETTE_MAX: usize = 4;
 /// The least an added ink must lower the mean colour difference to be kept: about one just
 /// noticeable difference in CIELAB.
 const PALETTE_GAIN: f64 = 2.3;
+/// The longer side of the grid the saliency map is made on: the scale of Hou and Zhang.
+const SALIENCY_PX: usize = 64;
+/// The standard deviation, in pixels of that grid, of the Gaussian that smooths the saliency
+/// map: Hou and Zhang's.
+const SALIENCY_SIGMA: f64 = 8.0;
+/// A Fourier amplitude below this counts as this, so that its logarithm is finite.
+const AMPLITUDE_FLOOR: f64 = 1e-12;
+/// The sizes the crop search tries, in twentieths of the largest rectangle of the page's aspect
+/// that fits the image: 1 down to 0.3.
+const SIZES: std::ops::RangeInclusive<usize> = 6..=20;
+/// The saliency shares the crop search tries, in twentieths: 0.5 to 0.95.
+const SHARES: std::ops::RangeInclusive<usize> = 10..=19;
+/// The most area, as a share of the largest rectangle's, that a suggested crop may keep. Hand-set;
+/// see `docs/decisions/2026-10-16-auto-framing.md`.
+const FRAMING_AREA: f64 = 0.7;
+/// The least a suggested crop must raise the saliency per unit of area over the whole image's.
+/// Hand-set, like [`FRAMING_AREA`].
+const FRAMING_DENSITY: f64 = 1.3;
+/// How near, per side, a crop must be to the suggested one to count as already in effect.
+const CROP_TOLERANCE: f64 = 0.01 + 1e-9;
 
 /// What [`measure`] reports about an image. Luminance is 0..1; the shares are 0..1.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -72,6 +98,17 @@ pub struct ImageStats {
     /// The palette's mean CIE 1976 colour difference ΔE*ab from the image (white paper's, if the
     /// palette is empty); 0 when the image is not colourful enough for the fit to run.
     pub palette_error: f64,
+    /// The saliency map for the framing suggestion, kept out of the statistics' JSON.
+    #[serde(skip)]
+    saliency: Option<Saliency>,
+}
+
+/// A saliency map: `values` is `width x height`, row-major, larger where the eye is drawn.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Saliency {
+    width: usize,
+    height: usize,
+    values: Vec<f64>,
 }
 
 /// Counts of `lum` in `bins` equal bins on 0..1; bin `min(floor(v * bins), bins - 1)`.
@@ -353,6 +390,202 @@ fn fit_palette(samples: &[Sample]) -> (Vec<&'static str>, f64) {
     (chosen.iter().map(|&i| INKS[i].0).collect(), error)
 }
 
+/// One pass of a discrete Fourier transform along each of `lines` lines of `len` samples of the
+/// complex grid `(re, im)`, where `at(line, j)` indexes sample `j` of a line: `X_k = sum_j x_j
+/// e^{-2 pi i j k / len}`, or with `inverse` the sum with `e^{+2 pi i j k / len}`. The twiddle
+/// factors are computed once per pass from [`math::cos`] and [`math::sin`], and `j k` is reduced
+/// mod `len` first, so each is the correctly rounded value of a small angle.
+fn dft_pass(
+    (re, im): (&[f64], &[f64]),
+    lines: usize,
+    len: usize,
+    at: impl Fn(usize, usize) -> usize,
+    inverse: bool,
+) -> (Vec<f64>, Vec<f64>) {
+    let sign = if inverse { 1.0 } else { -1.0 };
+    let angle = |m: usize| 2.0 * std::f64::consts::PI * m as f64 / len as f64;
+    let cos: Vec<f64> = (0..len).map(|m| math::cos(angle(m))).collect();
+    let sin: Vec<f64> = (0..len).map(|m| sign * math::sin(angle(m))).collect();
+    let (mut out_re, mut out_im) = (vec![0.0; re.len()], vec![0.0; re.len()]);
+    for line in 0..lines {
+        for k in 0..len {
+            let (mut sum_re, mut sum_im) = (0.0, 0.0);
+            for j in 0..len {
+                let (i, m) = (at(line, j), j * k % len);
+                sum_re += re[i] * cos[m] - im[i] * sin[m];
+                sum_im += re[i] * sin[m] + im[i] * cos[m];
+            }
+            out_re[at(line, k)] = sum_re;
+            out_im[at(line, k)] = sum_im;
+        }
+    }
+    (out_re, out_im)
+}
+
+/// The 2D discrete Fourier transform of the row-major `w x h` complex grid `(re, im)`, or with
+/// `inverse` its inverse without the `1 / (w h)` factor: every row, then every column, by the
+/// sums of [`dft_pass`]. There is no FFT library on purpose: the common one picks its kernels at
+/// run time, which could make the native and browser builds differ in the last bit.
+fn dft2(grid: (&[f64], &[f64]), w: usize, h: usize, inverse: bool) -> (Vec<f64>, Vec<f64>) {
+    let rows = dft_pass(grid, h, w, |y, x| y * w + x, inverse);
+    dft_pass((&rows.0, &rows.1), w, h, |x, y| y * w + x, inverse)
+}
+
+/// The spectral residual saliency map of a row-major `w x h` luminance grid, after Hou and Zhang
+/// (2007). The grid is first resized to `SALIENCY_PX` pixels on its longer side, as
+/// [`tone::resize`] does. With `F` that grid's Fourier transform, `L = ln |F|` (an amplitude under
+/// `AMPLITUDE_FLOOR` counts as it) and `P` its phase, the spectral residual is `R = L -
+/// mean3x3(L)` with the spectrum's edges wrapped, and the map is `|F^-1[exp(R + iP)]|^2` smoothed
+/// by a Gaussian of `SALIENCY_SIGMA` pixels through [`math::blur`]. `None` for a grid under 8
+/// pixels on a side, before or after the resize, or one whose tones differ by under 1/64: they
+/// have no subject worth finding, and a flat grid's transform is only rounding noise, which the
+/// residual would show.
+fn saliency(grid: &[f32], gw: usize, gh: usize) -> Option<Saliency> {
+    if gw.min(gh) < 8 {
+        return None;
+    }
+    let (lum, w, h) = tone::resize(grid, gw, gh, SALIENCY_PX);
+    let (lo, hi) = (lum.iter()).fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    if w.min(h) < 8 || hi - lo < 1.0 / 64.0 {
+        return None;
+    }
+    let re: Vec<f64> = lum.iter().map(|&v| f64::from(v)).collect();
+    let (fre, fim) = dft2((&re, &vec![0.0; re.len()]), w, h, false);
+    let log: Vec<f64> = (fre.iter().zip(&fim))
+        .map(|(&a, &b)| math::ln(math::hypot(a, b).max(AMPLITUDE_FLOOR)))
+        .collect();
+    let wrapped = |x: usize, dx: usize, n: usize| (x + n + dx - 1) % n;
+    let (mut ure, mut uim) = (vec![0.0; re.len()], vec![0.0; re.len()]);
+    for y in 0..h {
+        for x in 0..w {
+            let mut sum = 0.0;
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    sum += log[wrapped(y, dy, h) * w + wrapped(x, dx, w)];
+                }
+            }
+            let i = y * w + x;
+            let amplitude = math::exp(log[i] - sum / 9.0);
+            let phase = math::atan2(fim[i], fre[i]);
+            ure[i] = amplitude * math::cos(phase);
+            uim[i] = amplitude * math::sin(phase);
+        }
+    }
+    let (sre, sim) = dft2((&ure, &uim), w, h, true);
+    let n = (w * h) as f64;
+    let power: Vec<f32> = (sre.iter().zip(&sim))
+        .map(|(&a, &b)| ((a * a + b * b) / (n * n)) as f32)
+        .collect();
+    let values = math::blur(&power, w, h, SALIENCY_SIGMA);
+    Some(Saliency {
+        width: w,
+        height: h,
+        values: values.into_iter().map(f64::from).collect(),
+    })
+}
+
+/// The crop that frames the subject of `map` in a rectangle of width over height `aspect`, as
+/// shares cut from the left, top, right and bottom; `None` when no crop concentrates the subject.
+///
+/// After Suh, Ling, Bederson and Jacobs (2003): the smallest rectangle that holds a share `lambda`
+/// of the saliency, with `lambda` taken where the area needed starts to climb fastest. Two
+/// changes: the rectangle has the page's aspect, and on a 64-pixel map the search is exhaustive,
+/// over a summed-area table, rather than greedy.
+///
+/// The largest rectangle of the aspect that fits the map is size 1. For each size `s` in `SIZES`
+/// (1 down to 0.3 by 0.05), `f(s)` is the most saliency a rectangle of that size holds over every
+/// position on the grid. For each `lambda` in `SHARES` (0.50 to 0.95 by 0.05), `A(lambda)` is the
+/// area `s^2` of the smallest size with `f(s) >= lambda`, or 1 where none reaches it. The
+/// `lambda` before the largest step in `A` (the smaller one on a tie) picks the size, and the
+/// crop is the best rectangle of that size, the one nearest the middle on a tie. It is kept only
+/// if its area is at most `FRAMING_AREA` and its saliency per unit area at least `FRAMING_DENSITY`
+/// times the map's. The shares are rounded down to 0.01 so the subject is not cut, and kept to
+/// `MAX_CROP`.
+fn framing(map: &Saliency, aspect: f64) -> Option<[f64; 4]> {
+    let (mw, mh) = (map.width, map.height);
+    let stride = mw + 1;
+    let mut table = vec![0.0f64; stride * (mh + 1)];
+    for y in 0..mh {
+        let mut row = 0.0;
+        for x in 0..mw {
+            row += map.values[y * mw + x];
+            table[(y + 1) * stride + x + 1] = table[y * stride + x + 1] + row;
+        }
+    }
+    let total = table[stride * (mh + 1) - 1];
+    // Written as a bool so that NaN fails the check.
+    let usable = total > 0.0;
+    if !usable {
+        return None;
+    }
+    let sum = |x: usize, y: usize, w: usize, h: usize| {
+        table[(y + h) * stride + x + w] - table[y * stride + x + w] - table[(y + h) * stride + x]
+            + table[y * stride + x]
+    };
+    // Size 1, in pixels of the map.
+    let (w1, h1) = if aspect >= mw as f64 / mh as f64 {
+        (mw as f64, mw as f64 / aspect)
+    } else {
+        (mh as f64 * aspect, mh as f64)
+    };
+    // For each size, from 1 down: its rectangle and where it holds the most.
+    let best: Vec<(usize, usize, usize, usize, f64)> = SIZES
+        .rev()
+        .map(|twentieths| {
+            let s = twentieths as f64 / 20.0;
+            let rw = ((s * w1).round() as usize).clamp(1, mw);
+            let rh = ((s * h1).round() as usize).clamp(1, mh);
+            let off_centre = |x: usize, y: usize| {
+                let (dx, dy) = (x as f64 + rw as f64 / 2.0, y as f64 + rh as f64 / 2.0);
+                (dx - mw as f64 / 2.0) * (dx - mw as f64 / 2.0)
+                    + (dy - mh as f64 / 2.0) * (dy - mh as f64 / 2.0)
+            };
+            let mut top = (0, 0, f64::MIN);
+            for y in 0..=mh - rh {
+                for x in 0..=mw - rw {
+                    let held = sum(x, y, rw, rh);
+                    let better = held > top.2
+                        || (held == top.2 && off_centre(x, y) < off_centre(top.0, top.1));
+                    if better {
+                        top = (x, y, held);
+                    }
+                }
+            }
+            (top.0, top.1, rw, rh, top.2 / total)
+        })
+        .collect();
+    // The index into `best` of the smallest size that holds `share`; 0, size 1, if none does.
+    let smallest = |share: f64| best.iter().rposition(|b| b.4 >= share).unwrap_or(0);
+    let area = |i: usize| {
+        let s = (SIZES.end() - i) as f64 / 20.0;
+        s * s
+    };
+    let areas: Vec<f64> = SHARES.map(|t| area(smallest(t as f64 / 20.0))).collect();
+    let mut step = (0, f64::MIN);
+    for (j, pair) in areas.windows(2).enumerate() {
+        if pair[1] - pair[0] > step.1 {
+            step = (j, pair[1] - pair[0]);
+        }
+    }
+    let size = smallest((SHARES.start() + step.0) as f64 / 20.0);
+    let (x, y, rw, rh, share) = best[size];
+    let density = share / ((rw * rh) as f64 / (mw * mh) as f64);
+    if area(size) > FRAMING_AREA || density < FRAMING_DENSITY {
+        return None;
+    }
+    // Rounded down, so the crop keeps a little more than the rectangle; the nudge keeps a share
+    // that is a whole number of hundredths from falling to the one below.
+    let cut = |pixels: usize, of: usize| {
+        ((pixels as f64 / of as f64 * 100.0 + 1e-9).floor() / 100.0).min(MAX_CROP)
+    };
+    Some([
+        cut(x, mw),
+        cut(y, mh),
+        cut(mw - x - rw, mw),
+        cut(mh - y - rh, mh),
+    ])
+}
+
 /// Measure `image`; see [`ImageStats`]. An image with no pixels reports its size and zero for
 /// everything else.
 pub fn measure(image: &Image) -> ImageStats {
@@ -397,6 +630,7 @@ pub fn measure(image: &Image) -> ImageStats {
         border: border(&lum, gw, gh),
         palette,
         palette_error,
+        saliency: saliency(&lum, gw, gh),
     }
 }
 
@@ -408,7 +642,7 @@ pub struct Suggestion {
     pub reason: String,
     /// Any of `style` (a style name), `pens` (a list of `{name, width_mm, color}`, applied after
     /// the style), `settings` (`{stage: {key: value}}`, applied after the pens) and `page`
-    /// (`{width_mm, height_mm}`); `None` for a note with nothing to apply.
+    /// (`{width_mm, height_mm}` or `{crop}`); `None` for a note with nothing to apply.
     pub patch: Option<Value>,
 }
 
@@ -427,6 +661,7 @@ const LIGHT_MARKS: &str =
 const NOISY: &str =
     "The image is noisy. A blur of one tone-map pixel keeps the noise from turning into specks.";
 const TURN: &str = "The image would draw larger with the page turned.";
+const FRAMING: &str = "The subject fills only part of the image. Cropping to it draws it larger.";
 
 /// How much larger the turned page must draw the image to be worth suggesting.
 const TURN_GAIN: f64 = 1.3;
@@ -435,8 +670,10 @@ const TURN_GAIN: f64 = 1.3;
 /// effect. `settings` is `{stage: {key: value}}`; a missing `tone` or `split` key counts as its
 /// default (`levels` manual, `invert` off, `blur_mm` 0, `resolution` 1000, `mode` one pen). `pens`
 /// are the session's: the colour suggestion gives the palette's pens the first one's width, and is
-/// left out when Pen use is by colour and the pens already have the palette's colours. The cut-offs
-/// are hand-set starting values, not a fitted model.
+/// left out when Pen use is by colour and the pens already have the palette's colours. The framing
+/// suggestion crops to the subject in the shape of the canvas's drawing area, and is left out when
+/// the canvas's crop is within 0.01 of it on every side. The cut-offs are hand-set starting
+/// values, not a fitted model.
 pub fn suggest(
     stats: &ImageStats,
     canvas: &Canvas,
@@ -484,7 +721,10 @@ pub fn suggest(
         let patch = json!({"settings": {"tone": {"blur_mm": blur}}});
         add("noise", NOISY, Some(patch));
     }
+    // The part of the image that is drawn, so a crop to the page's shape does not ask for a turn.
+    let [left, top, right, bottom] = canvas.crop;
     let [w, h] = [stats.width_px, stats.height_px].map(f64::from);
+    let [w, h] = [w * (1.0 - left - right), h * (1.0 - top - bottom)];
     // The turned page's drawing area is (H - 2m) x (W - 2m).
     let fit_scale = |aw: f64, ah: f64| (aw / w).min(ah / h);
     if canvas.fit == Fit::Fit
@@ -493,6 +733,16 @@ pub fn suggest(
     {
         let patch = json!({"page": {"width_mm": canvas.height_mm, "height_mm": canvas.width_mm}});
         add("orientation", TURN, Some(patch));
+    }
+    if let Some(crop) = stats.saliency.as_ref().and_then(|s| framing(s, dw / dh)) {
+        let held = canvas
+            .crop
+            .iter()
+            .zip(crop)
+            .all(|(a, b)| (a - b).abs() <= CROP_TOLERANCE);
+        if !held {
+            add("framing", FRAMING, Some(json!({"page": {"crop": crop}})));
+        }
     }
     let by_colour = settings
         .get("split")
@@ -549,7 +799,7 @@ fn capitalise(word: &str) -> String {
 mod tests {
     use super::*;
     use crate::registry::get_style;
-    use crate::synthetic::{color_bars, flat, flat_noise, ramp, strokes};
+    use crate::synthetic::{color_bars, flat, flat_noise, noise, ramp, scene, still_life, strokes};
 
     fn page() -> Canvas {
         Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap()
@@ -949,12 +1199,235 @@ mod tests {
                 "orientation",
                 "The image would draw larger with the page turned.",
             ),
+            (
+                disc(256, 256, 0.7, 0.3, 0.05),
+                "framing",
+                "The subject fills only part of the image. Cropping to it draws it larger.",
+            ),
         ];
         for (image, kind, reason) in cases {
             let all = run(&image, "grid", &settings);
             let found = find(&all, kind).unwrap_or_else(|| panic!("no {kind} suggestion"));
             assert_eq!(found.reason, reason);
         }
+    }
+
+    /// A dark disc on a light field; its centre and radius are shares of the width and height.
+    fn disc(w: u32, h: u32, cx: f32, cy: f32, r: f32) -> Image {
+        let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let (u, v) = (x as f32 / w as f32 - cx, y as f32 / h as f32 - cy);
+                rgb.extend([if u * u + v * v <= r * r { 0.1 } else { 0.95 }; 3]);
+            }
+        }
+        Image {
+            width: w,
+            height: h,
+            rgb,
+        }
+    }
+
+    /// A page whose drawing area is as wide as it is tall, the shape of a square image.
+    fn square() -> Canvas {
+        Canvas::new(200.0, 200.0, 0.0, Fit::Fit).unwrap()
+    }
+
+    fn landscape() -> Canvas {
+        Canvas::new(297.0, 210.0, 10.0, Fit::Fit).unwrap()
+    }
+
+    /// The crop that `framing` suggests for `image` on `canvas`, if it does.
+    fn crop_of(image: &Image, canvas: &Canvas) -> Option<[f64; 4]> {
+        let all = suggest(
+            &measure(image),
+            canvas,
+            "grid",
+            &defaults("grid"),
+            &black(0.3),
+        );
+        patch(&all, "framing").map(|p| serde_json::from_value(p["page"]["crop"].clone()).unwrap())
+    }
+
+    #[test]
+    fn the_transform_matches_a_slow_reference() {
+        let (w, h) = (8, 6);
+        let re: Vec<f64> = (0..w * h)
+            .map(|i| ((i * 37 + 11) % 23) as f64 / 7.0 - 1.0)
+            .collect();
+        let im: Vec<f64> = (0..w * h)
+            .map(|i| ((i * 13 + 5) % 17) as f64 / 5.0 - 1.5)
+            .collect();
+        for inverse in [false, true] {
+            let sign = if inverse { 1.0 } else { -1.0 };
+            let (fre, fim) = dft2((&re, &im), w, h, inverse);
+            for (v, u) in (0..h).flat_map(|v| (0..w).map(move |u| (v, u))) {
+                let (mut sum_re, mut sum_im) = (0.0, 0.0);
+                for (y, x) in (0..h).flat_map(|y| (0..w).map(move |x| (y, x))) {
+                    let turns = (u * x) as f64 / w as f64 + (v * y) as f64 / h as f64;
+                    let angle = sign * 2.0 * std::f64::consts::PI * turns;
+                    let (c, s) = (math::cos(angle), math::sin(angle));
+                    let i = y * w + x;
+                    sum_re += re[i] * c - im[i] * s;
+                    sum_im += re[i] * s + im[i] * c;
+                }
+                let i = v * w + u;
+                assert!(
+                    (fre[i] - sum_re).abs() < 1e-9,
+                    "re {u},{v}: {} {sum_re}",
+                    fre[i]
+                );
+                assert!(
+                    (fim[i] - sum_im).abs() < 1e-9,
+                    "im {u},{v}: {} {sum_im}",
+                    fim[i]
+                );
+            }
+        }
+        // The inverse gives the grid back, times its pixel count.
+        let (fre, fim) = dft2((&re, &im), w, h, false);
+        let (bre, bim) = dft2((&fre, &fim), w, h, true);
+        let n = (w * h) as f64;
+        assert!(re.iter().zip(&bre).all(|(a, b)| (a - b / n).abs() < 1e-12));
+        assert!(im.iter().zip(&bim).all(|(a, b)| (a - b / n).abs() < 1e-12));
+    }
+
+    #[test]
+    fn a_disc_off_the_middle_gets_a_crop_that_holds_all_of_it() {
+        for (image, canvas, [cx, cy, r]) in [
+            (disc(256, 256, 0.3, 0.4, 0.1), square(), [0.3, 0.4, 0.1]),
+            (disc(256, 256, 0.7, 0.3, 0.05), page(), [0.7, 0.3, 0.05]),
+            (
+                disc(256, 256, 0.25, 0.75, 0.08),
+                landscape(),
+                [0.25, 0.75, 0.08],
+            ),
+        ] {
+            let crop = crop_of(&image, &canvas).expect("a crop");
+            let [left, top, right, bottom] = crop;
+            let held =
+                left <= cx - r && top <= cy - r && 1.0 - right >= cx + r && 1.0 - bottom >= cy + r;
+            assert!(held, "{crop:?} does not hold the disc at {cx}, {cy}");
+            assert!(crop.iter().any(|&s| s > 0.0) && crop.iter().all(|&s| s <= MAX_CROP));
+            // Whole hundredths, so the patch reads well.
+            assert!(crop
+                .iter()
+                .all(|&s| (s * 100.0 - (s * 100.0).round()).abs() < 1e-9));
+        }
+    }
+
+    #[test]
+    fn the_framing_crop_follows_the_page() {
+        let image = disc(256, 256, 0.7, 0.3, 0.05);
+        let [tall, wide] = [page(), landscape()].map(|c| {
+            let [_, _, dw, dh] = c.drawing_rect();
+            let crop = crop_of(&image, &c).expect("a crop");
+            // The cut image has the drawing area's shape, to the rounding of the shares and the map.
+            let shape = (1.0 - crop[0] - crop[2]) / (1.0 - crop[1] - crop[3]);
+            assert!(
+                (shape / (dw / dh) - 1.0).abs() < 0.1,
+                "{crop:?} on {dw} x {dh}"
+            );
+            crop
+        });
+        assert_ne!(tall, wide);
+    }
+
+    #[test]
+    fn the_framing_crop_is_pinned() {
+        // The same literals are in crates/wasm/tests/smoke.rs, so CI proves both targets agree.
+        let small = disc(256, 256, 0.7, 0.3, 0.05);
+        assert_eq!(crop_of(&small, &page()), Some([0.45, 0.0, 0.04, 0.29]));
+        let big = disc(256, 256, 0.3, 0.4, 0.1);
+        assert_eq!(crop_of(&big, &square()), Some([0.0, 0.06, 0.29, 0.23]));
+    }
+
+    #[test]
+    fn images_with_no_subject_get_no_framing() {
+        let images = [
+            flat(256, 256, 0.5),
+            ramp(256, 256, 0.0, 1.0),
+            noise(256, 256, 1),
+            noise(256, 256, 2),
+            noise(300, 200, 3),
+            flat_noise(256, 256, 0.5, 0.1, 7),
+        ];
+        for (i, image) in images.iter().enumerate() {
+            for canvas in [page(), landscape(), square()] {
+                assert_eq!(crop_of(image, &canvas), None, "image {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_still_life_and_the_scene_fill_their_frames() {
+        // Their subjects are spread over the whole picture, so no crop concentrates them.
+        for image in [still_life(600, 875), scene(800, 600), scene(600, 800)] {
+            for canvas in [page(), landscape(), square()] {
+                assert_eq!(crop_of(&image, &canvas), None);
+            }
+        }
+    }
+
+    #[test]
+    fn a_thin_or_tiny_image_has_no_saliency() {
+        for image in [
+            ramp(200, 1, 0.0, 1.0),
+            ramp(7, 40, 0.0, 1.0),
+            ramp(4, 4, 0.0, 1.0),
+        ] {
+            assert!(measure(&image).saliency.is_none());
+        }
+        assert!(measure(&ramp(8, 8, 0.0, 1.0)).saliency.is_some());
+    }
+
+    #[test]
+    fn applying_the_crop_removes_the_suggestion() {
+        let stats = measure(&disc(256, 256, 0.3, 0.4, 0.1));
+        let suggested = |canvas: &Canvas| {
+            let all = suggest(&stats, canvas, "grid", &defaults("grid"), &black(0.3));
+            find(&all, "framing").is_some()
+        };
+        let crop = [0.0, 0.06, 0.29, 0.23];
+        assert!(suggested(&square()));
+        assert!(!suggested(&square().with_crop(crop).unwrap()));
+        // Within 0.01 on every side counts as in effect; 0.02 off does not.
+        let near = crop.map(|s| s + 0.005);
+        assert!(!suggested(&square().with_crop(near).unwrap()));
+        let off = [0.02, 0.06, 0.29, 0.23];
+        assert!(suggested(&square().with_crop(off).unwrap()));
+    }
+
+    #[test]
+    fn orientation_counts_only_the_part_that_is_drawn() {
+        let stats = measure(&ramp(400, 200, 0.0, 1.0));
+        let turned = |canvas: &Canvas| {
+            let all = suggest(&stats, canvas, "grid", &defaults("grid"), &black(0.3));
+            find(&all, "orientation").is_some()
+        };
+        assert!(turned(&page()));
+        // The middle 40 percent of the width is 160 x 200 pixels, which suits a portrait page.
+        assert!(!turned(&page().with_crop([0.3, 0.0, 0.3, 0.0]).unwrap()));
+    }
+
+    #[test]
+    fn framing_follows_orientation() {
+        let image = disc(400, 200, 0.7, 0.3, 0.1);
+        let all = run(&image, "grid", &defaults("grid"));
+        let kinds: Vec<_> = all.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, ["line_art", "orientation", "framing"]);
+    }
+
+    #[test]
+    fn the_saliency_map_is_deterministic_and_stays_out_of_the_json() {
+        let image = still_life(300, 440);
+        let (a, b) = (measure(&image), measure(&image));
+        assert_eq!(a, b);
+        let map = a.saliency.as_ref().expect("a saliency map");
+        let bits: Vec<u64> = map.values.iter().map(|v| v.to_bits()).collect();
+        assert_eq!((map.width, map.height, bits.len()), (44, 64, 44 * 64));
+        assert!(map.values.iter().all(|v| v.is_finite() && *v > 0.0));
+        assert!(serde_json::to_value(&a).unwrap().get("saliency").is_none());
     }
 
     #[test]
