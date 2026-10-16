@@ -71,19 +71,19 @@ The core defines one trait, implemented once per platform:
 
 ```rust
 pub trait ModelRuntime: Send + Sync {
-    /// Parse `bytes` as a model and keep it under `id`.
-    fn load(&self, id: &str, bytes: &[u8]) -> Result<ModelShape, ModelError>;
-    /// Run the model `id` on one tile: `rgb` is 3 × h × w floats, channel-major.
-    /// Returns h × w floats.
-    fn infer(&self, id: &str, rgb: &[f32], w: usize, h: usize) -> Result<Vec<f32>, ModelError>;
+    /// Parse `bytes` as a model for square tiles of `side` pixels and keep it under `id`.
+    fn load(&self, id: &str, bytes: &[u8], side: usize) -> Result<(), ModelError>;
+    /// Run the model `id` on one tile: `rgb` is 3 × side × side floats, channel-major.
+    /// Returns side × side floats.
+    fn infer(&self, id: &str, rgb: &[f32]) -> Result<Vec<f32>, ModelError>;
     /// Drop the model `id`.
     fn unload(&self, id: &str);
 }
 ```
 
-`ModelShape` reports the model's input and output: one batch, 3 channels in and 1 channel out, height and width free or fixed. `load` refuses any other shape with a plain error. Everything that is algorithm stays in the core: resizing to `resolution`, the input scaling the catalogue entry names, tiling, the output polarity, and placing the result on the page.
+Every model takes RGB in 0 to 1, channel-first, and returns one channel in 0 to 1 where 1 is a line. `load` fixes the input to 1 × 3 × side × side, so tract optimises once per model, and refuses a model that does not take that shape or return 1 × 1 × side × side. Everything that is algorithm stays in the core: resizing to `resolution`, tiling, mirroring, `invert`, and placing the result on the page.
 
-`Session::add_model(id, bytes)` checks the file (see "Downloads"), calls `ModelRuntime::load`, and keeps the model's id and its catalogue entry, or the defaults for a file of your own, in the store. The runtime holds the parsed model. The `model` stage reaches the store through `RunContext`, which gains it, and looks its model up in `start`.
+`Session::add_model(id, bytes)` checks the file's size and, for a catalogue id, its size and SHA-256 against the entry (see "Downloads"), calls `ModelRuntime::load`, and keeps the model's id and its catalogue entry, or the defaults for a file of your own, in the store. The runtime holds the parsed model. The `model` stage reaches the store through `RunContext`, which gains it, and looks its model up in `start`.
 
 Each platform implements the trait like this:
 
@@ -117,11 +117,9 @@ Each entry holds:
 - `url` to the model file, pinned to a commit; `sha256`; and `bytes`.
 - `licence` (an SPDX id), `attribution` (the text the licence asks to be shown), and `source` and `paper` (links).
 - `training`: one or two sentences on what the model was trained on, and under which licences.
-- `input`: the scaling the model expects, as `range` (0 to 1, or -1 to 1) and optional per-channel `mean` and `std`.
-- `output`: `line` is `1` when the model writes 1 for a line, `0` when it writes 1 for paper.
 - `overlap`: the tile margin in pixels.
 
-A model needs a catalogue entry, not code.
+The conversion script folds each model's own input scaling, channel order and polarity into the ONNX graph, so every hosted model follows the convention above and a new model needs a catalogue entry, not code.
 
 The entries make no claim about what a user may do with a drawing. They show the licence, the attribution and the training note, and the user reads them.
 
