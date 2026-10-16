@@ -2,8 +2,8 @@
 //!
 //! Each function returns an RGB [`Image`] with values in 0..1. The grey images have three equal
 //! channels and follow the Python engine's test images, except [`noise`], which is only
-//! deterministic, [`still_life`], the GUI's sample, and [`strokes`], [`ramp`] and [`flat_noise`],
-//! made for the image analysis. [`color_bars`] and [`scene`] are in colour, for the
+//! deterministic, [`still_life`], the GUI's sample, and [`strokes`], [`lit_strokes`], [`ramp`] and
+//! [`flat_noise`], made for the image analysis. [`color_bars`] and [`scene`] are in colour, for the
 //! colour-to-tone path.
 
 use rand::{Rng, SeedableRng};
@@ -262,6 +262,18 @@ pub fn flat(w: u32, h: u32, value: f32) -> Image {
 /// Line art: `ink` in 2-pixel lines every 16 pixels in both directions, `paper` between them.
 pub fn strokes(w: u32, h: u32, ink: f32, paper: f32) -> Image {
     let value = |(x, y): (u32, u32)| if x % 16 < 2 || y % 16 < 2 { ink } else { paper };
+    grey(w, h, pixels(w, h).map(value))
+}
+
+/// Line art as a scan lit from one side: [`strokes`] with ink 0.2 on paper 1, times a light that
+/// rises in equal steps from `dim` at the left edge to 1 at the right.
+pub fn lit_strokes(w: u32, h: u32, dim: f32) -> Image {
+    let span = f64::from(w.saturating_sub(1).max(1));
+    let value = |(x, y): (u32, u32)| {
+        let light = f64::from(dim) + (1.0 - f64::from(dim)) * f64::from(x) / span;
+        let tone = if x % 16 < 2 || y % 16 < 2 { 0.2 } else { 1.0 };
+        (tone * light) as f32
+    };
     grey(w, h, pixels(w, h).map(value))
 }
 

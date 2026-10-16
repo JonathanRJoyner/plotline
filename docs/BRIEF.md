@@ -42,7 +42,7 @@ The same workflow must also work through the CLI and the MCP.
 
 - **Machine-specific output**, such as G-code tuned to one particular printer or its firmware quirks. plotline outputs plain vector data, plus generic G-code for a machine the user describes (§14, "G-code adapter"). Nothing is built in for any particular machine, and tuning the output to one is the downstream user's job.
 - **Driving plotters directly** (serial control, job queues).
-- **Image editing** beyond what tone mapping needs (crop, levels, contrast, gamma, blur, invert).
+- **Image editing** beyond what tone mapping needs (crop, levels, contrast, gamma, blur, invert, paper flattening).
 - **Generative art from nothing.** plotline is image-driven.
 - **A hosted service.** Nothing runs on a server. The hosted page is static files, and the engine runs in the visitor's browser (§8).
 
@@ -122,7 +122,7 @@ The point family and Sketch Lines were built on 2026-10-13 under [spec 8](superp
 
 **Sketch Lines:** a greedy loop that repeatedly finds the darkest line segment from the current position, draws it, lightens the tone map under it, and continues until it hits a target darkness or line budget. It runs as a single stage, and its frames show strokes accumulating.
 
-**Shared final stage: path ordering.** Reorder and optionally reverse paths to cut pen-up travel, merge paths whose ends nearly touch, and drop paths below a minimum length.
+**Shared final stage: path ordering.** Reorder and optionally reverse paths to cut pen-up travel, merge paths whose ends nearly touch, drop paths below a minimum length, and, from 2026-10-16, optionally remove the vertices a pen cannot show by Ramer–Douglas–Peucker simplification (`order.simplify_mm`, off by default; see [path simplification](decisions/2026-10-16-path-simplification.md)).
 
 ### 7.2 Later families (for planning; not committed)
 
@@ -230,7 +230,7 @@ The ten questions the brief opened with (frontend stack, performance strategy, c
 5. **Standalone Rust CLI binary.** Users without Python could get the CLI as one executable. Not before the Python surface settles.
 6. **Python stage API.** Stages written in Python through callbacks would run natively but not in the browser. Decide when someone asks for one.
 7. **JSON-declared styles.** Compositions of existing stages as data, so a new style needs no code. Decide after the Voronoi family shows which compositions people want.
-8. **Additions after 0.1.** The 0.1 candidates were settled on 2026-10-15 (§14, "0.1 scope"): the MCP `load_preset` tool was already built, and the rest wait until after 0.1. Ramer–Douglas–Peucker simplification in the ordering stage. The run's settings embedded in exports, the test chart (`plotline testchart`) and a paper colour for the preview were built on 2026-10-16 ([embedded presets](decisions/2026-10-16-embedded-presets.md), [test chart](decisions/2026-10-16-test-chart.md), [paper colour](decisions/2026-10-16-paper-colour.md)). Also proposed for after 0.1: edge and outline layers, a compare view in the GUI, and a saved pen library. None of them is scheduled yet. HPGL export, once on this list, was built on 2026-10-16 ([HPGL export](decisions/2026-10-16-hpgl-export.md)).
+8. **Additions after 0.1.** The 0.1 candidates were settled on 2026-10-15 (§14, "0.1 scope"): the MCP `load_preset` tool was already built, and the rest wait until after 0.1. Ramer–Douglas–Peucker simplification in the ordering stage, the run's settings embedded in exports, the test chart (`plotline testchart`) and a paper colour for the preview were built on 2026-10-16 ([path simplification](decisions/2026-10-16-path-simplification.md), [embedded presets](decisions/2026-10-16-embedded-presets.md), [test chart](decisions/2026-10-16-test-chart.md), [paper colour](decisions/2026-10-16-paper-colour.md)). Also proposed for after 0.1: edge and outline layers, a compare view in the GUI, and a saved pen library. None of them is scheduled yet. HPGL export, once on this list, was built on 2026-10-16 ([HPGL export](decisions/2026-10-16-hpgl-export.md)).
 
 ## 13. Suggested milestones
 

@@ -1,4 +1,8 @@
-//! The ordering stage: drop short paths, then reorder and reverse the rest to cut pen-up travel.
+//! The ordering stage: simplify the paths, drop short ones, then reorder and reverse the rest to
+//! cut pen-up travel.
+//!
+//! Simplification is the Ramer-Douglas-Peucker algorithm in [`raster::simplify`], which cites
+//! Douglas and Peucker's 1973 paper.
 //!
 //! The order comes from the nearest-neighbour heuristic for the travelling salesman problem, which
 //! Rosenkrantz, Stearns and Lewis analyse in "An analysis of several heuristics for the traveling
@@ -13,6 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::raster;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::spatial::{bounds, GridIndex};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
@@ -28,6 +33,9 @@ pub struct OrderSettings {
     /// Drop paths shorter than this. Dots have zero length, so any positive value removes them.
     #[schemars(range(min = 0.0, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
     pub min_length_mm: f64,
+    /// Remove vertices that lie within this distance of the simplified line; 0 keeps every vertex. An eighth of the pen width cannot be seen at the pen's own width.
+    #[schemars(range(min = 0.0, max = 1.0), extend("x-step" = 0.01, "x-unit" = "mm"))]
+    pub simplify_mm: f64,
 }
 
 impl Default for OrderSettings {
@@ -35,12 +43,15 @@ impl Default for OrderSettings {
         OrderSettings {
             optimize: true,
             min_length_mm: 0.0,
+            simplify_mm: 0.0,
         }
     }
 }
 
-/// Drop the paths shorter than `min_length_mm`, then, with `optimize` on, put the rest in
-/// nearest-neighbour order from the top-left corner of the drawing area.
+/// Simplify each path of three or more vertices to within `simplify_mm`, keeping its end points;
+/// at 0 the paths are left as they are. Drop the paths shorter than `min_length_mm`, then, with
+/// `optimize` on, put the rest in nearest-neighbour order from the top-left corner of the drawing
+/// area.
 ///
 /// Each path is entered at its nearer endpoint, so one whose last vertex is the nearer is
 /// reversed. Exact ties go to the endpoint listed first: every path's first vertex in input order,
@@ -80,7 +91,15 @@ impl Stage for OrderStage {
         _ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<OrderSettings>(self.name(), &self.schema(), settings)?;
-        let paths = inputs.paths().clone();
+        let mut paths = inputs.paths().clone();
+        if s.simplify_mm > 0.0 {
+            let mut simplified = Paths::new();
+            // Deserialized paths may be empty, and an empty path draws nothing.
+            for p in paths.iter().filter(|p| !p.is_empty()) {
+                simplified.push(&raster::simplify(p, s.simplify_mm));
+            }
+            paths = Arc::new(simplified);
+        }
         let kept: Vec<usize> = (0..paths.len())
             .filter(|&i| {
                 let p = paths.get(i);
@@ -244,6 +263,34 @@ mod tests {
         let paths = || vec![vec![[5.0, 5.0]], vec![[0.0, 0.0], [0.0, 0.5]]];
         assert_eq!(order(paths(), json!({"min_length_mm": 1.0})).1.len(), 0);
         assert_eq!(order(paths(), json!({})).1.len(), 2);
+    }
+    #[test]
+    fn simplify_drops_vertices_within_the_tolerance_and_keeps_the_ends() {
+        let line = vec![[10.0, 10.0], [15.0, 10.02], [20.0, 10.0], [25.0, 15.0]];
+        let kept = [[10.0, 10.0], [20.0, 10.0], [25.0, 15.0]];
+        assert_eq!(order(vec![line.clone()], json!({})).1.get(0), &line);
+        let (_, out) = order(vec![line.clone()], json!({"simplify_mm": 0.05}));
+        assert_eq!(out.get(0), &kept);
+        // Two vertices and one pass through unchanged.
+        let short = vec![vec![[12.0, 12.0], [13.0, 12.0]], vec![[30.0, 30.0]]];
+        let (_, out) = order(short.clone(), json!({"simplify_mm": 1.0}));
+        assert_eq!((out.get(0), out.get(1)), (&short[0][..], &short[1][..]));
+    }
+    #[test]
+    fn simplify_runs_before_the_length_filter() {
+        // A closed jitter 0.16 mm long that simplifies to a point.
+        let jitter = || {
+            vec![vec![
+                [10.0; 2],
+                [10.0, 10.04],
+                [10.0; 2],
+                [10.0, 10.04],
+                [10.0; 2],
+            ]]
+        };
+        let patch = |simplify: f64| json!({"min_length_mm": 0.1, "simplify_mm": simplify});
+        assert_eq!(order(jitter(), patch(0.0)).1.len(), 1);
+        assert_eq!(order(jitter(), patch(0.05)).1.len(), 0);
     }
     #[test]
     fn optimize_off_keeps_order() {
