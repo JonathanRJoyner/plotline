@@ -20,6 +20,13 @@
 //! the later stages the tone map through the inverse lookup; see [`crate::response`]. The stage
 //! itself makes the same map either way, which is the one the drawing keeps.
 //!
+//! With `focus` points, the map is blurred more the further a pixel lies from the nearest point,
+//! so the detail the drawing keeps sits near the points. D. DeCarlo and A. Santella, "Stylization
+//! and abstraction of photographs", *ACM Transactions on Graphics* 21(3), 2002, pp. 769-776,
+//! doi:10.1145/566654.566650, keep detail near where a viewer looked and remove more of it with
+//! distance; here the abstraction is a blur whose strength grows with that distance, written from
+//! the paper's description, and the points are chosen by a person or an assistant.
+//!
 //! Every step runs in f32 in the Python engine's order, with each setting rounded to f32 where
 //! numpy rounds it, so both engines give the same values.
 
@@ -31,7 +38,7 @@ use serde_json::Value;
 
 use crate::analysis;
 use crate::math;
-use crate::settings::{defaults_for, schema_for, validate};
+use crate::settings::{defaults_for, schema_for, validate, SettingsError};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
 use crate::types::{Canvas, Fit, Image, ToneMap};
 
@@ -107,7 +114,31 @@ pub struct ToneSettings {
     pub blur_mm: f64,
     /// Auto draws a small test wedge with the style's settings and the first pen, measures how much of the paper each tone covers, and corrects the tone map the style draws from so the drawing's tones follow the image; off leaves it as it is.
     pub response: Response,
+    /// Points to keep detail around, as `[x, y]` shares of the image's width and height from its top-left corner; set by clicking the preview.
+    #[schemars(extend(
+        "x-hidden" = true,
+        "maxItems" = 16,
+        "items" = {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        },
+    ))]
+    pub focus: Vec<Vec<f64>>,
+    /// Radius around each focus point that keeps all its detail; used only with focus points.
+    #[schemars(
+        range(min = 1.0, max = 300.0),
+        extend("x-step" = 1.0, "x-unit" = "mm", "x-label" = "Focus radius")
+    )]
+    pub focus_mm: f64,
+    /// Blur where the image is furthest from every focus point; detail fades into it beyond the focus radius. Used only with focus points.
+    #[schemars(range(min = 0.5, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    pub focus_blur_mm: f64,
 }
+
+/// The most focus points a run takes.
+const MAX_FOCUS: usize = 16;
 
 impl Default for ToneSettings {
     fn default() -> Self {
@@ -124,13 +155,17 @@ impl Default for ToneSettings {
             smooth_mm: 0.0,
             blur_mm: 0.0,
             response: Response::Off,
+            focus: Vec::new(),
+            focus_mm: 40.0,
+            focus_blur_mm: 3.0,
         }
     }
 }
 
 /// Turn the image into a tone map. In order: luminance, a centre crop for `fill`, resize, flatten
 /// (when `flatten_mm` is set), smooth (when `smooth_mm` is set), levels (found from the filtered
-/// map when `levels` is auto), gamma, contrast, invert and blur.
+/// map when `levels` is auto), gamma, contrast, invert, blur and the blur that grows away from the
+/// focus points.
 pub struct ToneStage;
 
 impl Stage for ToneStage {
@@ -162,6 +197,7 @@ impl Stage for ToneStage {
         _ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let settings = validate::<ToneSettings>(self.name(), &self.schema(), settings)?;
+        check_focus(&settings.focus)?;
         let (image, canvas) = (inputs.image().clone(), inputs.canvas().clone());
         // Image's fields are public, so check here what the resize would otherwise panic on.
         let (w, h, n) = (image.width as usize, image.height as usize, image.rgb.len());
@@ -186,6 +222,8 @@ struct Pending {
     h: usize,
     canvas: Arc<Canvas>,
     settings: ToneSettings,
+    /// The source image's width and height, which the focus points are shares of.
+    size: (u32, u32),
     /// The guided filter, from its first step to its last.
     guided: Option<Guided>,
     /// Steps done, the first one included, and in all.
@@ -220,10 +258,11 @@ impl StageRun for ToneRun {
     fn step(&mut self) -> Result<Step, StageError> {
         if let Some((image, canvas, settings)) = self.input.take() {
             let (y, w, h) = resized(&image, &canvas, &settings);
+            let size = (image.width, image.height);
             let filters =
                 (settings.flatten_mm > 0.0) as usize + 4 * (settings.smooth_mm > 0.0) as usize;
             if filters == 0 {
-                self.map = Some(finish(y, w, h, &canvas, &settings));
+                self.map = Some(finish(y, (w, h), &canvas, &settings, size));
                 return Ok(frame(1.0, "tone map"));
             }
             let total = 1 + filters;
@@ -233,6 +272,7 @@ impl StageRun for ToneRun {
                 h,
                 canvas,
                 settings,
+                size,
                 guided: None,
                 done: 1,
                 total,
@@ -261,7 +301,7 @@ impl StageRun for ToneRun {
             p.done += 1;
             let progress = p.done as f32 / p.total as f32;
             if p.done == p.total {
-                self.map = Some(finish(p.y, p.w, p.h, &p.canvas, &p.settings));
+                self.map = Some(finish(p.y, (p.w, p.h), &p.canvas, &p.settings, p.size));
             } else {
                 self.pending = Some(p);
             }
@@ -287,9 +327,16 @@ fn resized(image: &Image, canvas: &Canvas, s: &ToneSettings) -> (Vec<f32>, usize
     resize(&lum, w, h, s.resolution as usize)
 }
 
-/// The tone map from the luminance `y`, `tw x th` on `canvas`, once it is resized, flattened and
-/// smoothed: levels to blur, in the order the module documents.
-fn finish(y: Vec<f32>, tw: usize, th: usize, canvas: &Canvas, s: &ToneSettings) -> ToneMap {
+/// The tone map from the luminance `y`, `tw x th` on `canvas`, made from an image of `size` pixels,
+/// once it is resized, flattened and smoothed: levels to the focus falloff, in the order the module
+/// documents.
+fn finish(
+    y: Vec<f32>,
+    (tw, th): (usize, usize),
+    canvas: &Canvas,
+    s: &ToneSettings,
+    (iw, ih): (u32, u32),
+) -> ToneMap {
     let (tw32, th32) = (tw as u32, th as u32);
     let (mm_per_px, origin_mm) = canvas.image_transform(tw32, th32);
     let (black, white) = match s.levels {
@@ -327,6 +374,16 @@ fn finish(y: Vec<f32>, tw: usize, th: usize, canvas: &Canvas, s: &ToneSettings) 
     } else {
         ink
     };
+    let ink = if s.focus.is_empty() {
+        ink
+    } else {
+        let points = s
+            .focus
+            .iter()
+            .map(|p| canvas.page_point([p[0], p[1]], iw, ih));
+        let points: Vec<[f64; 2]> = points.collect();
+        focus_falloff(&ink, (tw, th), (mm_per_px, origin_mm), &points, s)
+    };
     ToneMap {
         width: tw32,
         height: th32,
@@ -334,6 +391,75 @@ fn finish(y: Vec<f32>, tw: usize, th: usize, canvas: &Canvas, s: &ToneSettings) 
         mm_per_px,
         origin_mm,
     }
+}
+
+/// Refuse more than [`MAX_FOCUS`] points, and a point that is not two numbers from 0 to 1.
+fn check_focus(points: &[Vec<f64>]) -> Result<(), SettingsError> {
+    let invalid = |message: String| SettingsError::Invalid {
+        stage: "tone".into(),
+        key: Some("focus".into()),
+        message,
+    };
+    if points.len() > MAX_FOCUS {
+        let n = points.len();
+        return Err(invalid(format!(
+            "{n} points given; at most {MAX_FOCUS} are allowed"
+        )));
+    }
+    for (i, p) in points.iter().enumerate() {
+        // A range check, so a NaN fails it too.
+        if p.len() != 2 || !p.iter().all(|c| (0.0..=1.0).contains(c)) {
+            let n = i + 1;
+            return Err(invalid(format!(
+                "point {n} is {p:?}; each point must be two numbers from 0 to 1"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// `ink`, a `tw x th` map of `mm_per_px` mm pixels with its top-left corner at `origin_mm`, blurred
+/// more the further a pixel centre lies from the nearest of `focus`, which are page points in mm.
+/// With `d` that distance, the weight `w = clamp((d - focus_mm) / (2 focus_mm), 0, 1)` picks a
+/// blur between none (within `focus_mm`) and `focus_blur_mm` (from three radii out). The map is
+/// blurred at a quarter, a half, three quarters and all of `focus_blur_mm`, and a pixel takes its
+/// ink from the two levels either side of `4 w`, level 0 being `ink` itself.
+fn focus_falloff(
+    ink: &[f32],
+    (tw, th): (usize, usize),
+    (mm_per_px, origin_mm): (f64, [f64; 2]),
+    focus: &[[f64; 2]],
+    s: &ToneSettings,
+) -> Vec<f32> {
+    let blurred: Vec<Vec<f32>> = (1..=4)
+        .map(|k| {
+            math::blur(
+                ink,
+                tw,
+                th,
+                s.focus_blur_mm * f64::from(k) / 4.0 / mm_per_px,
+            )
+        })
+        .collect();
+    let level = |i: usize, p: usize| if i == 0 { ink[p] } else { blurred[i - 1][p] };
+    let mut out = Vec::with_capacity(ink.len());
+    for y in 0..th {
+        let py = (y as f64 + 0.5) * mm_per_px + origin_mm[1];
+        for x in 0..tw {
+            let px = (x as f64 + 0.5) * mm_per_px + origin_mm[0];
+            let near = focus
+                .iter()
+                .map(|f| (f[0] - px) * (f[0] - px) + (f[1] - py) * (f[1] - py))
+                .fold(f64::INFINITY, f64::min);
+            let w = ((near.sqrt() - s.focus_mm) / (2.0 * s.focus_mm)).clamp(0.0, 1.0);
+            let i = ((w * 4.0) as usize).min(3);
+            let t = (w * 4.0 - i as f64) as f32;
+            let p = y * tw + x;
+            // Exact at both ends of the weight: t is 0 within the radius and 1 past three.
+            out.push(level(i, p) * (1.0 - t) + level(i + 1, p) * t);
+        }
+    }
+    out
 }
 
 /// Divide the paper's own tone out of a row-major `w x h` luminance grid `y`, for a window of
@@ -543,7 +669,14 @@ fn crop_size(w: usize, h: usize, aspect: f64) -> (usize, usize) {
     (cw, ch)
 }
 
-/// Centre-crop a row-major `w x h` grid to a width over height of `aspect`, see [`crop_size`].
+/// The centre crop of a `w x h` grid to a width over height of `aspect`, as `[x, y, w, h]`; see
+/// [`crop_size`].
+pub(crate) fn crop_rect(w: usize, h: usize, aspect: f64) -> [usize; 4] {
+    let (cw, ch) = crop_size(w, h, aspect);
+    [(w - cw) / 2, (h - ch) / 2, cw, ch]
+}
+
+/// Centre-crop a row-major `w x h` grid to a width over height of `aspect`, see [`crop_rect`].
 /// Returns the crop and its width and height.
 pub(crate) fn crop_to_aspect(
     lum: &[f32],
@@ -551,8 +684,7 @@ pub(crate) fn crop_to_aspect(
     h: usize,
     aspect: f64,
 ) -> (Vec<f32>, usize, usize) {
-    let (cw, ch) = crop_size(w, h, aspect);
-    let (y0, x0) = ((h - ch) / 2, (w - cw) / 2);
+    let [x0, y0, cw, ch] = crop_rect(w, h, aspect);
     let rows = lum[y0 * w..(y0 + ch) * w].chunks_exact(w);
     let crop = rows.flat_map(|row| &row[x0..x0 + cw]).copied().collect();
     (crop, cw, ch)
@@ -848,6 +980,164 @@ mod tests {
         )
         .1);
         assert!(small < plain && big > small);
+    }
+    /// The distance in mm from the centre of map pixel `(x, y)` to the page point `at`.
+    fn distance(t: &ToneMap, (x, y): (usize, usize), at: [f64; 2]) -> f64 {
+        let [mx, my] = t.to_mm([x as f64 + 0.5, y as f64 + 0.5]);
+        ((mx - at[0]) * (mx - at[0]) + (my - at[1]) * (my - at[1])).sqrt()
+    }
+    #[test]
+    fn no_focus_points_leave_the_map_as_it_was() {
+        let plain = run_tone(still_life(60, 88), SQUARE, json!({})).1;
+        let patch = json!({"focus": [], "focus_mm": 5, "focus_blur_mm": 9});
+        assert_eq!(run_tone(still_life(60, 88), SQUARE, patch).1, plain);
+    }
+    #[test]
+    fn detail_stays_within_the_radius_and_fades_to_the_blur() {
+        let image = || still_life(120, 120);
+        let patch = json!({"focus": [[0.5, 0.5]], "focus_mm": 15, "focus_blur_mm": 4});
+        let plain = run_tone(image(), SQUARE, json!({})).1;
+        let soft = run_tone(image(), SQUARE, json!({"blur_mm": 4})).1;
+        let t = run_tone(image(), SQUARE, patch.clone()).1;
+        assert_eq!(*t, *run_tone(image(), SQUARE, patch).1, "determinism");
+        let (mut between, mut changed) = (0, 0);
+        for y in 0..64 {
+            for x in 0..64 {
+                let (i, d) = (y * 64 + x, distance(&t, (x, y), [50.0, 50.0]));
+                if d <= 14.9 {
+                    assert_eq!(t.ink[i], plain.ink[i], "({x}, {y}) is {d} mm out");
+                } else if d >= 45.1 {
+                    assert!(
+                        (t.ink[i] - soft.ink[i]).abs() < 1e-6,
+                        "({x}, {y}) is {d} mm out"
+                    );
+                    changed += usize::from(soft.ink[i] != plain.ink[i]);
+                } else {
+                    between += usize::from(t.ink[i] != plain.ink[i] && t.ink[i] != soft.ink[i]);
+                }
+            }
+        }
+        assert!(
+            changed > 100 && between > 100,
+            "{changed} blurred, {between} between"
+        );
+    }
+    #[test]
+    fn the_mean_ink_barely_moves() {
+        let image = || still_life(60, 88);
+        let mean = |t: &ToneMap| t.ink.iter().sum::<f32>() / t.ink.len() as f32;
+        let plain = mean(&run_tone(image(), SQUARE, json!({})).1);
+        let patch = json!({"focus": [[0.3, 0.4], [0.7, 0.8]], "focus_mm": 10, "focus_blur_mm": 6});
+        let focused = mean(&run_tone(image(), SQUARE, patch).1);
+        assert!(
+            (focused - plain).abs() < 0.02 * plain,
+            "{plain} became {focused}"
+        );
+    }
+    #[test]
+    fn the_nearest_of_several_points_counts() {
+        let patch = json!({"focus": [[0.1, 0.1], [0.9, 0.9]], "focus_mm": 12});
+        let plain = run_tone(still_life(120, 120), SQUARE, json!({})).1;
+        let t = run_tone(still_life(120, 120), SQUARE, patch).1;
+        for at in [[10.0, 10.0], [90.0, 90.0]] {
+            let near = (0..64).flat_map(|y| (0..64).map(move |x| (x, y)));
+            for (x, y) in near.filter(|&p| distance(&t, p, at) <= 11.9) {
+                assert_eq!(t.ink[y * 64 + x], plain.ink[y * 64 + x]);
+            }
+        }
+        // The corner far from both is blurred.
+        assert_ne!(t.ink[63], plain.ink[63]);
+    }
+    #[test]
+    fn focus_points_follow_the_fill_crop_and_may_lie_outside_it() {
+        // A 100 x 50 image on a 50 x 100 page keeps columns 37 to 61 of its 100, so the share
+        // 0.4325 is a quarter of the way across the page. The map is 32 x 64 with 1.5625 mm pixels.
+        let page = || Canvas::new(50.0, 100.0, 0.0, Fit::Fill).unwrap();
+        let image = || checkerboard(100, 50, 50);
+        let at = |x: usize, y: usize| y * 32 + x;
+        let plain = run_tone(image(), page(), json!({})).1;
+        let soft = run_tone(image(), page(), json!({"blur_mm": 3})).1;
+        let patch = json!({"focus": [[0.4325, 0.5]], "focus_mm": 8});
+        let t = run_tone(image(), page(), patch).1;
+        for (x, y) in [(8, 32), (6, 30)] {
+            assert_ne!(plain.ink[at(x, y)], soft.ink[at(x, y)]);
+            assert_eq!(t.ink[at(x, y)], plain.ink[at(x, y)], "({x}, {y})");
+        }
+        for (x, y) in [(24, 32), (23, 20)] {
+            assert_ne!(plain.ink[at(x, y)], soft.ink[at(x, y)]);
+            assert!(
+                (t.ink[at(x, y)] - soft.ink[at(x, y)]).abs() < 1e-6,
+                "({x}, {y})"
+            );
+        }
+        // A point left of the crop, 54 mm off the page, still keeps the pixels within 60 mm of it.
+        let patch = json!({"focus": [[0.1, 0.5]], "focus_mm": 60});
+        let t = run_tone(image(), page(), patch).1;
+        assert_eq!(t.ink[at(0, 32)], plain.ink[at(0, 32)]);
+        assert_ne!(t.ink[at(31, 32)], plain.ink[at(31, 32)]);
+    }
+    #[test]
+    fn bad_focus_points_are_refused_naming_the_point() {
+        let start = |focus: Value| {
+            let settings = merge(&ToneStage.defaults(), &json!({"focus": focus}));
+            let inputs = Inputs::new(HashMap::from([
+                (Kind::Image, Artifact::Image(Arc::new(flat(8, 8, 0.5)))),
+                (Kind::Canvas, Artifact::Canvas(Arc::new(SQUARE))),
+            ]));
+            let ctx = RunContext::new(Arc::default());
+            ToneStage
+                .start(inputs, &settings, ctx)
+                .err()
+                .map(|e| e.to_string())
+        };
+        assert_eq!(
+            start(json!([[0.5, 0.5], [1.5, 0.2]])).unwrap(),
+            "stage 'tone', setting 'focus': point 2 is [1.5, 0.2]; each point must be two numbers from 0 to 1"
+        );
+        assert!(start(json!([[0.1, -0.1]]))
+            .unwrap()
+            .contains("point 1 is [0.1, -0.1]"));
+        assert!(start(json!([[0.5], []]))
+            .unwrap()
+            .contains("point 1 is [0.5]; each point"));
+        let sixteen = vec![json!([0.5, 0.5]); 16];
+        assert!(start(json!(sixteen)).is_none());
+        let seventeen = vec![json!([0.5, 0.5]); 17];
+        assert_eq!(
+            start(json!(seventeen)).unwrap(),
+            "stage 'tone', setting 'focus': 17 points given; at most 16 are allowed"
+        );
+        let nan = check_focus(&[vec![0.5, 0.5], vec![0.5, f64::NAN]])
+            .unwrap_err()
+            .to_string();
+        assert!(nan.contains("point 2 is [0.5, NaN]"), "{nan}");
+        assert!(check_focus(&[vec![f64::INFINITY, 0.5]]).is_err());
+        assert!(check_focus(&[vec![0.0, 1.0]]).is_ok());
+    }
+    #[test]
+    fn the_focus_settings_are_declared() {
+        let schema = ToneStage.schema();
+        let p = &schema["properties"];
+        assert_eq!(p["focus"]["x-hidden"], true);
+        assert_eq!(p["focus"]["default"], json!([]));
+        assert_eq!(p["focus"]["maxItems"], MAX_FOCUS);
+        assert_eq!(p["focus"]["items"]["items"]["maximum"], 1.0);
+        assert_eq!(
+            (
+                p["focus_mm"]["minimum"].as_f64(),
+                p["focus_mm"]["maximum"].as_f64()
+            ),
+            (Some(1.0), Some(300.0))
+        );
+        assert_eq!(p["focus_mm"]["default"], 40.0);
+        assert_eq!(
+            (
+                p["focus_blur_mm"]["minimum"].as_f64(),
+                p["focus_blur_mm"]["maximum"].as_f64()
+            ),
+            (Some(0.5), Some(10.0))
+        );
+        assert_eq!(p["focus_blur_mm"]["default"], 3.0);
     }
     /// The pixels of `lit_strokes` that are paper, and the ones inside a vertical stroke, a few
     /// pixels from where it meets another.

@@ -19,7 +19,7 @@ The guided filter of K. He, J. Sun and X. Tang ("Guided image filtering", *ECCV 
 
 ## 2. Setting
 
-`tone.smooth_mm`, "Smooth, keep edges": the radius in mm, from 0 to 10 in steps of 0.1, default 0 (off), under Advanced beside Blur. The tone stage's order becomes luminance, crop, resize, flatten, **smooth**, levels, gamma, contrast, invert and blur. With 0 the stage gives exactly the map it gave before.
+`tone.smooth_mm`, "Smooth, keep edges": the radius in mm, from 0 to 10 in steps of 0.1, default 0 (off), under Advanced beside Blur. The tone stage's order becomes luminance, crop, resize, flatten, **smooth**, levels, gamma, contrast, invert, blur and the focus points' falloff. With 0 the stage gives exactly the map it gave before.
 
 ## 3. Steps
 

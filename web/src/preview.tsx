@@ -2,7 +2,7 @@ import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
 import { eachPath, pathCount } from "./paths";
-import { fitView, zoomAt, type View } from "./view";
+import { fitView, toMm, zoomAt, type View } from "./view";
 
 type Props = {
   canvas: Canvas;
@@ -19,7 +19,17 @@ type Props = {
   view: View;
   onView: (update: (view: View) => View) => void;
   fits: number;
+  // The focus points as page mm, each drawn as a ring of `radius` mm. In focus mode a click on the
+  // page asks for a point there, and a click on a point asks for its removal; dragging still pans.
+  focus: [number, number][];
+  radius: number;
+  focusing: boolean;
+  onFocusAt: (mm: [number, number]) => void;
+  onFocusRemove: (index: number) => void;
 };
+
+// A press that moves less than this many pixels before it ends is a click, not a pan.
+const CLICK_PX = 4;
 
 // A path object past about a million subpaths draws nothing, so long layers stroke in chunks.
 const CHUNK = 200_000;
@@ -135,10 +145,10 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
 }
 
 export function Preview(props: Props): JSX.Element {
-  const { canvas, result, view, onView: setView, fits } = props;
+  const { canvas, result, view, onView: setView, fits, focus, radius, focusing, onFocusAt, onFocusRemove } = props;
   const box = useRef<HTMLDivElement>(null);
   const cvs = useRef<HTMLCanvasElement>(null);
-  const drag = useRef<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ x: number; y: number; travel: number } | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [tone, setTone] = useState<{ result: ResultEvent; bitmap: ImageBitmap } | null>(null);
   const bitmap = tone?.result === result ? tone.bitmap : null; // a closed bitmap never matches the new result
@@ -198,7 +208,7 @@ export function Preview(props: Props): JSX.Element {
         ref={cvs}
         tabIndex={0}
         aria-label="Preview of the drawing: arrow keys pan, plus and minus zoom, 0 fits the page"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", touchAction: "none", cursor: "grab" }}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", touchAction: "none", cursor: focusing ? "crosshair" : "grab" }}
         onKeyDown={(e) => {
           if (e.key === "+" || e.key === "=") zoom(1.25, size.w / 2, size.h / 2);
           else if (e.key === "-") zoom(0.8, size.w / 2, size.h / 2);
@@ -217,19 +227,49 @@ export function Preview(props: Props): JSX.Element {
         }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
-          drag.current = { x: e.clientX, y: e.clientY };
+          drag.current = { x: e.clientX, y: e.clientY, travel: 0 };
         }}
         onPointerMove={(e) => {
           const d = drag.current;
           if (!d) return;
           const dx = e.clientX - d.x;
           const dy = e.clientY - d.y;
-          drag.current = { x: e.clientX, y: e.clientY };
+          drag.current = { x: e.clientX, y: e.clientY, travel: d.travel + Math.hypot(dx, dy) };
           setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
         }}
-        onPointerUp={() => (drag.current = null)}
+        onPointerUp={(e) => {
+          const d = drag.current;
+          drag.current = null;
+          if (focusing && d && d.travel < CLICK_PX && e.button === 0) {
+            const r = e.currentTarget.getBoundingClientRect();
+            onFocusAt(toMm(view, e.clientX - r.left, e.clientY - r.top));
+          }
+        }}
         onPointerCancel={() => (drag.current = null)}
       />
+      {/* Over the canvas in the canvas's own pixels. Only the removal target of each point, while
+          focusing, takes the pointer. */}
+      <svg class="focus-rings" aria-hidden={focusing ? undefined : "true"}>
+        {focus.map(([x, y], i) => {
+          const [cx, cy] = [view.x + x * view.scale, view.y + y * view.scale];
+          const remove = () => onFocusRemove(i);
+          return (
+            <g key={i}>
+              <circle class="ring-halo" cx={cx} cy={cy} r={radius * view.scale} />
+              <circle class="ring" cx={cx} cy={cy} r={radius * view.scale} />
+              <circle class="dot" cx={cx} cy={cy} r={3} />
+              {focusing && (
+                // 3 mm, and at least 8 px, around the point.
+                <circle
+                  class="hit" cx={cx} cy={cy} r={Math.max(3 * view.scale, 8)} role="button" tabIndex={0}
+                  aria-label={`Remove focus point ${i + 1}`} onClick={remove}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); remove(); } }}
+                />
+              )}
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }

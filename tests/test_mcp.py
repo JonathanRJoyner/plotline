@@ -351,6 +351,17 @@ async def test_optimize_suggests_a_density_and_changes_nothing():
         assert r.is_error and "both a metric and a target" in text(r)
 
 
+async def test_run_takes_focus_points():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        r = await call(c, "run", settings={"tone": {"resolution": 64, "focus": [[0.5, 0.5]]}})
+        assert not r.is_error
+        assert data(await call(c, "get_session"))["settings"]["tone"]["focus"] == [[0.5, 0.5]]
+        r = await call(c, "run", settings={"tone": {"focus": [[1.5, 0.5]]}})
+        assert r.is_error and "point 1 is [1.5, 0.5]" in text(r)
+
+
 async def test_refused_setting_changes_nothing():
     session = Session()
     session.set_image(_core.synthetic_gradient(8, 8))

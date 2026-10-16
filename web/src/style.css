@@ -94,18 +94,19 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
 /* Rather than wrap, the toolbar sheds labels as it narrows: the view and app buttons first, then
    all but Run. A shed label stays the button's accessible name, and its title shows on hover. */
 .app > main { container-type: inline-size; }
-@container (max-width: 1240px) {
+@container (max-width: 1340px) {
   .toolbar .shrink .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .toolbar .shrink :has(> .label) { width: 30px; padding: 0; justify-content: center; }
 }
-@container (max-width: 880px) {
+@container (max-width: 910px) {
   .toolbar .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .toolbar :has(> .label) { width: 30px; padding: 0; justify-content: center; }
 }
 /* Still too narrow: two even rows, the tools above the view and app buttons, not a stray last group. */
-@container (340px <= width < 620px) {
+@container (340px <= width < 660px) {
   .toolbar { display: grid; grid-template-columns: auto auto 1fr; }
   .toolbar .group:nth-child(4) { padding-left: 0; border-left: none; }
+  .toolbar .zoom { min-width: 0; }
 }
 
 .preview { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--backdrop); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -127,6 +128,20 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
   box-shadow: var(--shadow);
   pointer-events: none;
 }
+
+/* The focus points over the preview: a dashed ring of the radius, a dot, and while focusing a
+   target that takes the click which removes the point. The paper is white in both themes, so the
+   ring is a dark indigo that reads on it whatever the theme, and a white casing keeps it visible
+   where it runs past the paper onto the dark backdrop. */
+.focus-rings { --ring: #4338ca; position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.focus-rings .ring-halo, .focus-rings .ring { fill: none; stroke-dasharray: 6 4; }
+.focus-rings .ring-halo { stroke: #fff; stroke-width: 4; }
+.focus-rings .ring { stroke: var(--ring); stroke-width: 1.5; }
+.focus-rings .dot { fill: var(--ring); stroke: #fff; stroke-width: 1.5; }
+.focus-rings .hit { fill: transparent; stroke: transparent; stroke-width: 1.5; pointer-events: all; cursor: pointer; }
+.focus-rings .hit:hover, .focus-rings .hit:focus-visible { stroke: var(--ring); }
+.focus-line { margin: 4px 0; }
+.focus-line button { margin-left: 6px; }
 
 /* Hidden until focused, so a keyboard user can jump past the settings to the toolbar. */
 .skip { position: absolute; top: 8px; left: 8px; z-index: 1; padding: 6px 12px; color: var(--on-accent); background: var(--accent); border-radius: 8px; transform: translateY(-200%); }
