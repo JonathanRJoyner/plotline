@@ -11,7 +11,7 @@
 //! back. The CLI, the GUI and the MCP server call this layer and nothing below it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::Value;
 use thiserror::Error;
@@ -21,7 +21,7 @@ use crate::cache::{CacheStats, StageCache};
 use crate::export::gcode::{self, GcodeError};
 use crate::export::{json, svg};
 use crate::image::{self, ImageError};
-use crate::lint::{self, Finding};
+use crate::lint::{self, Finding, Measure};
 use crate::machine::{Machine, MachineError};
 use crate::presets::{self, PresetError};
 use crate::preview::{self, PreviewError};
@@ -103,6 +103,8 @@ pub struct Session {
     shared: Arc<Mutex<Shared>>,
     /// The cancel flag of the latest run.
     cancel: Arc<AtomicBool>,
+    /// The plot lint measurement of the drawing it was taken for, kept until the drawing changes.
+    measured: Mutex<Option<(Weak<Drawing>, Arc<Measure>)>>,
 }
 
 impl Session {
@@ -123,6 +125,7 @@ impl Session {
             cache: Arc::new(Mutex::new(StageCache::new(cache_bytes))),
             shared: Arc::default(),
             cancel: Arc::default(),
+            measured: Mutex::default(),
         }
     }
 
@@ -361,13 +364,22 @@ impl Session {
         self.drawing().map(|d| stats::compute(&d, self.speeds))
     }
 
-    /// The plot lint findings for the last finished drawing; see [`lint::check`]. The drawing was
-    /// measured when its run ended; the findings are worked out now from the current style,
-    /// settings, pens, speeds and machine, so their patches start from the current settings.
+    /// The plot lint findings for the last finished drawing; see [`lint::check`]. The drawing is
+    /// measured on the first call after it is made, so runs nobody lints, such as trials, cost
+    /// nothing; the findings are worked out on each call from the current style, settings, pens,
+    /// speeds and machine, so their patches start from the current settings.
     pub fn lint(&self) -> Option<Vec<Finding>> {
-        let (drawing, measure) = {
-            let shared = self.shared.lock().unwrap();
-            (shared.drawing.clone()?, shared.measure.clone()?)
+        let drawing = self.drawing()?;
+        let measure = {
+            let mut measured = self.measured.lock().unwrap();
+            match &*measured {
+                Some((d, m)) if Weak::ptr_eq(d, &Arc::downgrade(&drawing)) => m.clone(),
+                _ => {
+                    let m = Arc::new(lint::measure(&drawing));
+                    *measured = Some((Arc::downgrade(&drawing), m.clone()));
+                    m
+                }
+            }
         };
         Some(lint::check(
             &drawing,

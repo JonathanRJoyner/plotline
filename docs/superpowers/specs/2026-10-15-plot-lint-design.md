@@ -8,8 +8,7 @@ A drawing can look fine in the preview and still waste an hour, a pen or a sheet
 
 - `crates/core/src/coverage.rs` (new): the coverage raster.
 - `crates/core/src/lint.rs` (new): the measurements and the checks.
-- `crates/core/src/runner.rs`: a run that ends with a drawing measures it and leaves the measurement in the result slot beside the drawing.
-- `crates/core/src/session.rs`: `Session::lint`.
+- `crates/core/src/session.rs`: `Session::lint`, which measures each drawing once and keeps the measurement until the drawing changes.
 - Bindings: `lint()` in `crates/py` and `crates/wasm`; `Session.lint()` in `src/plotline/session.py`.
 - Front ends: findings on stderr and `--strict` in `plotline run`; findings in the MCP `run` result; a list under the stats in the GUI with Apply buttons, and a tour step. The GUI's two hard-coded hints, the empty-drawing advice in `StatsPanel` and the one-pen note in `PensPanel`, move into the core as findings.
 - Docs: the README, the brief's decision log and §9.
@@ -30,7 +29,7 @@ A pen thinner than the cell (a 0.05 mm pen, or a page too big for the cell bound
 
 ## 3. Measuring a drawing
 
-When a run ends with a drawing, the runner calls `lint::measure(&drawing)` before it writes the slot, and the slot keeps the result beside the drawing. The measurement depends on the drawing alone. It uses one raster over the page, with the cell size of the thinnest pen, cleared between layers:
+`lint::measure(&drawing)` depends on the drawing alone. It uses one raster over the page, with the cell size of the thinnest pen, cleared between layers:
 
 | Field | Meaning |
 |---|---|
@@ -76,7 +75,7 @@ The thresholds are taste defaults, chosen by running every style at its defaults
 
 ## 5. The session
 
-`Session::lint() -> Option<Vec<Finding>>` runs the checks on the last finished drawing and its measurement, with the session's current style, settings, pens, speeds and machine; `None` before any drawing. The measurement is taken once per run, on the thread that drives it; the checks are cheap, so a front end may call `lint` as often as it reads the stats.
+`Session::lint() -> Option<Vec<Finding>>` runs the checks on the last finished drawing and its measurement, with the session's current style, settings, pens, speeds and machine; `None` before any drawing. The drawing is measured on the first call after it is made and the session keeps the measurement, by a weak reference to its drawing, until the drawing changes. A run nobody lints, such as the GUI's trial of every style, costs nothing. The checks are cheap, so a front end may call `lint` as often as it reads the stats.
 
 ## 6. Front ends
 
