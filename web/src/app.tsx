@@ -128,11 +128,14 @@ function keepHelp(on: boolean) {
   } catch { /* ignored */ }
 }
 
-type ExportProps = { status: StatusStore; machine: boolean; onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void };
+type ExportProps = {
+  status: StatusStore; machine: boolean; error?: string;
+  onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void; onTestchart: () => void;
+};
 
-function Export({ status, machine, onExport, onGcode }: ExportProps) {
+function Export({ status, machine, error, onExport, onGcode, onTestchart }: ExportProps) {
   const { stats, layers } = useStatus(status);
-  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onGcode={onGcode} />;
+  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} error={error} onExport={onExport} onGcode={onGcode} onTestchart={onTestchart} />;
 }
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
@@ -544,7 +547,10 @@ export function App() {
         >
           <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
         </PensPanel>
-        <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
+        <Export
+          status={status} machine={state.machine !== null} error={errors.testchart}
+          onExport={exportAs} onGcode={exportGcode} onTestchart={() => call("testchart", [], "testchart")}
+        />
         <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
       </aside>
       <SettingsDialog
