@@ -14,7 +14,7 @@ A drawing can look fine in the preview and still waste an hour, a pen or a sheet
 - Front ends: findings on stderr and `--strict` in `plotline run`; findings in the MCP `run` result; a list under the stats in the GUI with Apply buttons, and a tour step. The GUI's two hard-coded hints, the empty-drawing advice in `StatsPanel` and the one-pen note in `PensPanel`, move into the core as findings.
 - Docs: the README, the brief's decision log and §9.
 
-Out of scope: a simplification setting for the ordering stage (the needless-vertices finding is a note until one exists; it is a candidate in the brief's §12, question 9); a neighbour test for isolated dots in dot styles; the tone-error metric and tone calibration that will build on the raster.
+Out of scope: a simplification setting for the ordering stage (the needless-vertices finding is a note until one exists; it is one of the brief's additions after 0.1 (§12)); a neighbour test for isolated dots in dot styles; the tone-error metric and tone calibration that will build on the raster.
 
 ## 2. The coverage raster
 
@@ -35,13 +35,13 @@ When a run ends with a drawing, the runner calls `lint::measure(&drawing)` befor
 | Field | Meaning |
 |---|---|
 | `cell_mm` | the raster's cell size |
-| per layer: `inked`, `overdrawn`, `max_passes` | cells passed at least once, cells passed at least twice, and the largest count, for that layer's pen alone |
+| per layer: `inked`, `overdrawn`, `max_passes` | cells passed at least once, cells passed three times or more, and the largest count, for that layer's pen alone |
 | per layer: `paths`, `dots`, `short`, `segments`, `fine_segments` | paths, one-vertex paths, paths shorter than the pen width (dots included), segments, and segments shorter than an eighth of the pen width |
 | `inked_share` | the share of the drawing area that any layer inks |
 | `dark_coverage` | over the cells whose nearest tone-map pixel holds 0.75 ink or more, the share any layer inks; none without a tone map or when such cells are under 1 % of the map's area |
 | `off_page`, `off_area` | vertices outside the page, and vertices outside the drawing area by more than half their pen width |
 
-Overdraw counts one pen against itself, because pens that share a drawing overlap on purpose: their inks mix where they cross.
+Overdraw counts one pen against itself, because pens that share a drawing overlap on purpose: their inks mix where they cross. It counts three passes and up, because two are normal where hatching crosses and where an ink fill's rings meet.
 
 ## 4. Checks
 
@@ -57,14 +57,14 @@ Overdraw counts one pen against itself, because pens that share a drawing overla
 
 | `code` | Severity | When | Patch |
 |---|---|---|---|
-| `empty` | warning | no paths, or the drawing inks under 0.1 % of the drawing area | a threshold setting halved when the style has one; else `tone.levels` auto when manual; else none |
+| `empty` | warning | no paths, or the drawing inks under 0.1 % of the drawing area | a threshold setting halved, rounded down to 0.01, when the style has one; else `tone.levels` auto when manual; else none |
 | `off_page` | error | a vertex lies outside the page | none |
-| `off_machine` | error | a machine is set and the page does not fit its drawable area | none |
+| `off_machine` | error | a machine is set and the page does not fit its drawable area | the page turned, when that fits |
 | `off_area` | warning | a vertex lies past the margin by more than half its pen width | none |
 | `close_lines` | warning | the spacing is below the widest pen's width | the spacing set to that width |
-| `overdraw` | warning | in some layer, over 25 % of the inked cells are passed twice or more; skipped when `close_lines` fired, which explains it | `hatch.levels` lowered by one when above 1; else the spacing raised by half; else none |
+| `overdraw` | warning | in some layer, over 5 % of the inked cells are passed three times or more; skipped when `close_lines` fired, which explains it | `hatch.levels` lowered by one when above 1; else the spacing raised by half; else none |
 | `specks` | warning | at least 10 paths, and 1 % of the paths, are shorter than their pen width, in a drawing where dots are under half the paths | `order.min_length_mm` set to the widest pen's width |
-| `dark` | info | the dark coverage is under 0.35 | the spacing lowered in proportion to reach about 0.5, no closer than the widest pen; else none |
+| `dark` | info | the dark coverage is under 0.35, and `empty` did not fire | the spacing lowered in proportion to reach about 0.5, no closer than the widest pen; else a point count (`count`) or stroke budget (`max_lines`) raised in proportion; else none |
 | `lifts` | info | pen lifts take over half the estimated plot time | none: the message names a long-stroke style |
 | `travel` | warning with `order.optimize` off, info with it on | pen-up travel takes over 30 % of the estimated plot time | `order.optimize` on when it is off |
 | `vertices` | info | in some layer with at least 1000 segments, over half are shorter than an eighth of its pen width | none |
@@ -72,7 +72,7 @@ Overdraw counts one pen against itself, because pens that share a drawing overla
 
 The messages are English sentences with the measured numbers in them, written for a person and read by the assistant as well. `value` is the number the rule tests: the spacing, the overdrawn share, the dark coverage, a time share, a count.
 
-The thresholds are taste defaults, chosen so the styles at their defaults on the still life raise only what is true of them (grid's dots cannot reach dark; dot styles are lift-heavy) and recorded in the brief.
+The thresholds are taste defaults, chosen by running every style at its defaults on the still life and the scene so that they raise only what is true of the styles (grid's dots cannot reach dark; dot styles are lift-heavy), and recorded in the brief with the numbers behind them.
 
 ## 5. The session
 
@@ -81,12 +81,12 @@ The thresholds are taste defaults, chosen so the styles at their defaults on the
 ## 6. Front ends
 
 - **Python:** `Session.lint()` returns a list of dicts, and raises like `stats()` without a result.
-- **CLI:** `plotline run` prints each finding to stderr as `<severity>: <message>` after the stats. `--strict` exits with status 1 when any finding is a warning or an error, after writing the output.
+- **CLI:** `plotline run` prints each finding to stderr as `<severity>: <message>` after the stats, followed by `  fix: --set stage.key=value …` (or `--width` and `--height` for a page) when it has a patch. `--quiet` still prints them. `--strict` exits with status 1 when any finding is a warning or an error, after writing the output.
 - **MCP:** `run` returns the stats JSON with a `lint` key holding the findings. Each patch applies with `run(style=..., settings=...)`, as an analysis suggestion's does.
 - **GUI:** the `end` event and the state carry the findings. A list under the stats shows each message, with an Apply button for a patch, reusing the suggestions list's markup and the `apply` command. The stats line keeps "No marks at these settings." and the `empty` finding gives the advice. The one-pen note leaves the pens panel; the `unused_pens` finding says it after a run. A tour step points at the list.
 
 ## 7. Tests
 
-- Coverage: a straight line covers the expected cells; two crossing paths count two at the crossing; a path that crosses itself counts once; a dot stamps a disc; the cell size keeps the bound; the same drawing gives the same counts twice.
-- Lint: each check fires on a small made-up drawing or setting that should trip it and stays quiet on one that should not, and its patch applies through the session without error; the styles at their defaults on the still life raise only the expected codes.
+- Coverage: a straight line covers the expected cells; two crossing paths count two at the crossing; a path that crosses itself counts once; a dot stamps a disc; marks off the grid are clipped; the cell size keeps the bound; the same drawing gives the same counts twice.
+- Lint: each check fires on a small made-up drawing or setting that should trip it and stays quiet on one that should not; grid and hatch at their defaults on a small still life raise only the expected codes, and their patches apply through the session without error; one `dark` value is pinned natively and in the WebAssembly smoke test.
 - Hosts: Python `lint()`; the CLI prints findings and `--strict` fails; the MCP `run` result has `lint`; the GUI protocol and tour tests.
