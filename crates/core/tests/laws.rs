@@ -1104,3 +1104,52 @@ fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
         Ok(())
     });
 }
+
+/// The `x,y` pairs of the argument list of an HPGL `PU` or `PD`; a lone `PD;` has none.
+fn hpgl_pairs(args: &str) -> Vec<[i64; 2]> {
+    let n: Vec<i64> = (args.split(',').filter(|v| !v.is_empty()))
+        .map(|v| v.parse().unwrap())
+        .collect();
+    n.chunks(2).map(|p| [p[0], p[1]]).collect()
+}
+
+#[test]
+fn hpgl_stays_on_the_page_and_keeps_every_vertex() {
+    let units = prop_oneof![Just(40.0), 0.01..2000.0f64];
+    check("hpgl", 12, (case(all_styles()), units), |(c, units)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let h = s.hpgl(units).unwrap();
+        prop_assert!(h.is_ascii() && !h.contains('\r'), "not ASCII with LF ends");
+        prop_assert!(h.starts_with("IN;\n") && h.ends_with("PU;\nSP0;\n"));
+        // The page scaled by the resolution, and the vertices of PU and PD against the drawing's.
+        let (w, hh) = (
+            (c.page.width * units).round(),
+            (c.page.height * units).round(),
+        );
+        let (mut pens, mut vertices) = (0, 0);
+        for line in h.lines() {
+            prop_assert!(line.ends_with(';'), "{line:?} does not end with ';'");
+            let line = line.trim_end_matches(';');
+            if line.starts_with("SP") {
+                pens += (line != "SP0") as usize;
+            } else if let Some(args) = line.strip_prefix("PU").or(line.strip_prefix("PD")) {
+                for [x, y] in hpgl_pairs(args) {
+                    vertices += 1;
+                    prop_assert!(
+                        (0.0..=w).contains(&(x as f64)) && (0.0..=hh).contains(&(y as f64)),
+                        "({x}, {y}) is off the {w} by {hh} page"
+                    );
+                }
+            }
+        }
+        let layers = d.layers.iter().filter(|l| !l.paths.is_empty()).count();
+        prop_assert_eq!(pens, layers);
+        let expected: usize = d.layers.iter().map(|l| l.paths.coords().len()).sum();
+        prop_assert_eq!(vertices, expected);
+        Ok(())
+    });
+}

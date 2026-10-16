@@ -20,6 +20,7 @@ use thiserror::Error;
 use crate::analysis::{self, Analysis, ImageStats};
 use crate::cache::{CacheStats, StageCache};
 use crate::export::gcode::{self, GcodeError};
+use crate::export::hpgl::{self, HpglError};
 use crate::export::{json, svg};
 use crate::fit::{places_points, Density, FitRun, Metric};
 use crate::image::{self, ImageError};
@@ -61,6 +62,9 @@ pub enum SessionError {
     /// A layer could not be written as G-code.
     #[error(transparent)]
     Gcode(#[from] GcodeError),
+    /// The drawing could not be written as HPGL.
+    #[error(transparent)]
+    Hpgl(#[from] HpglError),
     /// G-code was asked for with no machine set.
     #[error("no machine is set")]
     NoMachine,
@@ -526,6 +530,14 @@ impl Session {
         let m = self.machine.as_ref().ok_or(SessionError::NoMachine)?;
         let d = self.drawing().ok_or(SessionError::NoDrawing)?;
         Ok(gcode::to_gcode(&d, layer, m)?)
+    }
+
+    /// The last finished drawing as one HPGL program with `units_per_mm` plotter units to the
+    /// millimetre; see [`hpgl::to_hpgl`]. Fails without a drawing and for a resolution that is not
+    /// finite and above 0.
+    pub fn hpgl(&self, units_per_mm: f64) -> Result<String, SessionError> {
+        let d = self.drawing().ok_or(SessionError::NoDrawing)?;
+        Ok(hpgl::to_hpgl(&d, units_per_mm)?)
     }
 
     /// The stats of the last finished drawing at the session's speeds.
@@ -1264,5 +1276,21 @@ mod tests {
             "{g}"
         );
         assert!(s.gcode(1).unwrap_err().to_string().contains("no layer 1"));
+    }
+
+    #[test]
+    fn hpgl_needs_a_drawing_but_no_machine() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.hpgl(40.0).unwrap_err().to_string().contains("drawing"));
+        s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.set_image(gradient(64, 48));
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+        let h = s.hpgl(40.0).unwrap();
+        assert!(h.starts_with("IN;\nSP1;\nPU"), "{h}");
+        assert!(h.ends_with("PU;\nSP0;\n"), "{h}");
+        let err = s.hpgl(0.0).unwrap_err();
+        assert!(matches!(err, SessionError::Hpgl(_)), "{err}");
     }
 }

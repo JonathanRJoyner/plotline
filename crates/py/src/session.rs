@@ -165,6 +165,13 @@ impl Session {
         self.inner.gcode(layer).map_err(session_error)
     }
 
+    /// The latest result as one HPGL program with `units_per_mm` plotter units to the millimetre.
+    /// Raises `RuntimeError` without a result and `ValueError` for a resolution that is not a
+    /// number above 0.
+    fn hpgl(&self, units_per_mm: f64) -> PyResult<String> {
+        self.inner.hpgl(units_per_mm).map_err(session_error)
+    }
+
     /// Cancel the latest run and start a new one over a snapshot of the session. Raises
     /// `RuntimeError` when no image is set.
     fn start(&mut self) -> PyResult<Run> {
