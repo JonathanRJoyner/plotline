@@ -217,6 +217,9 @@ details details > summary { color: var(--muted); font-size: 12px; font-weight: 5
 summary { cursor: pointer; }
 summary:hover { color: var(--text); }
 .error { margin: 4px 0; color: var(--danger); }
+/* The page's crop: the word and the button that takes the crop off. */
+.crop { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 8px 0 0; }
+.crop button { margin: 0; }
 .warnings { margin: 8px 0 0; padding-left: 1.2em; color: var(--muted); }
 
 /* The suggestions: a reason, then its button, with a rule between items. */

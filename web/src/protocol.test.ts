@@ -296,6 +296,19 @@ test("apply runs the patch and redraws once", async () => {
   await ended(2);
 });
 
+test("apply takes a crop into the page, keeps the rest of it, and zeros take it off", async () => {
+  const { call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const { state } = ok("apply", { page: { crop: [0.1, 0, 0.2, 0] } });
+  expect(state.canvas).toMatchObject({ width_mm: 210, height_mm: 297, margin_mm: 10, crop: [0.1, 0, 0.2, 0] });
+  await ended(2);
+  // The engine leaves an all-zero crop out of the page, as it does of a preset.
+  expect(ok("apply", { page: { crop: [0, 0, 0, 0] } }).state.canvas.crop).toBeUndefined();
+  await ended(3);
+  expect(call("apply", { page: { crop: [0.5, 0, 0, 0] } }).ok).toBe(false);
+});
+
 test("apply sets a patch's pens before its settings and redraws once", async () => {
   const { posted, ok, ended } = setup();
   ok("setImage", 400, 200, syntheticGradient(400, 200));
