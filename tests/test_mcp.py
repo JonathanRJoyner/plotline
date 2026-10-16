@@ -215,6 +215,21 @@ async def test_preset_round_trip_and_warnings(tmp_path):
         assert "bogus" in r["warnings"][0]
 
 
+async def test_load_preset_reads_an_exported_svg(tmp_path):
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    svg = tmp_path / "o.svg"
+    async with Client(build_server(session)) as c:
+        await call(c, "set_page", width_mm=100, height_mm=75, margin_mm=5)
+        await call(c, "run", settings={"tone": {"resolution": 64}})
+        await call(c, "export", path=str(svg), format="svg")
+    async with Client(build_server(Session())) as c:
+        r = data(await call(c, "load_preset", path=str(svg)))
+        assert r == {"style": "grid", "warnings": []}
+        s = data(await call(c, "get_session"))
+        assert s["settings"]["tone"]["resolution"] == 64 and s["page"]["width_mm"] == 100
+
+
 def png(block):
     return base64.b64decode(block.data)
 

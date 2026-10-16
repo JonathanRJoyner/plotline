@@ -58,6 +58,12 @@ fn grid_matches_the_golden_file() {
             assert!((va.as_f64().unwrap() - ve.as_f64().unwrap()).abs() <= 1e-3);
         }
     }
+    // The exported SVG holds the run's preset.
+    let svg = s.svg().unwrap();
+    let preset: serde_json::Value =
+        serde_json::from_str(&plotline_wasm::preset_from_text(&svg).unwrap()).unwrap();
+    assert_eq!(preset["style"], "grid");
+    assert_eq!(preset["settings"]["points"]["spacing_mm"], 2.0);
 }
 #[wasm_bindgen_test]
 fn stipple_matches_the_golden_file() {

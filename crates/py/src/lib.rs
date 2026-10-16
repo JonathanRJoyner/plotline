@@ -5,7 +5,7 @@ mod convert;
 mod session;
 
 use numpy::PyArray3;
-use plotline_core::{pens, registry, synthetic, SessionError};
+use plotline_core::{pens, presets, registry, synthetic, SessionError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -32,6 +32,13 @@ fn describe<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
     let style = registry::get_style(name)
         .ok_or_else(|| session_error(SessionError::UnknownStyle(name.to_string())))?;
     value_to_py(py, &style.schema())
+}
+
+/// The preset in `text`, which is a preset file, an exported SVG or an exported JSON drawing; see
+/// `plotline_core::presets::from_text`. Raises `ValueError` for text that holds none.
+#[pyfunction]
+fn preset_from_text<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+    value_to_py(py, &presets::from_text(text).map_err(value_error)?)
 }
 
 /// The ink colours as name to `#rrggbb`, in display order; see `plotline_core::pens::INKS`.
@@ -86,6 +93,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<session::Run>()?;
     m.add_function(wrap_pyfunction!(list_styles, m)?)?;
     m.add_function(wrap_pyfunction!(describe, m)?)?;
+    m.add_function(wrap_pyfunction!(preset_from_text, m)?)?;
     m.add_function(wrap_pyfunction!(inks, m)?)?;
     m.add_function(wrap_pyfunction!(synthetic_gradient, m)?)?;
     m.add_function(wrap_pyfunction!(synthetic_checkerboard, m)?)?;
