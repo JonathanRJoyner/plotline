@@ -1,11 +1,11 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Save, Settings as Gear, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Save, Settings as Gear, Target, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
-import type { Area, BankPen, Canvas, Ink, Machine, Pen, Stats } from "./events";
+import type { Area, BankPen, Canvas, FitResult, Ink, Machine, Pen, Stats } from "./events";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 
 const SIZES: [string, number, number][] = [
@@ -272,6 +272,39 @@ export function StatsPanel({ stats }: { stats: Stats | null }): JSX.Element {
   );
 }
 
+const UNITS = [["minutes", "min"], ["paths", "paths"], ["metres", "m"], ["dots", "dots"]] as const;
+
+type FitProps = { disabled: boolean; error?: string; fitted: FitResult | null; onFit: (metric: string, target: number) => void };
+
+// A budget: a target in one of the units, which Fit meets by changing the style's density setting.
+export function FitPanel({ disabled, error, fitted, onFit }: FitProps): JSX.Element {
+  const [target, setTarget] = useState("");
+  const [metric, setMetric] = useState("minutes");
+  const unit = (m: string) => UNITS.find(([name]) => name === m)?.[1] ?? m;
+  return (
+    <form
+      class="fit" data-tour="fit"
+      onSubmit={(e) => { e.preventDefault(); if (Number(target) > 0) onFit(metric, Number(target)); }}
+    >
+      <input type="number" min="0" step="any" required aria-label="Target" placeholder="Target" value={target} onInput={(e) => setTarget(e.currentTarget.value)} />
+      <select aria-label="Target unit" value={metric} onChange={(e) => setMetric(e.currentTarget.value)}>
+        {UNITS.map(([name, label]) => <option value={name}>{label}</option>)}
+      </select>
+      <button
+        type="submit" disabled={disabled}
+        title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says."
+      >
+        <Target /> Fit to target
+      </button>
+      {error ? <span class="error">{error}</span> : fitted && (
+        <span>
+          {fitted.stage}.{fitted.key} set to {String(fitted.value)}: {Number(fitted.achieved.toPrecision(4))} {unit(fitted.metric)} for a target of {fitted.target} {unit(fitted.metric)} in {fitted.samples.length} runs
+        </span>
+      )}
+    </form>
+  );
+}
+
 type StatusProps = {
   stages: { name: string; label: string }[];
   progress: Record<string, { label: string; progress: number }>;
@@ -287,6 +320,7 @@ export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX
   return (
     <div class="status">
       <span class={run.error ? "error" : undefined}>{run.id > 0 ? `Run ${run.id}: ` : ""}{stopping ? "stopping…" : run.state}{run.error ? `: ${run.error}` : ""}</span>
+      {run.state === "running" && progress.fit && <span>Fit: {progress.fit.label}</span>}
       <ol>
         {stages.map((s) => {
           const p = progress[s.name];

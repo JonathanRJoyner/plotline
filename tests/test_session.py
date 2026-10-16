@@ -296,3 +296,35 @@ def test_two_pens_by_colour_draw_one_layer_each():
     assert [layer.pen.name for layer in r.layers] == ["Red", "Blue"]
     assert all(len(layer.paths) > 0 for layer in r.layers)
     assert {f.pen for f in frames if f.stage == "hatch"} == {0, 1}
+
+
+def test_fit_meets_a_budget_and_applies_the_value():
+    s = Session()
+    s.set_image(_core.synthetic_gradient(64, 48))
+    s.set_canvas(Canvas(100, 75, 5))
+    s.set_style("waves")
+    s.update("tone", resolution=64)
+    frames = []
+    s.subscribe(frames.append)
+    handle = s.fit("metres", 10)
+    assert handle.wait() is RunState.done
+    fit = handle.fit
+    assert (fit["stage"], fit["key"], fit["metric"], fit["target"]) == (
+        "waves",
+        "spacing_mm",
+        "metres",
+        10,
+    )
+    # The same samples as the engine's pinned fit, since the image and page are the same.
+    assert [x["value"] for x in fit["samples"]] == [2.0, 1.472, 0.655, 0.883, 0.843]
+    assert s.settings["waves"]["spacing_mm"] == fit["value"] == 0.843
+    assert s.result is handle.result
+    assert s.stats().pen_down_mm / 1000 == fit["achieved"]
+    assert [f.label for f in frames if f.stage == "fit"][0] == "trial 1 of 8: 7.36 m"
+    assert s.run().wait() is RunState.done and s._handle.fit is None
+    with pytest.raises(ValueError, match="places no dots"):
+        s.fit("dots", 10)
+    with pytest.raises(ValueError, match="unknown metric"):
+        s.fit("hours", 10)
+    with pytest.raises(RuntimeError, match="no image"):
+        Session().fit("paths", 10)

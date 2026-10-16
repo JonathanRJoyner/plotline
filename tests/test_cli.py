@@ -138,6 +138,32 @@ def test_run_rejects_bad_inputs(tmp_path, image):
         assert r.exit_code == 1 and word in r.stderr, r.output
 
 
+def test_run_fits_a_budget(tmp_path, image):
+    out, preset = str(tmp_path / "o.svg"), tmp_path / "p.json"
+    page = ["--width", "100", "--height", "75", "--set", "tone.resolution=64"]
+    r = run(
+        "run",
+        "waves",
+        image,
+        "--out",
+        out,
+        *page,
+        "--save-preset",
+        str(preset),
+        "--fit-metres",
+        "10",
+    )
+    assert r.exit_code == 0, r.output
+    line = next(x for x in r.stdout.splitlines() if x.startswith("fit: "))
+    value = json.loads(preset.read_text())["settings"]["waves"]["spacing_mm"]
+    assert line.startswith(f"fit: waves.spacing_mm = {value} (") and "for a target of 10 m" in line
+    assert "trial 1 of 8" in r.stderr
+    r = run("run", "waves", image, "--out", out, "--fit-paths", "5", "--fit-metres", "5")
+    assert r.exit_code == 2 and "at most one --fit option" in r.output
+    r = run("run", "waves", image, "--out", out, "--fit-dots", "500")
+    assert r.exit_code == 1 and "places no dots" in r.output
+
+
 def kinds(path, *options):
     r = run("analyse", str(path), *options)
     assert r.exit_code == 0, r.output

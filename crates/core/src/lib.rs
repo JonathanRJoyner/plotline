@@ -3,6 +3,7 @@
 pub mod analysis;
 pub mod cache;
 pub mod export;
+pub mod fit;
 pub mod image;
 pub mod machine;
 pub mod math;
@@ -23,6 +24,7 @@ pub mod synthetic;
 pub mod types;
 
 pub use cache::{CacheStats, DEFAULT_CACHE_BYTES};
+pub use fit::{FitResult, FitRun, Job, Metric};
 pub use image::ImageError;
 pub use preview::PreviewError;
 pub use runner::{Run, RunState};

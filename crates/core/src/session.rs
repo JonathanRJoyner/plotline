@@ -20,6 +20,7 @@ use crate::analysis::{self, Analysis, ImageStats};
 use crate::cache::{CacheStats, StageCache};
 use crate::export::gcode::{self, GcodeError};
 use crate::export::{json, svg};
+use crate::fit::{places_points, Density, FitRun, Metric};
 use crate::image::{self, ImageError};
 use crate::machine::{Machine, MachineError};
 use crate::presets::{self, PresetError};
@@ -78,6 +79,9 @@ pub enum SessionError {
     /// A run was started before an image was set.
     #[error("no image is loaded")]
     NoImage,
+    /// A fit was refused; the message says why.
+    #[error("{0}")]
+    Fit(String),
 }
 
 /// One working context: an image, a canvas, pens, a style with its settings, the plot speeds, the
@@ -266,15 +270,7 @@ impl Session {
     /// Later changes to the session do not reach the run. Fails when no image is set.
     pub fn start(&mut self) -> Result<Run, SessionError> {
         let image = self.image.clone().ok_or(SessionError::NoImage)?;
-        self.cancel.store(true, Ordering::Relaxed);
-        self.cancel = Arc::default();
-        let generation = {
-            let mut shared = self.shared.lock().unwrap();
-            shared.generation += 1;
-            shared.state = RunState::Running;
-            shared.error = None;
-            shared.generation
-        };
+        let generation = self.claim();
         Ok(Run::new(
             self.style.clone(),
             self.settings.clone(),
@@ -284,6 +280,65 @@ impl Session {
             self.cancel.clone(),
             generation,
         ))
+    }
+
+    /// Cancel the latest run and return a fit, which reruns the style with its density setting
+    /// changed until `metric` of the drawing (`minutes`, `paths`, `metres` or `dots`) is near
+    /// `target`; see [`fit`](crate::fit). It works over a snapshot of the session, the speeds
+    /// included, and claims the result slot as [`Session::start`] does. The settings stay as they
+    /// are: once the fit is done, apply [`FitRun::result`]'s value with [`Session::update`].
+    ///
+    /// Fails, changing nothing, when no image is set, for an unknown metric, a target that is not
+    /// a number above 0, a style with no density setting, and `dots` for a style that places no
+    /// points.
+    pub fn fit(&mut self, metric: &str, target: f64) -> Result<FitRun, SessionError> {
+        let image = self.image.clone().ok_or(SessionError::NoImage)?;
+        let name = &self.style.name;
+        let refuse = |message: String| Err(SessionError::Fit(message));
+        let Some(metric) = Metric::parse(metric) else {
+            let names: Vec<&str> = Metric::ALL.iter().map(|m| m.name()).collect();
+            return refuse(format!(
+                "unknown metric {metric:?}; use {}",
+                names.join(", ")
+            ));
+        };
+        if !(target.is_finite() && target > 0.0) {
+            return refuse(format!("the target must be a number above 0, got {target}"));
+        }
+        let Some(density) = Density::of(&self.style) else {
+            return refuse(format!("style {name:?} has no density setting to fit"));
+        };
+        if metric == Metric::Dots && !places_points(&self.style) {
+            return refuse(format!(
+                "style {name:?} places no dots; fit minutes, paths or metres"
+            ));
+        }
+        let generation = self.claim();
+        Ok(FitRun::new(
+            self.style.clone(),
+            self.settings.clone(),
+            self.roots(image),
+            self.cache.clone(),
+            self.shared.clone(),
+            self.cancel.clone(),
+            generation,
+            self.speeds,
+            density,
+            metric,
+            target,
+        ))
+    }
+
+    /// Cancel the latest run, give the next one a fresh cancel flag, and show the slot as running
+    /// with no error under a new generation, which this returns.
+    fn claim(&mut self) -> u64 {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.cancel = Arc::default();
+        let mut shared = self.shared.lock().unwrap();
+        shared.generation += 1;
+        shared.state = RunState::Running;
+        shared.error = None;
+        shared.generation
     }
 
     /// A run of the style called `name` at the settings [`Session::set_style`] would give it, over

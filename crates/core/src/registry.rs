@@ -379,6 +379,33 @@ mod tests {
         assert!(get_style("nope").is_none());
     }
     #[test]
+    fn every_style_but_ink_has_one_density_setting() {
+        // The budget solver fits the one setting marked x-density; see crate::fit.
+        for style in list_styles() {
+            let marks: Vec<String> = (style.stages.iter())
+                .flat_map(|stage| {
+                    let schema = stage.schema();
+                    let props = schema["properties"]
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default();
+                    props.into_iter().filter_map(move |(key, p)| {
+                        p.get("x-density")
+                            .map(|_| format!("{}.{key}", stage.name()))
+                    })
+                })
+                .collect();
+            let density = crate::fit::Density::of(&style);
+            if style.name == "ink" {
+                assert!(marks.is_empty() && density.is_none());
+                continue;
+            }
+            let d = density.unwrap_or_else(|| panic!("{} has no density setting", style.name));
+            assert_eq!(marks, [format!("{}.{}", d.stage, d.key)], "{}", style.name);
+            assert!(d.min > 0.0 && d.min < d.max, "{}", style.name);
+        }
+    }
+    #[test]
     fn descriptions_have_no_runs_of_spaces() {
         // A string continued onto the next line without a backslash keeps the indent.
         for style in list_styles() {

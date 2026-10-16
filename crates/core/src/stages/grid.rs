@@ -26,7 +26,7 @@ use crate::types::{Paths, Points, ToneMap};
 #[serde(default, deny_unknown_fields)]
 pub struct GridSettings {
     /// Distance between neighbouring grid points, along the rows and along the columns.
-    #[schemars(range(min = 0.2, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.2, max = 10.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
     /// Least ink density that gets a point: 0 keeps every grid position and 1 keeps only full ink.
     #[schemars(range(min = 0.0, max = 1.0), extend("x-step" = 0.01))]

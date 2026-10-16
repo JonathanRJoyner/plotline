@@ -44,6 +44,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Eighteen styles,** from dots on a grid to one continuous spiral. The table below describes each one.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Suggestions.** The engine measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
+- **Budgets.** Give a plot time, a path count, metres of pen-down line or a dot count, and plotline finds the value of the style's density setting, such as its line spacing, that meets it in up to eight runs.
 - **Short pen travel.** Every run orders its paths to keep the pen's travel short, and the line styles lift the pen far less often than `grid`.
 - **Plotter-ready output.** An SVG in millimetres holds one layer per pen that draws, each labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI writes one G-code file per pen.
 - **Several pens.** Pen use shares a drawing between your pens: light to dark in list order, or each pen by its colour, so cyan, magenta, yellow and black pens can draw a colour image. By default the first pen draws alone.
@@ -110,6 +111,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Choose the pen, by ink name or `#rrggbb` colour | `--pen 'Fine:0.3:blue'` |
 | Share the drawing between pens given with `--pen` more than once; by default only the first draws | `--set split.mode=light_to_dark` or `by_colour` |
 | Change a setting | `--set points.spacing_mm=3` |
+| Meet a budget of plot time, paths, pen-down metres or dots by changing the style's density setting | `--fit-minutes 60`, `--fit-paths 2000`, `--fit-metres 50` or `--fit-dots 20000` |
 | List a style's settings | `plotline describe grid` |
 | Save the run's look as a preset | `--save-preset my-look.json` |
 | Start a later run from a preset | `--preset my-look.json` |
@@ -120,7 +122,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 
 ## With an AI assistant
 
-`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, look at previews, also zoomed in on a part of the page, and export the result.
+`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, `fit` one to a budget, look at previews, also zoomed in on a part of the page, and export the result.
 
 ## Roadmap
 

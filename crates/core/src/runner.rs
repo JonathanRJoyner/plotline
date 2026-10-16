@@ -316,6 +316,22 @@ impl Run {
         self.error.clone()
     }
 
+    /// The points the run has placed: the last points of each lane summed, or the last points
+    /// before any split; `None` when a lane, or a run without lanes, has none.
+    pub fn point_count(&self) -> Option<usize> {
+        let last = |done: &[(Artifact, String)]| {
+            done.iter().rev().find_map(|(artifact, _)| match artifact {
+                Artifact::Points(p) => Some(p.0.len()),
+                _ => None,
+            })
+        };
+        if self.lanes.is_empty() {
+            last(&self.done)
+        } else {
+            self.lanes.iter().map(|lane| last(&lane.done)).sum()
+        }
+    }
+
     /// The next stage to run and its lane, or `None` once every stage has run. Up to and
     /// including the split, stages run once with no lane; after it, every remaining stage of lane
     /// 0, then of lane 1, and so on.

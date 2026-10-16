@@ -33,7 +33,7 @@ use crate::types::{Points, ToneMap};
 #[serde(default, deny_unknown_fields)]
 pub struct DitherSettings {
     /// Grid cell size; one dot at most per cell.
-    #[schemars(range(min = 0.2, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.2, max = 10.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
     /// Scan alternate rows in opposite directions, which breaks up diagonal patterns.
     pub serpentine: bool,

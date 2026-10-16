@@ -45,7 +45,7 @@ const LEAST_INK: f64 = 1.0 / 64.0;
 #[serde(default, deny_unknown_fields)]
 pub struct HilbertSettings {
     /// Smallest fold, used over full ink.
-    #[schemars(range(min = 0.3, max = 5.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.3, max = 5.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
     pub cell_mm: f64,
     /// Largest fold, used over white.
     #[schemars(range(min = 1.0, max = 40.0), extend("x-step" = 0.5, "x-unit" = "mm"))]
