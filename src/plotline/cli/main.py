@@ -285,6 +285,19 @@ def read_machine(path: str) -> dict[str, Any]:
         "Also write one G-code file per pen into DIR. Needs a machine, from --machine or --preset."
     ),
 )
+@click.option(
+    "--hpgl",
+    type=click.Path(),
+    metavar="FILE",
+    help="Also write the drawing as one HPGL file, with a pen selected for each layer.",
+)
+@click.option(
+    "--hpgl-units",
+    type=click.FloatRange(min=0, min_open=True),
+    default=40.0,
+    show_default=True,
+    help="Plotter units per mm in the HPGL file.",
+)
 @fit_options
 @click.option(
     "--optimize",
@@ -319,6 +332,8 @@ def run(
     save_preset: str | None,
     machine: str | None,
     gcode: str | None,
+    hpgl: str | None,
+    hpgl_units: float,
     fit_minutes: float | None,
     fit_paths: float | None,
     fit_metres: float | None,
@@ -401,6 +416,8 @@ def run(
         if gcode is not None:
             files = session.export_gcode(gcode)
             click.echo(f"gcode: {len(files)} {'file' if len(files) == 1 else 'files'} in {gcode}")
+        if hpgl is not None:
+            session.export_hpgl(hpgl, hpgl_units)
     stats = session.stats()
     click.echo(
         f"paths: {stats.path_count}  pen down: {stats.pen_down_mm:.1f} mm  "

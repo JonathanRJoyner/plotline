@@ -581,6 +581,36 @@ def test_gcode_needs_a_machine_a_result_and_a_page_that_fits(tmp_path):
     assert not out.exists()
 
 
+def test_hpgl_is_one_program_with_a_pen_for_each_layer(tmp_path):
+    pens = (Pen("Light 0.3", 0.3, "#808080"), Pen("Dark 0.3", 0.3, "#000000"))
+    s = drawn(*pens, mode="light_to_dark")
+    text = s.hpgl()
+    lines = text.splitlines()
+    assert lines[:2] == ["IN;", "SP1;"] and lines[-2:] == ["PU;", "SP0;"] and "SP2;" in lines
+    assert text == s.hpgl(40.0) and s.hpgl(10) != text
+    # No machine is needed, and the file is ASCII with LF line ends.
+    s.set_machine(None)
+    file = tmp_path / "o.hpgl"
+    s.export_hpgl(file, 20)
+    raw = file.read_bytes()
+    assert raw.decode("ascii") == s.hpgl(20) and b"\r" not in raw
+
+
+def test_hpgl_needs_a_result_and_a_resolution_above_zero(tmp_path):
+    file = tmp_path / "o.hpgl"
+    with pytest.raises(RuntimeError, match="no drawing"):
+        Session().hpgl()
+    with pytest.raises(RuntimeError, match="no drawing"):
+        Session().export_hpgl(file)
+    s = drawn()
+    for bad in (0, -1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="above 0"):
+            s.hpgl(bad)
+        with pytest.raises(ValueError, match="above 0"):
+            s.export_hpgl(file, bad)
+    assert not file.exists()
+
+
 def test_a_preset_with_a_machine_brings_its_speeds(tmp_path):
     s = drawn()
     s.save_preset(tmp_path / "p.json")

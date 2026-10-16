@@ -512,6 +512,19 @@ class Session:
             file.write_text(text, encoding="utf-8", newline="\n")
         return files
 
+    def hpgl(self, units_per_mm: float = 40.0) -> str:
+        """The result as one HPGL program, with ``units_per_mm`` plotter units to the millimetre;
+        40, HPGL's plotter unit of 0.025 mm, suits most plotters. Each layer that has paths
+        selects its own pen, numbered from 1. Raises ``RuntimeError`` when there is no result and
+        ``ValueError`` for a resolution that is not a number above 0."""
+        return self._core.hpgl(units_per_mm)
+
+    def export_hpgl(self, path: str | os.PathLike[str], units_per_mm: float = 40.0) -> None:
+        """Write the HPGL program to ``path`` as ASCII with LF line ends. Raises
+        ``RuntimeError`` when there is no result and ``ValueError`` for a resolution that is not
+        a number above 0; in both cases nothing is written."""
+        Path(path).write_text(self.hpgl(units_per_mm), encoding="ascii", newline="\n")
+
     def stats(self) -> Stats:
         """The path count, pen-down and pen-up distances and estimated plot time of the result at
         ``speeds``. Raises ``RuntimeError`` when there is no result."""

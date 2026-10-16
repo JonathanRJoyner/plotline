@@ -451,11 +451,14 @@ def build_server(session: Session | None = None) -> MCPServer:
     @server.tool()
     async def export(
         path: str,
-        format: Literal["svg", "json", "png", "preset", "gcode"],
+        format: Literal["svg", "json", "png", "preset", "gcode", "hpgl"],
         overwrite: bool = False,
+        units_per_mm: float = 40.0,
     ) -> dict[str, Any]:
-        """Write the result as svg, json (the paths) or png (a preview), or the settings as a
-        preset, to the absolute path. A file that exists is kept unless overwrite is true. With
+        """Write the result as svg, json (the paths), png (a preview) or hpgl (one plotter file,
+        with a pen selected for each layer), or the settings as a preset, to the absolute path.
+        units_per_mm is the plotter units to the millimetre of hpgl, 40 for most plotters, and
+        no other format reads it. A file that exists is kept unless overwrite is true. With
         format gcode the path is a folder, made if it is missing, and the result is written into
         it as one file per pen, plot_1_<pen>.gcode and so on, for the machine from set_machine;
         if any of those files exists, none is written unless overwrite is true. Returns the path
@@ -472,6 +475,8 @@ def build_server(session: Session | None = None) -> MCPServer:
                 session.export_svg(p)
             elif format == "json":
                 session.export_json(p)
+            elif format == "hpgl":
+                session.export_hpgl(p, units_per_mm)
             elif format == "png":
                 p.write_bytes(session.preview_png(_page_px(session)))
             else:
