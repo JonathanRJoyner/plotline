@@ -23,6 +23,7 @@ use crate::stages::spiral::SpiralStage;
 use crate::stages::split::SplitStage;
 use crate::stages::stipple::StippleRenderer;
 use crate::stages::tone::ToneStage;
+use crate::stages::truchet::TruchetStage;
 use crate::stages::tsp::TspRenderer;
 use crate::stages::voronoi::VoronoiPlacer;
 use crate::stages::waves::WaveStage;
@@ -316,6 +317,18 @@ pub fn mosaic_style() -> Style {
     .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
 }
 
+/// Quarter-circle arcs on tiles in random turns, nested more deeply where it is darker, joined into
+/// curves: tone, split, truchet, order.
+pub fn truchet_style() -> Style {
+    tone_style(
+        "truchet",
+        "Truchet tiles",
+        "Quarter-circle arcs on square tiles in random turns, joining into winding curves, with \
+         more nested arcs where the image is darker.",
+        Arc::new(TruchetStage),
+    )
+}
+
 /// The hidden `_slow` style for host tests: stage `a` gives one point, and stage `b` takes a set
 /// time over a set number of frames and can fail at a chosen step.
 pub fn slow_style() -> Style {
@@ -351,6 +364,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(hilbert_style()),
         Arc::new(scribble_style()),
         Arc::new(mosaic_style()),
+        Arc::new(truchet_style()),
         Arc::new(slow_style()),
     ]
 }
@@ -409,7 +423,7 @@ mod tests {
             [
                 "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
                 "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
-                "hilbert", "scribble", "mosaic"
+                "hilbert", "scribble", "mosaic", "truchet"
             ]
         );
         assert!(get_style("_slow").is_some());

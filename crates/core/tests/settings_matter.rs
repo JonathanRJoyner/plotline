@@ -149,6 +149,18 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "used only when levels is auto, which is off by default",
     ),
     (
+        "truchet",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
+        "truchet",
+        "tone",
+        "resolution",
+        "a tile's arc count is rounded from the mean of 16 samples of its ink, and resampling the 64 by 48 noise image to 2500 pixels instead of 1000 moves none of those means across a rounding point",
+    ),
+    (
         "line",
         "order",
         "min_length_mm",

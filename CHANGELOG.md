@@ -6,9 +6,9 @@ The first release. One Rust engine runs everything: the Python package, the comm
 
 ### Styles
 
-Twenty styles, each a pipeline of cached stages, so changing a late setting reruns only the stages after it:
+Twenty-one styles, each a pipeline of cached stages, so changing a late setting reruns only the stages after it:
 
-- **Lines:** `grid`, `hatch`, `waves`, `spiral` and `ink`, for line art and inked drawings.
+- **Lines:** `grid`, `hatch`, `waves`, `spiral`, `truchet` and `ink`, for line art and inked drawings.
 - **The Voronoi point family:** `stipple`, `line` (one unbroken line that does not cross itself), `dashes`, `tree`, `mesh`, `cells` and `scribble` (loops traced along the line). They share one placement of points, so switching between them reuses the points. Placing 10,000 points over 50 relaxation passes on a 1000-pixel image takes about 3.3 s natively.
 - **Sketch Lines:** `sketch`.
 - **Other placers:** `halftone`, `dither` and `circles`.
