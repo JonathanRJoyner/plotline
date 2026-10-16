@@ -6,13 +6,13 @@ The first release. One Rust engine runs everything: the Python package, the comm
 
 ### Styles
 
-Nineteen styles, each a pipeline of cached stages, so changing a late setting reruns only the stages after it:
+Twenty styles, each a pipeline of cached stages, so changing a late setting reruns only the stages after it:
 
 - **Lines:** `grid`, `hatch`, `waves`, `spiral` and `ink`, for line art and inked drawings.
 - **The Voronoi point family:** `stipple`, `line` (one unbroken line that does not cross itself), `dashes`, `tree`, `mesh`, `cells` and `scribble` (loops traced along the line). They share one placement of points, so switching between them reuses the points. Placing 10,000 points over 50 relaxation passes on a 1000-pixel image takes about 3.3 s natively.
 - **Sketch Lines:** `sketch`.
 - **Other placers:** `halftone`, `dither` and `circles`.
-- **Tone only:** `contours`, `flow` and `hilbert`. `hilbert` fills the page's own rectangle with a generalized Hilbert curve, so with one pen it is one unbroken line.
+- **Tone only:** `contours`, `flow`, `hilbert` and `mosaic`. `hilbert` fills the page's own rectangle with a generalized Hilbert curve, so with one pen it is one unbroken line.
 
 Every run ends with path ordering, which cuts pen-up travel, joins paths whose ends nearly touch and drops paths below a minimum length.
 
@@ -22,7 +22,7 @@ A style switch keeps the settings you changed in the stages both styles share, P
 
 ### Pens
 
-- **Pen use** shares a drawing between several pens: the first pen alone (the default), light to dark in list order, or each pen by its colour. The stages after it run once per pen that draws.
+- **Pen use** shares a drawing between several pens: the first pen alone (the default), light to dark in list order, or each pen by its colour. The stages after it run once per pen that draws. By colour works in short steps, so Stop takes effect within a tenth of a second even on a 4000-pixel image with eight pens.
 - **Pens kept apart:** every style but `ink` spreads its marks across the pens, so that one pen does not draw on top of another. Lines turn, grids, levels and seeds shift, and random scatters are drawn independently for each pen. The first pen draws as it would alone.
 - **A pen bank** of 25 models and 121 pens in five kinds (fineliner, technical pen, gel pen, ballpoint and marker), each at the line width its maker publishes, and ten ink colours under plain names.
 

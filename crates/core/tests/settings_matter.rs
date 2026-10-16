@@ -143,6 +143,12 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "used only when levels is auto, which is off by default",
     ),
     (
+        "mosaic",
+        "tone",
+        "clip_percent",
+        "used only when levels is auto, which is off by default",
+    ),
+    (
         "line",
         "order",
         "min_length_mm",

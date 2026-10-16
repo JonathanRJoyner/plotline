@@ -11,6 +11,7 @@ pub mod hatch;
 pub mod hilbert;
 pub mod ink;
 pub mod lines;
+pub mod mosaic;
 pub mod order;
 pub mod poisson;
 pub mod scribble;
