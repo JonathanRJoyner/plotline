@@ -66,7 +66,7 @@ test("the sample image draws in every style", async ({ page }) => {
 
 test("a style switch keeps a changed setting, and Reset to defaults restores it", async ({ page }) => {
   let id = await pick(page, "stipple", await sample(page));
-  const count = page.getByRole("spinbutton", { name: "count", exact: true });
+  const count = page.getByRole("spinbutton", { name: /^count$/i });
   const initial = await count.inputValue();
   const changed = String(Math.round(Number(initial) / 2));
   await count.fill(changed);
@@ -98,7 +98,7 @@ test("Fit to target meets its target", async ({ page }) => {
 test("a plot lint finding's Apply clears it", async ({ page }) => {
   let id = await pick(page, "hatch", await sample(page));
   // Lines closer than the 0.3 mm default pen overlap; Apply sets the spacing to the pen's width.
-  const spacing = page.getByRole("spinbutton", { name: "spacing mm", exact: true });
+  const spacing = page.getByRole("spinbutton", { name: /^spacing( mm)?$/i });
   await spacing.fill("0.2");
   await spacing.blur();
   id = await ran(page, id);
