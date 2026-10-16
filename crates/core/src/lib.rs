@@ -25,6 +25,8 @@ pub mod stages;
 pub mod stats;
 pub mod style;
 pub mod synthetic;
+pub mod testchart;
+pub mod text;
 pub mod tone_match;
 pub mod types;
 
