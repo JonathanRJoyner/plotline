@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 
 use crate::cache::StageCache;
 use crate::math::{exp, ln};
+use crate::optimize::OptimizeRun;
 use crate::runner::{Run, RunState, Shared};
 use crate::stage::{Artifact, Frame, Kind};
 use crate::stats::{self, Speeds};
@@ -67,12 +68,23 @@ impl Metric {
     }
 
     /// `x` with its unit, for a progress label.
-    fn show(self, x: f64) -> String {
+    pub(crate) fn show(self, x: f64) -> String {
         match self {
             Metric::Minutes => format!("{x:.1} min"),
             Metric::Paths => format!("{x} paths"),
             Metric::Metres => format!("{x:.2} m"),
             Metric::Dots => format!("{x} dots"),
+        }
+    }
+
+    /// The metric of `drawing`, which `run` made, timed at `speeds`.
+    pub(crate) fn of(self, drawing: &Drawing, speeds: Speeds, run: &Run) -> f64 {
+        let stats = stats::compute(drawing, speeds);
+        match self {
+            Metric::Minutes => stats.estimated_seconds / 60.0,
+            Metric::Paths => stats.path_count as f64,
+            Metric::Metres => stats.pen_down_mm / 1000.0,
+            Metric::Dots => run.point_count().unwrap_or(0) as f64,
         }
     }
 }
@@ -124,7 +136,7 @@ impl Density {
 
     /// `v` clamped to the range and rounded to the setting's grain: a whole number for an
     /// integer, 0.001 otherwise.
-    fn grain(&self, v: f64) -> f64 {
+    pub(crate) fn grain(&self, v: f64) -> f64 {
         let v = if self.integer {
             v.round()
         } else {
@@ -134,7 +146,7 @@ impl Density {
     }
 
     /// `v` as the JSON the setting takes.
-    fn to_json(&self, v: f64) -> Value {
+    pub(crate) fn to_json(&self, v: f64) -> Value {
         if self.integer {
             json!(v as u64)
         } else {
@@ -436,13 +448,7 @@ impl FitRun {
                 }
                 let drawing = slot.lock().unwrap().drawing.clone();
                 let drawing = drawing.expect("a finished run leaves its drawing");
-                let stats = stats::compute(&drawing, self.speeds);
-                let metric = match self.metric {
-                    Metric::Minutes => stats.estimated_seconds / 60.0,
-                    Metric::Paths => stats.path_count as f64,
-                    Metric::Metres => stats.pen_down_mm / 1000.0,
-                    Metric::Dots => run.point_count().unwrap_or(0) as f64,
-                };
+                let metric = self.metric.of(&drawing, self.speeds, run);
                 self.trial = None;
                 self.solver.record(metric);
                 if self.solver.best().map(|b| b.value) == Some(self.solver.samples()[n - 1].value) {
@@ -534,7 +540,8 @@ impl FitRun {
     }
 }
 
-/// What a host drives a frame at a time, a [`Run`] or a [`FitRun`], so one driver serves both.
+/// What a host drives a frame at a time, a [`Run`], a [`FitRun`] or an [`OptimizeRun`], so one
+/// driver serves them all.
 pub trait Job: Send {
     /// The next frame, or `None` once the job has ended.
     fn next_frame(&mut self) -> Option<Frame>;
@@ -544,8 +551,8 @@ pub trait Job: Send {
     fn state(&self) -> RunState;
     /// The message of a job that ended in [`RunState::Error`].
     fn error(&self) -> Option<String>;
-    /// What a fit chose once it is done; always `None` for a run.
-    fn fit(&self) -> Option<FitResult> {
+    /// What a fit chose or a search found, as JSON, once it is done; always `None` for a run.
+    fn result(&self) -> Option<Value> {
         None
     }
 }
@@ -578,8 +585,26 @@ impl Job for FitRun {
     fn error(&self) -> Option<String> {
         FitRun::error(self)
     }
-    fn fit(&self) -> Option<FitResult> {
-        self.result()
+    fn result(&self) -> Option<Value> {
+        FitRun::result(self).map(|r| json!(r))
+    }
+}
+
+impl Job for OptimizeRun {
+    fn next_frame(&mut self) -> Option<Frame> {
+        OptimizeRun::next_frame(self)
+    }
+    fn cancel_flag(&self) -> Arc<AtomicBool> {
+        OptimizeRun::cancel_flag(self)
+    }
+    fn state(&self) -> RunState {
+        OptimizeRun::state(self)
+    }
+    fn error(&self) -> Option<String> {
+        OptimizeRun::error(self)
+    }
+    fn result(&self) -> Option<Value> {
+        OptimizeRun::result(self).map(|r| json!(r))
     }
 }
 
