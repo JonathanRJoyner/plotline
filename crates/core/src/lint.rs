@@ -365,6 +365,49 @@ fn more_ink(cx: &Context, d: &Drawing, paths: usize) -> Option<Value> {
 
 const SPACING: &[&str] = &["spacing_mm", "min_spacing_mm"];
 
+/// The patch for a drawing that covers `c` of its dark parts, or `None` where no setting is sure
+/// to raise that. Coverage grows about in proportion to the marks, so it asks for closer lines, or
+/// more points or strokes, aiming at [`DARK_TARGET`]. But the dark parts must have room for the
+/// marks to land in them (see [`room`]), the order stage must keep every path, and the raster must
+/// see the pens: a pen thinner than a cell is undercounted (a dot counts only when a cell centre
+/// lies within half the pen of it), so what a patch would reach cannot be told.
+fn more_dark(
+    cx: &Context,
+    (d, m): (&Drawing, &Measure),
+    c: f64,
+    spacing: Option<(&'static str, &'static str, f64)>,
+    widest: f64,
+) -> Option<Value> {
+    let seen = d.layers.iter().all(|l| l.pen.width_mm >= m.cell_mm);
+    let tone = d.tone.as_deref().filter(|_| seen && keeps_all(cx))?;
+    let closer = spacing.and_then(|(stage, key, s)| {
+        let s2 = step_down(s * c / DARK_TARGET).max(step_up(widest));
+        (s2 < s).then_some((stage, key, s, s2))
+    });
+    if let Some((stage, key, s, s2)) = closer {
+        let fits = room(tone, DARK_TONE, false, s.max(cx.scale(stage)));
+        return fits.then(|| cx.set(stage, key, s2))?;
+    }
+    let (stage, key, n) = cx.find(&["count", "max_lines"])?;
+    let mut to = (n * DARK_TARGET / c).round();
+    // The strokes of a sketch stop when the ink is gone; only a run that drew its limit of
+    // segments in some layer would draw more.
+    if key == "max_lines" && m.layers.iter().all(|l| (l.segments as f64) < n) {
+        return None;
+    }
+    if stage == "voronoi" {
+        // The tone map holds only so many points, and at least `ROOM` of those added should fall
+        // in the dark parts, counting only their share of the inked area.
+        let (inked, _) = over(tone, f32::MIN_POSITIVE);
+        to = to.min((inked / 4) as f64);
+        let (dark, _) = over(tone, DARK_TONE);
+        if (to - n) * dark as f64 / (inked as f64) < ROOM {
+            return None;
+        }
+    }
+    (to > n).then(|| cx.set(stage, key, to))?
+}
+
 /// The findings for drawing `d` and its measurement `m`, given the session's current style,
 /// settings, pens, speeds and machine, in a fixed order. See the plot lint spec for the rules.
 pub fn check(
@@ -493,15 +536,7 @@ pub fn check(
         add("specks", Severity::Warning, message, short as f64, patch);
     }
     if let Some(c) = m.dark_coverage.filter(|&c| c < DARK_COVERAGE && !empty) {
-        // Coverage grows about in proportion to the marks: closer lines, or more points or strokes.
-        let closer = spacing.and_then(|(stage, key, s)| {
-            let s2 = step_down(s * c / DARK_TARGET).max(step_up(widest));
-            (s2 < s).then(|| cx.set(stage, key, s2)).flatten()
-        });
-        let patch = closer.or_else(|| {
-            let (stage, key, n) = cx.find(&["count", "max_lines"])?;
-            cx.set(stage, key, (n * DARK_TARGET / c).round())
-        });
+        let patch = more_dark(&cx, (d, m), c, spacing, widest);
         let message = format!(
             "Where the image is darkest, the drawing covers only {} % of the paper.",
             percent(c)
@@ -653,6 +688,11 @@ mod tests {
             .unwrap()
             .patch
             .clone()
+    }
+
+    /// The `dark` finding's patch, likewise.
+    fn dark_patch(d: &Drawing, style: &str, change: impl Fn(&mut Value)) -> Option<Value> {
+        find(&lint(d, style, change), "dark").unwrap().patch.clone()
     }
 
     #[test]
@@ -862,12 +902,30 @@ mod tests {
         assert_eq!(dark.severity, Severity::Info);
         let patch = json!({"settings": {"hatch": {"spacing_mm": 0.3}}});
         assert_eq!(dark.patch, Some(patch));
-        let all = lint(&d, "stipple", |_| {});
-        let count = &find(&all, "dark").unwrap().patch.as_ref().unwrap()["settings"];
-        assert!(
-            count["voronoi"]["count"].as_u64().unwrap() > 15000,
-            "{count}"
-        );
+        // More points than the 40000 pixels hold are not asked for: a quarter of them, 10000.
+        d.tone = Some(flat_tone(1.0, 200));
+        let patch = json!({"settings": {"voronoi": {"count": 10000}}});
+        assert_eq!(dark_patch(&d, "stipple", |_| {}), Some(patch));
+        // A coarse map, 64 by 6 pixels, holds 384 points at most, so more points add nothing.
+        let coarse = ToneMap {
+            width: 64,
+            height: 6,
+            ink: vec![1.0; 384],
+            mm_per_px: 100.0 / 64.0,
+            origin_mm: [0.0; 2],
+        };
+        d.tone = Some(Arc::new(coarse));
+        assert_eq!(dark_patch(&d, "stipple", |_| {}), None);
+        // A denser drawing makes shorter marks (more points, smaller cells and edges), which a
+        // minimum length drops.
+        d.tone = Some(flat_tone(1.0, 200));
+        let long = |s: &mut Value| s["order"]["min_length_mm"] = json!(8.0);
+        assert_eq!(dark_patch(&d, "stipple", long), None);
+        assert_eq!(dark_patch(&d, "hatch", long), None);
+        // A pen thinner than a raster cell is undercounted, so no patch can promise a gain.
+        let mut thin = drawing_100(lines(2.0), 0.05, "#000000");
+        thin.tone = d.tone.clone();
+        assert_eq!(dark_patch(&thin, "hatch", |_| {}), None);
         // Dense lines reach it, and a light image has nothing dark to reach.
         assert!(!finds(&drawing_100_with_tone(lines(0.3)), "hatch", "dark"));
         let grey = ToneMap {
