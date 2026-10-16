@@ -694,6 +694,49 @@ fn an_applied_suggestion_goes_away() {
     });
 }
 
+/// The lint findings whose number is a share inked, which rises as the drawing improves; every
+/// other finding's number falls.
+const RISING: &[&str] = &["empty", "dark"];
+
+/// Lint findings whose patch can miss, which the law skips until issue #32 is closed.
+const LINT_MISSES: &[&str] = &["empty", "unused_pens", "dark", "travel"];
+
+#[test]
+fn an_applied_lint_fix_removes_or_shrinks_its_finding() {
+    check("lint", 24, case(all_styles()), |c| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(findings) = s.lint() else {
+            return Ok(());
+        };
+        for f in findings {
+            let Some(patch) = f.patch.as_ref().filter(|_| !LINT_MISSES.contains(&f.code)) else {
+                continue;
+            };
+            let mut t = c.session();
+            apply(&mut t, patch)?;
+            run(&mut t)?;
+            let after = t.lint().unwrap_or_default();
+            let Some(g) = after.iter().find(|g| g.code == f.code) else {
+                continue;
+            };
+            let better = if RISING.contains(&f.code) {
+                g.value > f.value
+            } else {
+                g.value < f.value
+            };
+            prop_assert!(
+                better,
+                "{} stays at {} after its patch {patch}, from {}",
+                f.code,
+                g.value,
+                f.value
+            );
+        }
+        Ok(())
+    });
+}
+
 /// Whether two setting values are equal, numbers by value, as a style switch compares them.
 fn same(a: &Value, b: &Value) -> bool {
     match (a.as_f64(), b.as_f64()) {
@@ -846,22 +889,39 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         prop_assert_eq!(f.state(), RunState::Done);
         let fit = f.result().unwrap();
         prop_assert!(fit.samples.len() <= MAX_TRIALS);
-        let value = fit.value.as_f64().unwrap();
         // A count cannot land between two whole numbers.
         let count =
             matches!(names[metric], "paths" | "dots") && (fit.achieved - target).abs() < 1.0;
         let within = count || (fit.achieved / target - 1.0).abs() <= TOLERANCE;
-        let at_end = value == d.min || value == d.max;
+        // Trials on both sides of the target mean it falls in a jump no value reaches.
         let below = fit.samples.iter().any(|x| x.metric < target);
         let above = fit.samples.iter().any(|x| x.metric > target);
-        prop_assert!(
-            within || at_end || (below && above),
-            "{} {target}: neither near, at an end of {}..{}, nor between two trials: {:?}",
-            names[metric],
-            d.min,
-            d.max,
-            fit.samples
-        );
+        if !within && !(below && above) {
+            // Out of reach: then the fit is no farther from the target than the end of the
+            // range that density points towards.
+            let end = if (target > start) == d.direct {
+                d.max
+            } else {
+                d.min
+            };
+            let end = if d.integer {
+                json!(end as u64)
+            } else {
+                json!(end)
+            };
+            s.update(&d.stage, &json!({ &d.key: end })).unwrap();
+            let mut r = s.start().unwrap();
+            drain(&mut r)?;
+            let at_end = metrics(&s, &r)[metric];
+            let off = |m: f64| (ln(m) - ln(target)).abs();
+            prop_assert!(
+                off(fit.achieved) <= off(at_end),
+                "{} {target}: {} is farther than {at_end} at {end}: {:?}",
+                names[metric],
+                fit.achieved,
+                fit.samples
+            );
+        }
         // The value the fit reports, applied, gives the metric it reports.
         s.update(&fit.stage, &json!({ &fit.key: fit.value.clone() }))
             .unwrap();
