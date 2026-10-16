@@ -202,8 +202,9 @@ class Session:
 
     @property
     def state(self) -> RunState:
-        """The state of the latest run, or ``idle`` before any run."""
-        return RunState.idle if self._handle is None else self._handle.state
+        """The state of the latest run, ``done`` after a test chart, or ``idle`` before any run."""
+        # With no handle the engine's slot is all there is: idle, or the chart's done.
+        return RunState(self._core.state()) if self._handle is None else self._handle.state
 
     def load_image(self, path: str | os.PathLike[str]) -> None:
         """Read the PNG, JPEG or WebP file at ``path`` as the source image. Raises ``OSError``
@@ -368,6 +369,23 @@ class Session:
         self._core.set_speeds(asdict(self.speeds))
         return self._spawn(self._start(lambda: self._core.optimize(metric, target)))
 
+    def testchart(self) -> Drawing:
+        """Make the test chart for the canvas and the first pen and return it; it is also kept in
+        ``result``, so the exports, ``stats`` and ``lint`` work on it as on any drawing. The chart
+        is a page of small labelled patches: line spacings, dot sizes and repeated passes, all
+        scaled to the pen. Plot it to see where lines merge, how big dots come out, how many
+        passes the paper takes, and whether ``stats`` gives the plot time. It needs no image. A
+        run under way is cancelled and waited for, and ``state`` is ``done``. Raises ``ValueError``
+        when the page is too small for the chart, leaving ``result`` and the run as they were.
+        """
+        self._core.testchart()  # cancels the engine's run, and refuses before it does
+        if self._handle is not None:
+            self._handle.cancel()
+            self._handle.wait()
+            self._handle = None
+        self.result = result = _drawing(_have(self._core.drawing()))
+        return result
+
     def cancel(self) -> None:
         """Ask the latest run to stop, which ends it in ``cancelled``. Nothing happens when there
         has been no run, and a run that has ended stays as it ended."""
@@ -511,6 +529,19 @@ class Session:
         for file, text in zip(files, texts, strict=True):
             file.write_text(text, encoding="utf-8", newline="\n")
         return files
+
+    def hpgl(self, units_per_mm: float = 40.0) -> str:
+        """The result as one HPGL program, with ``units_per_mm`` plotter units to the millimetre;
+        40, HPGL's plotter unit of 0.025 mm, suits most plotters. Each layer that has paths
+        selects its own pen, numbered from 1. Raises ``RuntimeError`` when there is no result and
+        ``ValueError`` for a resolution that is not above 0 and at most 1000."""
+        return self._core.hpgl(units_per_mm)
+
+    def export_hpgl(self, path: str | os.PathLike[str], units_per_mm: float = 40.0) -> None:
+        """Write the HPGL program to ``path`` as ASCII with LF line ends. Raises
+        ``RuntimeError`` when there is no result and ``ValueError`` for a resolution that is not
+        above 0 and at most 1000; in both cases nothing is written."""
+        Path(path).write_text(self.hpgl(units_per_mm), encoding="ascii", newline="\n")
 
     def stats(self) -> Stats:
         """The path count, pen-down and pen-up distances and estimated plot time of the result at

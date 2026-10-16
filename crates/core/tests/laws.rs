@@ -19,6 +19,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use plotline_core::cache::StageCache;
+use plotline_core::export::hpgl::MAX_UNITS_PER_MM;
 use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
 use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
@@ -991,6 +992,57 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
     });
 }
 
+#[test]
+fn a_test_chart_is_made_on_the_page_or_refused_with_a_message() {
+    check("testchart", 48, (page(), pens()), |(pg, pens)| {
+        let pens: Vec<Pen> = (pens.iter().enumerate())
+            .map(|(i, (width, [r, g, b]))| {
+                Pen::new(
+                    &format!("Pen {i}"),
+                    *width,
+                    &format!("#{r:02x}{g:02x}{b:02x}"),
+                )
+                .unwrap()
+            })
+            .collect();
+        let new = || {
+            let mut s = Session::new(1 << 20);
+            s.set_canvas(pg.canvas());
+            s.set_pens(pens.clone()).unwrap();
+            s
+        };
+        let mut s = new();
+        match s.testchart() {
+            Err(e) => {
+                let message = e.to_string();
+                prop_assert!(
+                    message.contains("too small") || message.contains("too thin"),
+                    "{message}"
+                );
+                prop_assert!(s.drawing().is_none() && s.state() == RunState::Idle);
+            }
+            Ok(()) => {
+                prop_assert_eq!(s.state(), RunState::Done);
+                let d = s.drawing().unwrap();
+                prop_assert_eq!(d.layers.len(), 1);
+                prop_assert_eq!(&d.layers[0].pen, &pens[0]);
+                let [x, y, w, h] = d.canvas.drawing_rect();
+                for p in d.layers[0].paths.coords() {
+                    let inside = x - 1e-9 <= p[0]
+                        && p[0] <= x + w + 1e-9
+                        && y - 1e-9 <= p[1]
+                        && p[1] <= y + h + 1e-9;
+                    prop_assert!(inside, "{p:?} is off {:?}", [x, y, w, h]);
+                }
+                let mut t = new();
+                t.testchart().unwrap();
+                prop_assert_eq!(digest(&d), digest(&t.drawing().unwrap()));
+            }
+        }
+        Ok(())
+    });
+}
+
 /// The test images of the regression gallery, by name, which the look law draws.
 const LOOK_IMAGES: [&str; 3] = ["still life", "scene", "gradient"];
 
@@ -1129,6 +1181,55 @@ fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
             }
             prop_assert_eq!(j, p.len().max(1));
         }
+        Ok(())
+    });
+}
+
+/// The `x,y` pairs of the argument list of an HPGL `PU` or `PD`; a lone `PD;` has none.
+fn hpgl_pairs(args: &str) -> Vec<[i64; 2]> {
+    let n: Vec<i64> = (args.split(',').filter(|v| !v.is_empty()))
+        .map(|v| v.parse().unwrap())
+        .collect();
+    n.chunks(2).map(|p| [p[0], p[1]]).collect()
+}
+
+#[test]
+fn hpgl_stays_on_the_page_and_keeps_every_vertex() {
+    let units = prop_oneof![Just(40.0), 0.01..=MAX_UNITS_PER_MM];
+    check("hpgl", 12, (case(all_styles()), units), |(c, units)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let h = s.hpgl(units).unwrap();
+        prop_assert!(h.is_ascii() && !h.contains('\r'), "not ASCII with LF ends");
+        prop_assert!(h.starts_with("IN;\n") && h.ends_with("PU;\nSP0;\n"));
+        // The page scaled by the resolution, and the vertices of PU and PD against the drawing's.
+        let (w, hh) = (
+            (c.page.width * units).round(),
+            (c.page.height * units).round(),
+        );
+        let (mut pens, mut vertices) = (0, 0);
+        for line in h.lines() {
+            prop_assert!(line.ends_with(';'), "{line:?} does not end with ';'");
+            let line = line.trim_end_matches(';');
+            if line.starts_with("SP") {
+                pens += (line != "SP0") as usize;
+            } else if let Some(args) = line.strip_prefix("PU").or(line.strip_prefix("PD")) {
+                for [x, y] in hpgl_pairs(args) {
+                    vertices += 1;
+                    prop_assert!(
+                        (0.0..=w).contains(&(x as f64)) && (0.0..=hh).contains(&(y as f64)),
+                        "({x}, {y}) is off the {w} by {hh} page"
+                    );
+                }
+            }
+        }
+        let layers = d.layers.iter().filter(|l| !l.paths.is_empty()).count();
+        prop_assert_eq!(pens, layers);
+        let expected: usize = d.layers.iter().map(|l| l.paths.coords().len()).sum();
+        prop_assert_eq!(vertices, expected);
         Ok(())
     });
 }
