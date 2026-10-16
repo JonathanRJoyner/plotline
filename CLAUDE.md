@@ -12,3 +12,4 @@ Rules (the repo will become public, so treat every commit as public):
 - A user-visible GUI feature adds or updates its step in the tour (`STEPS` in `web/src/tour.tsx`).
 - A user-visible GUI feature also adds its browser flow in `web/e2e/gui.spec.ts`.
 - A change that moves a drawing regenerates the stats snapshot, `tests/snapshots/gallery-stats.json` (see CONTRIBUTING.md).
+- A feature with a contract adds its law to the property suite (`crates/core/tests/laws.rs`, or a fast-check test in `web/`).

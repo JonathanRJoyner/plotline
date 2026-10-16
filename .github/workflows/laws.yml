@@ -1,0 +1,81 @@
+name: Property laws
+
+# Every week, the property laws (crates/core/tests/laws.rs and the GUI's undo laws) run with 25
+# times the cases a pull request runs, from a new seed, and a break opens an issue holding the
+# shrunk case and the command that reproduces it. A pull request that changes this file runs it
+# at the pull request's scale, without the issue. The job is not a required check.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths: [.github/workflows/laws.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  laws:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      issues: write
+    env:
+      PLOTLINE_LAWS_SCALE: ${{ github.event_name == 'pull_request' && '1' || '25' }}
+      # A pull request keeps the suite's fixed seed; the weekly run takes a new one each time.
+      PLOTLINE_LAWS_SEED: ${{ github.event_name != 'pull_request' && github.run_id || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - id: engine
+        continue-on-error: true
+        shell: bash
+        run: cargo test --locked -p plotline-core --test laws 2>&1 | tee engine.log
+      - id: gui
+        continue-on-error: true
+        shell: bash
+        working-directory: web
+        run: |
+          npm ci
+          npx vitest run src/history.test.ts 2>&1 | tee ../gui.log
+      - name: Open or update the issue
+        if: (steps.engine.outcome == 'failure' || steps.gui.outcome == 'failure') && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          sed -n '/^---- .* stdout ----$/,/^failures:$/p' engine.log > broke.txt
+          grep -B 2 -A 30 "Property failed" gui.log >> broke.txt || true
+          {
+            echo "The weekly property laws broke: $RUN_URL"
+            echo
+            echo "Reproduce with:"
+            echo
+            echo '```sh'
+            echo "PLOTLINE_LAWS_SEED=$PLOTLINE_LAWS_SEED PLOTLINE_LAWS_SCALE=$PLOTLINE_LAWS_SCALE cargo test -p plotline-core --test laws"
+            echo "cd web && PLOTLINE_LAWS_SEED=$PLOTLINE_LAWS_SEED PLOTLINE_LAWS_SCALE=$PLOTLINE_LAWS_SCALE npx vitest run src/history.test.ts"
+            echo '```'
+            echo
+            echo "What broke, with the shrunk case:"
+            echo
+            echo '```'
+            head -c 60000 broke.txt
+            echo '```'
+          } > body.md
+          title="Weekly property laws broke"
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body-file body.md
+          else
+            gh issue create --title "$title" --body-file body.md
+          fi
+      - if: steps.engine.outcome == 'failure' || steps.gui.outcome == 'failure'
+        run: exit 1

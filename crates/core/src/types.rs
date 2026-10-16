@@ -57,7 +57,7 @@ impl Pen {
 pub enum Fit {
     /// Scale the whole image to sit inside the drawing area, centred.
     Fit,
-    /// Make the image rectangle the drawing area itself; the caller crops the image to its aspect.
+    /// Crop the image to the drawing area's aspect so it covers the area; the caller crops.
     Fill,
 }
 
@@ -122,12 +122,11 @@ impl Canvas {
         [m, m, self.width_mm - 2.0 * m, self.height_mm - 2.0 * m]
     }
 
-    /// Where an image of this pixel size sits on the page, as `[x, y, w, h]` in mm.
+    /// Where an image of this pixel size sits on the page, as `[x, y, w, h]` in mm: as large as
+    /// fits in the drawing area, centred. In `fill` the caller has cropped the image to the
+    /// area's aspect, so it covers the area to within a pixel and never spills past it.
     pub fn image_rect(&self, width_px: u32, height_px: u32) -> [f64; 4] {
         let [x, y, w, h] = self.drawing_rect();
-        if self.fit == Fit::Fill {
-            return [x, y, w, h];
-        }
         let (wp, hp) = (f64::from(width_px), f64::from(height_px));
         let scale = (w / wp).min(h / hp);
         let (iw, ih) = (wp * scale, hp * scale);
@@ -401,8 +400,11 @@ mod tests {
     #[test]
     fn fill_covers_drawing_rect() {
         let c = Canvas::new(100.0, 50.0, 0.0, Fit::Fill).unwrap();
-        assert_eq!(c.image_rect(64, 64), [0.0, 0.0, 100.0, 50.0]);
+        assert_eq!(c.image_rect(64, 32), [0.0, 0.0, 100.0, 50.0]);
         assert_eq!(c.image_transform(64, 32).0, 1.5625);
+        // A crop that rounded to a pixel taller than the area's aspect stays inside it.
+        assert_eq!(c.image_rect(64, 33)[1], 0.0);
+        assert!(c.image_rect(64, 33)[2] < 100.0);
     }
     #[test]
     fn canvas_rejects_bad_dimensions() {
