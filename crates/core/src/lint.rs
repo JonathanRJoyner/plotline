@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use crate::coverage::{self, Coverage};
 use crate::fit::Density;
 use crate::machine::Machine;
+use crate::raster;
 use crate::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
 use crate::stages::order::OrderStage;
 use crate::stats::{self, Speeds, Stats};
@@ -88,6 +89,22 @@ pub struct Measure {
     pub tone_match: Option<ToneMatch>,
 }
 
+/// The segments of `path`, and how many of them are finer than [`FINE`] of a pen `w` mm wide.
+fn segment_counts(path: &[[f64; 2]], w: f64) -> (usize, usize) {
+    let fine = path.windows(2).filter(|s| Paths::path_length(s) < w * FINE);
+    (path.len().saturating_sub(1), fine.count())
+}
+
+/// The `vertices` finding's number for layers with these `(segments, fine segments)`: the largest
+/// share of fine segments over the layers with at least [`FINE_MIN`] segments, or `None` when no
+/// share is over half.
+fn fine_share(layers: impl Iterator<Item = (usize, usize)>) -> Option<f64> {
+    let share = (layers.filter(|&(n, _)| n >= FINE_MIN))
+        .map(|(n, fine)| fine as f64 / n as f64)
+        .fold(0.0, f64::max);
+    (share > 0.5).then_some(share)
+}
+
 /// Measure `d` on one raster over the page, with the cell size of its thinnest pen, cleared
 /// between layers. See [`Measure`].
 pub fn measure(d: &Drawing) -> Measure {
@@ -124,10 +141,9 @@ pub fn measure(d: &Drawing) -> Measure {
             let length = Paths::path_length(p);
             laid += length * w + PI * half * half;
             short += usize::from(length < w);
-            for s in p.windows(2) {
-                segments += 1;
-                fine_segments += usize::from(Paths::path_length(s) < w * FINE);
-            }
+            let (n, fine) = segment_counts(p, w);
+            segments += n;
+            fine_segments += fine;
         }
         layers.push(LayerMeasure {
             inked,
@@ -410,6 +426,23 @@ fn optimized_travel_share(d: &Drawing, speeds: Speeds) -> Option<f64> {
     Some(travel_share(&stats::compute(&ordered, speeds), speeds))
 }
 
+/// The `vertices` number of `d` once the ordering stage simplifies every path to `tolerance` and
+/// drops those shorter than `min_length`, or `None` if the finding would not fire. With
+/// `simplify_mm` at 0 the layers of `d` hold the very paths the stage takes in (the stage only
+/// drops and reorders them), and the order of the paths does not change a count, so this is the
+/// number after the setting is turned on. A path the run reversed may break an exact tie in
+/// `raster::simplify` the other way.
+fn simplified_fine_share(d: &Drawing, tolerance: f64, min_length: f64) -> Option<f64> {
+    fine_share(d.layers.iter().map(|layer| {
+        let w = layer.pen.width_mm;
+        (layer.paths.iter())
+            .map(|p| raster::simplify(p, tolerance))
+            .filter(|p| !p.is_empty() && Paths::path_length(p) >= min_length)
+            .map(|p| segment_counts(&p, w))
+            .fold((0, 0), |(n, fine), (m, f)| (n + m, fine + f))
+    }))
+}
+
 /// The patch for a drawing that covers `c` of its dark parts, or `None` where no setting is sure
 /// to raise that. Coverage grows about in proportion to the marks, so it asks for closer lines, or
 /// more points or strokes, aiming at [`DARK_TARGET`]. But the dark parts must have room for the
@@ -620,11 +653,7 @@ pub fn check(
             add("travel", severity, message, travel, patch);
         }
     }
-    let fine = (m.layers.iter())
-        .filter(|l| l.segments >= FINE_MIN)
-        .map(|l| l.fine_segments as f64 / l.segments as f64)
-        .fold(0.0, f64::max);
-    if fine > 0.5 {
+    if let Some(fine) = fine_share(m.layers.iter().map(|l| (l.segments, l.fine_segments))) {
         let mut message = format!(
             "{} % of the segments are shorter than an eighth of the pen width, so the paths hold more vertices than the pen can show.",
             percent(fine)
@@ -636,9 +665,22 @@ pub fn check(
             .map(|l| l.pen.width_mm)
             .fold(f64::MAX, f64::min);
         let tolerance = ((narrowest * FINE * 1000.0 + 1e-9).floor() / 1000.0).max(0.001);
-        let patch = (cx.number("order", "simplify_mm").unwrap_or(0.0) < tolerance)
+        // A wide pen's layer counts fine segments against its own width, and simplifying to the
+        // narrowest pen's tolerance can remove its long, nearly straight segments' vertices
+        // faster than its fine segments, which raises its share. So offer the setting only when
+        // it lowers the number, as predicted from the paths. That is exact only from 0: from
+        // another value the layers hold paths already simplified, and simplifying them again is
+        // not simplifying the originals.
+        let patch = (cx.number("order", "simplify_mm").unwrap_or(0.0) == 0.0)
             .then(|| cx.set("order", "simplify_mm", tolerance))
-            .flatten();
+            .flatten()
+            .filter(|patch| {
+                let on = patch["settings"]["order"]["simplify_mm"]
+                    .as_f64()
+                    .unwrap_or(tolerance);
+                let min_length = cx.number("order", "min_length_mm").unwrap_or(0.0);
+                simplified_fine_share(d, on, min_length).is_none_or(|after| after < fine)
+            });
         if patch.is_some() {
             message += " Path order's simplify setting removes them.";
         }
@@ -1107,6 +1149,101 @@ mod tests {
         let all = lint(&thin, "hatch", |_| {});
         let patch = json!({"settings": {"order": {"simplify_mm": 0.001}}});
         assert_eq!(find(&all, "vertices").unwrap().patch, Some(patch));
+    }
+
+    /// `n` dashes of two vertices `len` mm long, one above the next from y = 60, which
+    /// simplifying leaves as they are.
+    fn dashes_of(n: usize, len: f64) -> Vec<Vec<[f64; 2]>> {
+        (0..n)
+            .map(|i| {
+                let y = 60.0 + i as f64 * 0.01;
+                vec![[10.0, y], [10.0 + len, y]]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn simplifying_is_offered_when_it_lowers_the_share() {
+        // A straight line of fine segments goes down to one long segment; the dashes stay fine.
+        let mut paths = dashes_of(1500, 0.01);
+        paths.push((0..1500).map(|i| [10.0 + i as f64 * 0.02, 50.0]).collect());
+        let d = page(paths);
+        let all = lint(&d, "hatch", |_| {});
+        let vertices = find(&all, "vertices").unwrap();
+        assert_eq!(vertices.value, 1.0);
+        let patch = json!({"settings": {"order": {"simplify_mm": 0.037}}});
+        assert_eq!(vertices.patch, Some(patch));
+        assert!(vertices
+            .message
+            .ends_with("Path order's simplify setting removes them."));
+        // The finding stays, with a lower number: 1500 fine of 1501 segments.
+        assert_eq!(simplified_fine_share(&d, 0.037, 0.0), Some(1500.0 / 1501.0));
+    }
+
+    #[test]
+    fn simplifying_is_not_offered_when_it_raises_the_share() {
+        // The wide pen's layer: 1100 dashes finer than an eighth of 1 mm, and one path of 500
+        // segments of 0.19 mm, bent by 0.01 mm, which are not fine. The thin pen sets the tolerance
+        // to 0.025 mm, which straightens that path to one segment and leaves the dashes: the share
+        // would go from 1100 of 1600 to 1100 of 1101.
+        let mut paths = dashes_of(1100, 0.05);
+        paths.push(
+            (0..=500)
+                .map(|i| [2.0 + i as f64 * 0.19, 80.0 + (i % 2) as f64 * 0.01])
+                .collect(),
+        );
+        let mut d = page(paths);
+        d.layers[0].pen = Pen::new("Wide", 1.0, "#000000").unwrap();
+        let mut thin = Paths::new();
+        thin.push(&[[5.0, 90.0], [95.0, 90.0]]);
+        d.layers.push(Layer {
+            pen: Pen::new("Thin", 0.2, "#000000").unwrap(),
+            paths: thin,
+        });
+        let all = lint(&d, "hatch", |_| {});
+        let vertices = find(&all, "vertices").unwrap();
+        assert_eq!(vertices.value, 1100.0 / 1600.0);
+        assert_eq!(vertices.patch, None);
+        assert!(!vertices.message.contains("simplify"));
+        assert_eq!(simplified_fine_share(&d, 0.025, 0.0), Some(1100.0 / 1101.0));
+        // A partly simplified drawing cannot be predicted from its paths, so it gets no patch.
+        let all = lint(&page(dashes_of(1500, 0.01)), "hatch", |s| {
+            s["order"]["simplify_mm"] = json!(0.01)
+        });
+        assert_eq!(find(&all, "vertices").unwrap().patch, None);
+    }
+
+    #[test]
+    fn the_vertices_share_lint_predicts_is_the_one_after_its_patch() {
+        // Waves sample far finer than a wide pen can show. One wide pen has its finding go away;
+        // a thin and a wide pen, a layer each, leave the wide layer a lower share than before.
+        for (widths, stays) in [(vec![1.0], false), (vec![0.2, 2.0], true)] {
+            let mut s = session(false, "waves", json!({}));
+            if widths.len() > 1 {
+                s.update("split", &json!({"mode": "light_to_dark"}))
+                    .unwrap();
+            }
+            let pens = (widths.iter())
+                .map(|&w| Pen::new("Pen", w, "#000000").unwrap())
+                .collect();
+            s.set_pens(pens).unwrap();
+            draw(&mut s);
+            let found = s.lint().unwrap();
+            let vertices = find(&found, "vertices").unwrap();
+            let patch = vertices.patch.clone().unwrap();
+            let on = &patch["settings"]["order"];
+            let tolerance = on["simplify_mm"].as_f64().unwrap();
+            let predicted = simplified_fine_share(&s.drawing().unwrap(), tolerance, 0.0);
+            assert_eq!(predicted.is_some(), stays);
+            assert!(predicted.is_none_or(|share| share < vertices.value));
+            s.update("order", on).unwrap();
+            draw(&mut s);
+            let after = measure(&s.drawing().unwrap());
+            let counts = after.layers.iter().map(|l| (l.segments, l.fine_segments));
+            assert_eq!(predicted, fine_share(counts));
+            let value = find(&s.lint().unwrap(), "vertices").map(|f| f.value);
+            assert_eq!(predicted, value);
+        }
     }
 
     #[test]

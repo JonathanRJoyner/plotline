@@ -66,7 +66,7 @@ Overdraw counts one pen against itself, because pens that share a drawing overla
 | `dark` | info | the dark coverage is under 0.35, and `empty` did not fire | the spacing lowered in proportion to reach about 0.5, no closer than the widest pen, where the dark parts span room for it; else a point count (`count`, at most a quarter of the inked pixels, with at least 16 new points in the dark parts) or stroke budget (`max_lines`, only when a layer drew its limit) raised in proportion; none with a minimum length above 0 or a pen thinner than a raster cell (amended on 2026-10-16) |
 | `lifts` | info | pen lifts take over half the estimated plot time | none: the message names a long-stroke style |
 | `travel` | warning with `order.optimize` off, info with it on | pen-up travel takes over 30 % of the estimated plot time | `order.optimize` on when it is off and the nearest-neighbour order of each layer, worked out by the ordering stage, gives a lower travel share; else none |
-| `vertices` | info | in some layer with at least 1000 segments, over half are shorter than an eighth of its pen width | none |
+| `vertices` | info | in some layer with at least 1000 segments, over half are shorter than an eighth of its pen width | `order.simplify_mm` set to an eighth of the narrowest pen, rounded down to 0.001 mm, when it is 0 and simplifying the drawing's paths to that, then dropping those under `order.min_length_mm`, would make the finding go away or lower its number; else none (amended on 2026-10-16) |
 | `unused_pens` | info | Pen use is one pen and there are more pens | Pen use set to light to dark |
 | `idle_pens` | info | Pen use is not one pen and some pen's layer has no paths | none |
 
