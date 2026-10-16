@@ -216,10 +216,16 @@ impl RunContext {
         self.cancel.load(Ordering::Relaxed)
     }
 
-    /// A generator seeded from `seed` alone, so the same seed gives the same output everywhere.
-    /// Stages draw randomness only from here.
+    /// A generator seeded from `seed` and the lane, so the same seed gives the same output
+    /// everywhere. Stages draw randomness only from here.
+    ///
+    /// The first lane, and so a run with one pen, uses `seed` alone; lane `i` adds `i * 2^32`, so
+    /// with the `u32` seed settings no lane repeats any first lane's stream. Each pen then draws
+    /// an independent pattern, which is what the Demichel equations of the colour model assume
+    /// (I. Amidror and R. D. Hersch, "Neugebauer and Demichel: dependence and independence in
+    /// n-screen superpositions for colour printing", Color Research and Application 25(4), 2000).
     pub fn rng(&self, seed: u64) -> Pcg64 {
-        Pcg64::seed_from_u64(seed)
+        Pcg64::seed_from_u64(seed.wrapping_add((self.lane.index as u64) << 32))
     }
 }
 
@@ -282,6 +288,18 @@ mod tests {
         assert!(!ctx.cancelled());
         flag.store(true, Ordering::Relaxed);
         assert!(ctx.cancelled());
+    }
+    #[test]
+    fn each_lane_after_the_first_draws_its_own_stream() {
+        let first = |lane| {
+            RunContext::new(Arc::default())
+                .in_lane(lane)
+                .rng(7)
+                .next_u64()
+        };
+        let single = first(Lane::SINGLE);
+        assert_eq!(first(Lane { index: 0, count: 2 }), single);
+        assert_ne!(first(Lane { index: 1, count: 2 }), single);
     }
     #[test]
     fn artifact_bytes_count_buffers() {

@@ -6,6 +6,9 @@
 //! 28(2), 1982: each pass moves every point to the density-weighted centroid of the pixels that lie
 //! nearer to it than to any other point. The cells are found per pixel, by nearest-point queries
 //! through [`GridIndex`], rather than as exact polygons.
+//!
+//! When the drawing is split between pens, each lane draws its scatter from its own random stream
+//! ([`RunContext::rng`] cites why), so the pens' points fall independently of each other.
 
 use std::sync::Arc;
 
@@ -114,7 +117,7 @@ impl Stage for VoronoiPlacer {
         "Weighted Voronoi"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]

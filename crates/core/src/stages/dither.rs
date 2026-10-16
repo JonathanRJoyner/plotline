@@ -10,6 +10,11 @@
 //! Sources: R. W. Floyd and L. Steinberg, "An adaptive algorithm for spatial greyscale", *Proc.
 //! SID* 17(2), 1976, pp. 75-77. Serpentine scanning follows R. Ulichney, *Digital Halftoning*, MIT
 //! Press, 1987.
+//!
+//! When the drawing is split between pens, each pen's grid moves along the diagonal by its share of
+//! a cell, as the grid placer's does, so that the pens' dots do not lie on each other. Two lattices
+//! of the same period and angle superpose with no moiré whatever their offset (I. Amidror, *The
+//! Theory of the Moiré Phenomenon*, 2nd ed., Springer, 2009).
 
 use std::sync::Arc;
 
@@ -17,6 +22,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::grid::lane_grid;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
 use crate::types::{Points, ToneMap};
@@ -45,7 +51,7 @@ impl Default for DitherSettings {
 /// Place points on a grid by Floyd-Steinberg error diffusion.
 ///
 /// The grid has the grid placer's cells, centred at `x0 + spacing * (i + 0.5)` across and likewise
-/// down. Points come out row by row, left to right, whichever way a row was scanned. The value
+/// down, and moves with the lane as the grid placer's does. Points come out row by row, left to right, whichever way a row was scanned. The value
 /// tested against 0.5 is the tone sample plus the carried error, in `f64`; error that would land
 /// outside the grid is dropped.
 pub struct DitherPlacer;
@@ -58,7 +64,7 @@ impl Stage for DitherPlacer {
         "Error diffusion"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -76,18 +82,14 @@ impl Stage for DitherPlacer {
         &self,
         inputs: Inputs,
         settings: &Value,
-        _ctx: RunContext,
+        ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<DitherSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
-        let [x0, y0, w, h] = tone.rect_mm();
-        // As in the grid placer: the tolerance keeps the last cell when w / spacing is a whole
-        // number that rounds just below, and a NaN size gives no cells.
-        let cols = (w / s.spacing_mm + 1e-9).floor() as usize;
-        let rows = (h / s.spacing_mm + 1e-9).floor() as usize;
+        let (origin, cols, rows) = lane_grid(tone.rect_mm(), s.spacing_mm, ctx.lane());
         Ok(Box::new(DitherRun {
             tone,
-            origin: [x0, y0],
+            origin,
             spacing: s.spacing_mm,
             serpentine: s.serpentine,
             cols,
@@ -203,13 +205,22 @@ impl StageRun for DitherRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stage::Frame;
-    use crate::test_util::{bounds, run_stage, tone_map};
+    use crate::stage::{Frame, Lane};
+    use crate::test_util::{bounds, run_stage_in_lane, tone_map};
     use serde_json::json;
     use std::collections::HashMap;
 
     fn run_dither(tone: ToneMap, patch: Value) -> (Vec<Frame>, Arc<Points>) {
-        match run_stage(&DitherPlacer, vec![Artifact::Tone(Arc::new(tone))], patch) {
+        run_dither_in_lane(tone, patch, Lane::SINGLE)
+    }
+
+    fn run_dither_in_lane(tone: ToneMap, patch: Value, lane: Lane) -> (Vec<Frame>, Arc<Points>) {
+        match run_stage_in_lane(
+            &DitherPlacer,
+            vec![Artifact::Tone(Arc::new(tone))],
+            patch,
+            lane,
+        ) {
             (frames, Artifact::Points(p)) => (frames, p),
             (_, a) => panic!("expected points, got {}", a.kind().name()),
         }
@@ -252,7 +263,7 @@ mod tests {
                 DitherPlacer.label(),
                 DitherPlacer.version()
             ),
-            ("dither", "Error diffusion", 1)
+            ("dither", "Error diffusion", 2)
         );
         assert_eq!(
             (DitherPlacer.requires(), DitherPlacer.provides()),
@@ -299,6 +310,37 @@ mod tests {
             picture(&on, 8, 4),
             ["...#....", ".#..#.#.", "..#...#.", ".#...#.."]
         );
+    }
+
+    #[test]
+    fn a_second_pen_moves_the_grid() {
+        let run = |lane| {
+            let patch = json!({"spacing_mm": 2.0});
+            run_dither_in_lane(tone_map(20, 20, |_, _| 0.5), patch, lane).1
+        };
+        let (single, first) = (run(Lane::SINGLE), run(Lane { index: 0, count: 2 }));
+        assert_eq!(first.0, single.0);
+        // Pen 0's centres lie on odd mm, 11 to 49. Pen 1's grid sits half a cell in on both axes,
+        // so its centres lie on even mm, 12 to 48, and no dot lands on one of pen 0's.
+        let second = run(Lane { index: 1, count: 2 });
+        assert!(
+            second.0.len().abs_diff(19 * 19 / 2) <= 8,
+            "{}",
+            second.0.len()
+        );
+        assert!(single
+            .0
+            .iter()
+            .all(|p| p[0] % 2.0 == 1.0 && p[1] % 2.0 == 1.0));
+        assert!(second
+            .0
+            .iter()
+            .all(|p| p[0] % 2.0 == 0.0 && p[1] % 2.0 == 0.0));
+        assert!(second
+            .0
+            .iter()
+            .flatten()
+            .all(|&v| (12.0..=48.0).contains(&v)));
     }
 
     #[test]

@@ -9,6 +9,10 @@
 //! computational fabrication of string images", *Computer Graphics Forum* 37(2), 2018,
 //! pp. 263-274, doi:10.1111/cgf.13359. That paper picks nails and threads for a physical string
 //! image; this stage borrows only the loop, and the segments, scores and restarts are its own.
+//!
+//! When the drawing is split between pens, each lane draws its angles from its own random stream
+//! ([`RunContext::rng`] cites why). A lane's first stroke still starts at its darkest pixel, so
+//! two lanes over the same tone part from their second vertex.
 
 use std::f64::consts::TAU;
 use std::sync::Arc;
@@ -230,7 +234,7 @@ impl Stage for SketchStage {
         "Sketch lines"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -450,7 +454,7 @@ mod tests {
             (SketchStage.name(), SketchStage.label()),
             ("sketch", "Sketch lines")
         );
-        assert_eq!(SketchStage.version(), 1);
+        assert_eq!(SketchStage.version(), 2);
         assert_eq!(
             (SketchStage.requires(), SketchStage.provides()),
             (&[Kind::Tone][..], Kind::Paths)
