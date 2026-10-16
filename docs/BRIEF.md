@@ -105,7 +105,7 @@ The session holds the state: the image, canvas and pens, the chosen style and se
 - **CLI:** `plotline run <style> image.png --out drawing.svg [--look NAME] --set stage.key=value … [--strict]` (with `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots` to meet a budget, and `--machine FILE --gcode DIR` for G-code), `plotline styles`, `plotline describe <style>`, `plotline analyse IMAGE`, `plotline gui`, `plotline mcp`.
 - **GUI:** see §8.
 - **MCP:** see §9.
-- **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. The generic G-code writer is the first (§14); which toolchains come next is open (§12).
+- **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. The generic G-code writer is the first (§14), and an HPGL writer, which writes the whole drawing as one file for plotters that read that format ([HPGL export](decisions/2026-10-16-hpgl-export.md)), came next; which toolchains follow is open (§12).
 
 ## 7. Styles
 
@@ -192,6 +192,7 @@ How the tools behave:
   - SVG in millimetres, with one group per pen layer, pen metadata and the run's preset
   - a plain JSON paths format, so other programs can read results, with the run's preset
   - G-code, one file per pen, for a machine the user describes
+  - HPGL, one file for the whole drawing with a pen selected for each layer, for plotters that read it
   - PNG previews
   - presets (settings files)
 - **Units:** millimetres everywhere in the public API. Pixels exist only inside tone mapping.
@@ -221,14 +222,14 @@ Decide these during design, write the decision and reason as a file in docs/deci
 
 The ten questions the brief opened with (frontend stack, performance strategy, continuous-line solver, dot geometry, settings schema, cache, toolchain adapters, third-party styles, Python and tooling, preset format) were settled on 2026-10-11. Each decision and its reason is in §14, and the core ones are detailed in [the spec for the first sub-project](superpowers/specs/2026-10-11-core-engine-design.md). Still open:
 
-1. **Scope of the naming rule.** The rule not to name other tools conflicts with vendor-namespaced SVG layer attributes that some plotter software reads, and with adapters that by nature target a named toolchain. The working reading is that the rule covers prose, identifiers and commit messages, and that standard format names are fine. The owner should confirm before the adapter milestone. Until then SVG export uses plain groups only. The G-code writer did not need the answer, because G-code is a standard format name and the writer uses no vendor names.
+1. **Scope of the naming rule.** Settled on 2026-10-16 in [standard format names](decisions/2026-10-16-standard-format-names.md): standard or de facto file formats, G-code and HPGL among them, may be named anywhere, while vendor extensions, instructions only one maker's machines understand, and settings, presets or adapters named after a product stay out. An adapter that targets a named toolchain still needs its own decision. SVG export uses plain groups only.
 2. **Which toolchains to adapt first.** Driven by the owner's own setup.
 3. **Canvas 2D or WebGL** was settled on 2026-10-12 in [the GUI spec](superpowers/specs/2026-10-12-gui-design.md): Canvas 2D, revisited if a redraw takes over 100 ms.
 4. **Disk cache.** Whether and when. Cache keys already support it.
 5. **Standalone Rust CLI binary.** Users without Python could get the CLI as one executable. Not before the Python surface settles.
 6. **Python stage API.** Stages written in Python through callbacks would run natively but not in the browser. Decide when someone asks for one.
 7. **JSON-declared styles.** Compositions of existing stages as data, so a new style needs no code. Decide after the Voronoi family shows which compositions people want.
-8. **Additions after 0.1.** The 0.1 candidates were settled on 2026-10-15 (§14, "0.1 scope"): the MCP `load_preset` tool was already built, and the rest wait until after 0.1. They are a paper colour for the preview, Ramer–Douglas–Peucker simplification in the ordering stage, and a `plotline testchart` command. The run's settings embedded in exports were built on 2026-10-16 ([embedded presets](decisions/2026-10-16-embedded-presets.md)). Also proposed for after 0.1: edge and outline layers, HPGL export, a compare view in the GUI, and a saved pen library. None of them is scheduled yet.
+8. **Additions after 0.1.** The 0.1 candidates were settled on 2026-10-15 (§14, "0.1 scope"): the MCP `load_preset` tool was already built, and the rest wait until after 0.1. They are a paper colour for the preview, Ramer–Douglas–Peucker simplification in the ordering stage, and a `plotline testchart` command. The run's settings embedded in exports were built on 2026-10-16 ([embedded presets](decisions/2026-10-16-embedded-presets.md)). Also proposed for after 0.1: edge and outline layers, a compare view in the GUI, and a saved pen library. None of them is scheduled yet. HPGL export, proposed here too, was built on 2026-10-16 ([HPGL export](decisions/2026-10-16-hpgl-export.md)).
 
 ## 13. Suggested milestones
 
