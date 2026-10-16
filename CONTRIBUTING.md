@@ -74,7 +74,7 @@ git switch your-branch
 cargo run --release -p plotline-core --example gallery -- target/gallery --baseline target/gallery-main
 ```
 
-Open `target/gallery/index.html`. The engine is deterministic, so every outlined cell is a real change. Say in the pull request which cells changed and why. If a README picture changed too, redraw them with `cargo run --release -p plotline-core --example readme_images`.
+Open `target/gallery/index.html`. The engine is deterministic, so every outlined cell is a real change. Say in the pull request which cells changed and why. If a README picture changed too, redraw them with `cargo run --release -p plotline-core --example readme_images`, and the style guide's pictures with the same command followed by `-- --guide`. A new style adds its section to the [style guide](docs/styles.md).
 
 `tests/snapshots/gallery-stats.json` keeps the gallery's numbers: path count, pen-down and pen-up length, plot time and plot lint findings for each cell. CI draws the gallery again and fails when the numbers moved but the file did not, and it uploads the gallery page, compared with the base branch, as an artifact. When the change is meant, regenerate the file and commit it, so the review shows the moved numbers:
 
