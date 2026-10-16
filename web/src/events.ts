@@ -10,7 +10,13 @@ export type Stats = { path_count: number; pen_down_mm: number; pen_up_mm: number
 export type RunEvent = { type: "run"; id: number };
 export type FrameEvent = { type: "frame"; id: number; stage: string; progress: number; label: string; pen: number; points?: Float64Array; coords?: Float64Array; offsets?: Uint32Array };
 export type ResultEvent = { type: "result"; id: number; canvas: Canvas; layers: Layer[]; tone: Tone | null };
-export type EndEvent = { type: "end"; id: number; state: "done" | "cancelled" | "error"; error: string | null; stats: Stats | null };
+/** What a fit chose, in the shape of the engine's `FitResult`. */
+export type FitResult = {
+  stage: string; key: string; metric: string; target: number; value: unknown; achieved: number;
+  samples: { value: number; metric: number }[];
+};
+/** `fit` is set when a fit ends done; the page applies its value with `update`. */
+export type EndEvent = { type: "end"; id: number; state: "done" | "cancelled" | "error"; error: string | null; stats: Stats | null; fit?: FitResult | null };
 export type Event = RunEvent | FrameEvent | ResultEvent | EndEvent;
 export type Area = { x: number; y: number; width: number; height: number };
 export type Machine = {

@@ -128,6 +128,9 @@ footer {
 .status li[data-state="running"]::before { background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
 @keyframes pulse { to { opacity: 0.3; } }
 .stats { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.fit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.fit input { width: 7em; }
+.fit .error { margin: 0; }
 
 /* Rows: the label's text on the left, its control and unit on the right. */
 label { display: flex; align-items: center; gap: 8px; margin: 6px 0; color: var(--text); }

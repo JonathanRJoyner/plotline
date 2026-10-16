@@ -5,9 +5,9 @@
 import { CircleHelp, Download, Image as ImageIcon, ImageUp, Maximize, Monitor, Moon, Play, Route, Settings as Gear, Sparkles, Square, Sun } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Engine } from "./engine";
-import type { BankPen, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
+import type { BankPen, FitResult, FrameEvent, Ink, Machine, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
-import { ExportPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
+import { ExportPanel, FitPanel, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
 import { Preview } from "./preview";
 import type { State } from "./protocol";
 import { Settings } from "./settings";
@@ -126,14 +126,14 @@ function Export({ status, machine, onExport, onGcode }: ExportProps) {
 }
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
-  engine: Engine; status: StatusStore; stages: Stage[]; error?: string;
+  engine: Engine; status: StatusStore; stages: Stage[]; error?: string; fitError?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
-  onSettings: () => void; onTour: () => void;
+  onSettings: () => void; onTour: () => void; onFit: (metric: string, target: number) => void; onFitted: (fit: FitResult) => void;
 };
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, ...preview }: RunViewProps) {
+function RunView({ engine, status, stages, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onFit, onFitted, ...preview }: RunViewProps) {
   const { run, stats } = useStatus(status);
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
@@ -143,6 +143,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
   const [showTravel, setShowTravel] = useState(false);
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [fits, setFits] = useState(0);
+  const [fitted, setFitted] = useState<FitResult | null>(null);
   // The run Stop was pressed for: a stage stops between steps, so the run can stay running a while.
   const [stopFor, setStopFor] = useState(0);
   const stopping = run.state === "running" && stopFor === run.id;
@@ -162,12 +163,18 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
         // A new array each time: the preview redraws on its identity. A frame without geometry,
         // such as the tone's, leaves the held ones.
         if (e.points || e.coords) setFrames((fs) => { const next = [...fs]; next[e.pen] = e; return next; });
-        setProgress((p) => ({ ...p, [e.stage]: { label: e.label, progress: e.progress } }));
+        // A fit's trial has ended, so the stages start over for the next one.
+        if (e.stage === "fit") setProgress({ fit: { label: e.label, progress: e.progress } });
+        else setProgress((p) => ({ ...p, [e.stage]: { label: e.label, progress: e.progress } }));
       } else if (e.type === "result") {
         setResult(e);
         status.set({ ...status.value, layers: e.layers.map((l) => l.pen) });
       } else {
         status.set({ run: { id: e.id, state: e.state, error: e.error }, stats: e.stats, layers: status.value.layers });
+        if (e.fit) {
+          setFitted(e.fit);
+          onFitted(e.fit);
+        }
       }
     };
   }, []);
@@ -225,6 +232,7 @@ function RunView({ engine, status, stages, error, onOpen, onSample, onRun, onSto
       <footer data-tour="status">
         <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
         <StatsPanel stats={stats} />
+        <FitPanel disabled={!preview.hasImage} error={fitError} fitted={fitted} onFit={(metric, target) => { setFitted(null); onFit(metric, target); }} />
       </footer>
     </>
   );
@@ -365,6 +373,10 @@ export function App() {
     }
   }
 
+  // A fit leaves the settings alone; this applies the value it chose, and the redraw that
+  // follows comes from the cache.
+  const applyFit = (fit: FitResult) => call("update", [fit.stage, { [fit.key]: fit.value }], fit.stage);
+
   if (fatal) return <p class="loading">{fatal}</p>;
   if (!styles || !state) return <p class="loading">Loading the engine</p>;
 
@@ -408,6 +420,7 @@ export function App() {
             setSettingsOpens((n) => n + 1);
           }}
           onTour={() => setTourOpens((n) => n + 1)}
+          fitError={errors.fit} onFit={(metric, target) => call("fit", [metric, target], "fit")} onFitted={applyFit}
         />
       </main>
       <aside>

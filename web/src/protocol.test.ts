@@ -62,6 +62,27 @@ test("bad image bytes are refused", () => {
   expect(posted.some((m) => m.type === "run")).toBe(false);
 });
 
+test("a fit runs like a run and its end carries the value to apply", async () => {
+  const { posted, call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("setStyle", "hatch");
+  await ended(2);
+  expect(ok("fit", "paths", 400).state.run).toEqual({ id: 3, state: "running", error: null });
+  await ended(3);
+  const end = posted.find((m) => m.type === "end" && m.id === 3) as { state: string; fit: { stage: string; key: string; samples: unknown[] } };
+  expect(end.state).toBe("done");
+  expect([end.fit.stage, end.fit.key]).toEqual(["hatch", "spacing_mm"]);
+  expect(end.fit.samples.length).toBeGreaterThan(1);
+  // The fit leaves the settings to the page.
+  expect((ok("preset").state.settings as { hatch: { spacing_mm: number } }).hatch.spacing_mm).toBe(1);
+  expect(posted.some((m) => m.type === "frame" && m.id === 3 && m.stage === "fit")).toBe(true);
+  const refused = call("fit", "dots", 10);
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toContain("places no dots");
+  expect((posted.find((m) => m.type === "end" && m.id === 2) as { fit: unknown }).fit).toBeNull();
+});
+
 test("a refused setting changes nothing", async () => {
   const { call, ok, ended } = setup();
   ok("setImage", ...image());
