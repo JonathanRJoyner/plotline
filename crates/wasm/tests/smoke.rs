@@ -235,6 +235,18 @@ fn the_tone_match_and_the_response_match_native() {
     assert_eq!(s.tone_match().unwrap().error, 0.09068600548308096);
 }
 #[wasm_bindgen_test]
+fn a_look_is_applied_and_read_back() {
+    let mut s = plotline_wasm::Session::new();
+    s.set_style("waves").unwrap();
+    assert_eq!(s.look().as_deref(), Some("balanced"));
+    s.apply_look("fine").unwrap();
+    assert_eq!(s.look().as_deref(), Some("fine"));
+    assert!(s.apply_look("no such look").is_err());
+    assert_eq!(s.look().as_deref(), Some("fine"));
+    s.update("waves", r#"{"spacing_mm":1.7}"#).unwrap();
+    assert_eq!(s.look(), None);
+}
+#[wasm_bindgen_test]
 fn iso_lines_keep_their_levels_apart_past_u32() {
     // 256 x 256 cells have 2^17 edges, so on wasm32 `level * edges` wrapped to 0 at level 2^15
     // and that level's ring took level 0's keys. One cell at 40,000 gives one ring per level.

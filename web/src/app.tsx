@@ -17,6 +17,7 @@ import { zoomPercent, type View } from "./view";
 
 type Style = { name: string; label: string; description: string };
 type Stage = { name: string; label: string; schema: Record<string, unknown> };
+type Look = { name: string; label: string; description: string };
 
 /** The logo's mark, as docs/images/logo-light.svg draws it: a curve between two ring handles. */
 const Mark = () => (
@@ -275,6 +276,7 @@ export function App() {
   const [state, setState] = useState<State | null>(null);
   const [status] = useState(() => new StatusStore({ run: { id: 0, state: "idle", error: null }, stats: null, layers: [], lint: [], tone: null }));
   const [stages, setStages] = useState<Stage[]>([]);
+  const [looks, setLooks] = useState<Look[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({}); // per stage; "" for the rest
   const [warnings, setWarnings] = useState<string[]>([]);
   const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
@@ -377,7 +379,13 @@ export function App() {
 
   const style = state?.style;
   useEffect(() => {
-    if (style) call<{ stages: Stage[] }>("describe", [style]).then((v) => v && setStages(v.stages));
+    if (style) {
+      call<{ stages: Stage[]; looks: Look[] }>("describe", [style]).then((v) => {
+        if (!v) return;
+        setStages(v.stages);
+        setLooks(v.looks);
+      });
+    }
   }, [style]);
 
   // Hiding goes by layer index, so a changed pen list starts with every pen shown.
@@ -486,6 +494,18 @@ export function App() {
             </select>
           </label>
           <p class="help">{styles.find((s) => s.name === state.style)?.description}</p>
+          {looks.length > 1 && (
+            <>
+              <label data-tour="look">
+                Look{" "}
+                <select value={state.look ?? ""} onChange={(e) => call("applyLook", [e.currentTarget.value])}>
+                  {state.look === null && <option value="" disabled>Custom</option>}
+                  {looks.map((l) => <option value={l.name}>{l.label}</option>)}
+                </select>
+              </label>
+              <p class="help">{state.look === null ? "Not one of the looks: you changed a setting that the looks set." : looks.find((l) => l.name === state.look)?.description}</p>
+            </>
+          )}
           <button type="button" data-tour="styles" disabled={!state.image} onClick={tryStyles}><LayoutGrid /> Try all styles</button>
           <button type="button" data-tour="reset" onClick={() => call("resetSettings")}><RotateCcw /> Reset to defaults</button>
         </fieldset>
