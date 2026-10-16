@@ -35,13 +35,16 @@ plotline converts raster images into vector line art, such as stippling, single 
     <td align="center" valign="top"><img src="docs/images/spiral.png" alt="The still life drawn with the spiral style"><br><sub><b>spiral</b>: one rippling spiral</sub></td>
     <td align="center" valign="top"><img src="docs/images/ink.png" alt="The still life drawn with the ink style"><br><sub><b>ink</b>: dark areas as filled shapes, at threshold 0.3</sub></td>
   </tr>
+  <tr>
+    <td align="center" valign="top"><img src="docs/images/truchet.png" alt="The still life drawn with the truchet style"><br><sub><b>truchet</b>: nested arcs on tiles in random turns</sub></td>
+  </tr>
 </table>
 
 <p align="center"><sub>plotline drew every picture above with a 0.3 mm pen, from images it renders in code.</sub></p>
 
 ## Features
 
-- **Eighteen styles,** from dots on a grid to one continuous spiral. The table below describes each one.
+- **Nineteen styles,** from dots on a grid to one continuous spiral. The table below describes each one.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Suggestions.** The engine measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
 - **Plot lint.** After every run the engine checks the drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, and marks off the page or the machine. Where a setting fixes one, it says which.
@@ -73,6 +76,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `contours` | Level lines of the image, like a topographic map. |
 | `flow` | Evenly spaced lines that follow the image's edges, closer together where it is darker. |
 | `hilbert` | A space-filling curve that folds tighter where the image is darker, broken where it leaves the image. |
+| `truchet` | Quarter-circle arcs on square tiles in random turns, joining into winding curves, with more nested arcs where the image is darker. |
 
 `stipple`, `line`, `dashes`, `tree`, `mesh` and `cells` share one placement of points, so switching between them reuses the points. A style switch keeps the settings you changed wherever the new style has the same stage, Pen use included, and gives the rest the new style's defaults; Reset to defaults puts them all back.
 
