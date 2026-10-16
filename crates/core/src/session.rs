@@ -738,6 +738,16 @@ mod tests {
     }
 
     #[test]
+    fn points_go_between_the_page_and_the_image() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.image_point([105.0, 148.5]).is_none() && s.page_point([0.5, 0.5]).is_none());
+        s.set_image(gradient(64, 48));
+        // The A4 page's centre is the centre of the fitted image.
+        assert_eq!(s.image_point([105.0, 148.5]), Some([0.5, 0.5]));
+        assert_eq!(s.page_point([0.5, 0.5]), Some([105.0, 148.5]));
+        assert_eq!(s.image_point([105.0, 5.0]), None);
+    }
+    #[test]
     fn defaults_and_setters() {
         let mut s = Session::new(1 << 20);
         assert_eq!(s.canvas().width_mm, 210.0);
@@ -1194,6 +1204,23 @@ mod tests {
             (0.08399718265758667, 0.730502253480983)
         );
         assert_eq!(auto.error, 0.09068600548308096);
+    }
+
+    #[test]
+    fn the_focus_map_is_pinned() {
+        // The same setup and literal are in crates/wasm/tests/smoke.rs, so CI proves both
+        // targets blur the tone map away from the focus points alike.
+        let mut s = Session::new(1 << 24);
+        s.set_image(still_life(120, 120));
+        s.set_canvas(Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap());
+        let focus = json!([[0.3, 0.4], [0.8, 0.7]]);
+        s.update("tone", &json!({"resolution": 64, "focus": focus}))
+            .unwrap();
+        drain(&mut s);
+        let drawing = s.drawing().unwrap();
+        let ink = &drawing.tone.as_ref().unwrap().ink;
+        let sum = (ink.iter()).fold(0u32, |h, v| h.wrapping_mul(31).wrapping_add(v.to_bits()));
+        assert_eq!(sum, 686_476_666);
     }
 
     #[test]

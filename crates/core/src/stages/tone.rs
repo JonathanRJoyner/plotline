@@ -92,7 +92,16 @@ pub struct ToneSettings {
     /// Auto draws a small test wedge with the style's settings and the first pen, measures how much of the paper each tone covers, and corrects the tone map the style draws from so the drawing's tones follow the image; off leaves it as it is.
     pub response: Response,
     /// Points to keep detail around, as `[x, y]` shares of the image's width and height from its top-left corner; set by clicking the preview.
-    #[schemars(extend("x-hidden" = true))]
+    #[schemars(extend(
+        "x-hidden" = true,
+        "maxItems" = 16,
+        "items" = {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        },
+    ))]
     pub focus: Vec<Vec<f64>>,
     /// Radius around each focus point that keeps all its detail; used only with focus points.
     #[schemars(
@@ -812,6 +821,8 @@ mod tests {
         let p = &schema["properties"];
         assert_eq!(p["focus"]["x-hidden"], true);
         assert_eq!(p["focus"]["default"], json!([]));
+        assert_eq!(p["focus"]["maxItems"], MAX_FOCUS);
+        assert_eq!(p["focus"]["items"]["items"]["maximum"], 1.0);
         assert_eq!(
             (
                 p["focus_mm"]["minimum"].as_f64(),

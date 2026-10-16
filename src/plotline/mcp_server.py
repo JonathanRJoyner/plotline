@@ -338,8 +338,10 @@ def build_server(session: Session | None = None) -> MCPServer:
         puts every setting back to the style's defaults first. look starts from one of the style's
         looks, such as faithful, quick or fine, after reset and before settings; describe_style
         lists them. settings is {stage: {setting: value}} and changes only the values given; only
-        the stages after a changed setting run again. When a change is refused, nothing changes
-        and nothing runs."""
+        the stages after a changed setting run again. An assistant that sees a face or a subject
+        can keep detail there and abstract the rest with {"tone": {"focus": [[x, y]]}}, each point
+        a share of the image's width and height from its top-left corner. When a change is
+        refused, nothing changes and nothing runs."""
         with _errors():
             change(style, settings, reset, look)
             await follow(ctx, session.run)

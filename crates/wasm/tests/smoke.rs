@@ -241,6 +241,37 @@ fn the_tone_match_and_the_response_match_native() {
     assert_eq!(s.tone_match().unwrap().error, 0.09068600548308096);
 }
 #[wasm_bindgen_test]
+fn the_focus_map_matches_native() {
+    // The same setup and literal are pinned in crates/core/src/session.rs on the native target.
+    use serde_json::json;
+    let mut s = plotline_core::Session::new(1 << 24);
+    s.set_image(plotline_core::synthetic::still_life(120, 120));
+    let canvas = plotline_core::Canvas::new(100.0, 100.0, 0.0, plotline_core::Fit::Fit).unwrap();
+    s.set_canvas(canvas);
+    let focus = json!([[0.3, 0.4], [0.8, 0.7]]);
+    s.update("tone", &json!({"resolution": 64, "focus": focus}))
+        .unwrap();
+    let mut run = s.start().unwrap();
+    while run.next_frame().is_some() {}
+    let drawing = s.drawing().unwrap();
+    let ink = &drawing.tone.as_ref().unwrap().ink;
+    let sum = (ink.iter()).fold(0u32, |h, v| h.wrapping_mul(31).wrapping_add(v.to_bits()));
+    assert_eq!(sum, 686_476_666);
+    // The wasm session passes the two placements through.
+    let mut w = plotline_wasm::Session::new();
+    assert!(w.image_point(50.0, 50.0).is_none());
+    w.set_image(
+        120,
+        120,
+        &plotline_core::synthetic::still_life(120, 120).rgb,
+    )
+    .unwrap();
+    w.set_canvas(r#"{"width_mm":100,"height_mm":100,"margin_mm":0,"fit":"fit"}"#)
+        .unwrap();
+    assert_eq!(w.image_point(50.0, 50.0), Some(vec![0.5, 0.5]));
+    assert_eq!(w.page_point(0.25, 0.5), Some(vec![25.0, 50.0]));
+}
+#[wasm_bindgen_test]
 fn a_look_is_applied_and_read_back() {
     let mut s = plotline_wasm::Session::new();
     s.set_style("waves").unwrap();
