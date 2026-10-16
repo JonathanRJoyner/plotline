@@ -104,8 +104,10 @@ pub fn iso_lines(
     let level = |j: usize| first + j as f64 * step;
     let at = |x: usize, y: usize| f64::from(field[y * w + x]);
     // Edge ids: 2 * cell for the edge from a cell to its right neighbour, plus 1 for the edge to
-    // the one below. A segment joins two edges of one cell at one level.
-    let edges = 2 * w * h;
+    // the one below. A segment joins two edges of one cell at one level. Keys are `u64`: on wasm32
+    // a level index times the edge count passes `usize::MAX` on a large map with many levels.
+    let edges = 2 * w as u64 * h as u64;
+    let key = |j: usize, e: usize| j as u64 * edges + e as u64;
     let mut segments: Vec<(usize, usize, usize)> = Vec::new();
     for y in 0..h.saturating_sub(1) {
         for x in 0..w.saturating_sub(1) {
@@ -164,11 +166,11 @@ pub fn iso_lines(
         ]
     };
     // Every crossed edge belongs to exactly two segments of its level, one from each cell.
-    let mut by_edge: HashMap<usize, [usize; 2]> = HashMap::with_capacity(segments.len());
+    let mut by_edge: HashMap<u64, [usize; 2]> = HashMap::with_capacity(segments.len());
     for (i, &(j, a, b)) in segments.iter().enumerate() {
         for e in [a, b] {
             by_edge
-                .entry(j * edges + e)
+                .entry(key(j, e))
                 .and_modify(|s| s[1] = i)
                 .or_insert([i, usize::MAX]);
         }
@@ -184,7 +186,7 @@ pub fn iso_lines(
         let mut line = vec![point(j, a), point(j, b)];
         let (mut seg, mut edge) = (start, b);
         while edge != a {
-            let [s0, s1] = by_edge[&(j * edges + edge)];
+            let [s0, s1] = by_edge[&key(j, edge)];
             let next = if s0 == seg { s1 } else { s0 };
             if next == usize::MAX || used[next] {
                 break; // only reachable if the border rule above was broken

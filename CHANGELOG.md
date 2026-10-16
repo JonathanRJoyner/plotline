@@ -11,6 +11,11 @@ New entries go under Unreleased until the next release.
 - Both are off by default: existing machines, presets and G-code are unchanged, and the preset version stays 3.
 Pending entries are files in [changelog.d/](changelog.d/README.md); they move here at the next release.
 
+### Front ends
+
+- **Enlarged style pictures:** in Try all styles, pointing at a picture or tabbing to it shows it 2.5 times larger beside its cell. The pictures are drawn 600 px wide so the enlargement stays sharp.
+- **Engine failures recover:** a panic in the browser engine shows its message, and the worker rebuilds its session, so one failure cannot stall Try all styles or the page. The `ink` style no longer panics in the browser on a large drawing with many rings.
+
 ## 0.1.0 (2026-10-16)
 
 The first release. One Rust engine runs everything: the Python package, the command line and the MCP server use it as a native extension, and the browser GUI runs it as WebAssembly.
