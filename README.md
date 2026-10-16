@@ -44,6 +44,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Eighteen styles,** from dots on a grid to one continuous spiral. The table below describes each one.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Suggestions.** The engine measures a new image and suggests changes: line art, levels, invert, noise, page orientation and colour. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
+- **Plot lint.** After every run the engine checks the drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, and marks off the page or the machine. Where a setting fixes one, it says which.
 - **Budgets.** Give a plot time, a path count, metres of pen-down line or a dot count, and plotline finds the value of the style's density setting, such as its line spacing, that meets it in up to eight runs.
 - **Short pen travel.** Every run orders its paths to keep the pen's travel short, and the line styles lift the pen far less often than `grid`.
 - **Plotter-ready output.** An SVG in millimetres holds one layer per pen that draws, each labelled with the name of its pen. A run can also write the paths as JSON, and a PNG preview that draws each mark at its real pen width. For a pen-fitted 3D printer, the GUI writes one G-code file per pen.
@@ -84,7 +85,7 @@ Open **[jonathanrjoyner.github.io/plotline](https://jonathanrjoyner.github.io/pl
 3. Set up your pens in the Pens dialog, and choose how they share the drawing under Pen use. The page remembers your setup between visits.
 4. Click Export SVG in the toolbar, ready for a pen plotter's own software.
 
-For a new image the Suggestions panel, at the top of the right column, lists what would suit it, each with an Apply button. Nothing changes until you click.
+For a new image the Suggestions panel, at the top of the right column, lists what would suit it, each with an Apply button. Nothing changes until you click. Under the stats, the plot lint lists what it found in the last drawing, with an Apply button where a setting fixes it.
 
 For G-code, enter your machine in the Settings dialog: the drawable area, pen heights, feeds, and start and end G-code. The export panel then writes one G-code file per pen. The preset carries the machine, so save a preset to keep it. A short tour of the page opens on your first visit, and Tour in the toolbar opens it again.
 
@@ -103,7 +104,7 @@ Then draw an image of your own:
 uv run plotline run grid your-photo.jpg --out drawing.svg --preview preview.png
 ```
 
-This writes `drawing.svg` and `preview.png`, and prints a one-line summary with the path count and an estimated plot time.
+This writes `drawing.svg` and `preview.png`, and prints a one-line summary with the path count and an estimated plot time. The plot lint's findings follow on stderr, each with the `--set` options that fix it where a setting does.
 
 | To | Use |
 | --- | --- |
@@ -116,13 +117,14 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Save the run's look as a preset | `--save-preset my-look.json` |
 | Start a later run from a preset | `--preset my-look.json` |
 | See an image's statistics and suggested changes as JSON | `plotline analyse your-photo.jpg` |
+| Fail when the plot lint finds a warning or an error | `--strict` |
 | Open the live preview locally | `plotline gui` |
 
 `plotline gui` serves the browser GUI from your machine. Building it needs Node, wasm-pack and the `wasm32-unknown-unknown` Rust target: run `npm run wasm`, `npm ci` and `npm run build` in `web/`.
 
 ## With an AI assistant
 
-`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, `fit` one to a budget, look at previews, also zoomed in on a part of the page, and export the result.
+`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles and read the plot lint's findings in each result, `fit` one to a budget, look at previews, also zoomed in on a part of the page, and export the result.
 
 ## Roadmap
 
