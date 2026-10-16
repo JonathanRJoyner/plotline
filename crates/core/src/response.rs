@@ -41,8 +41,10 @@ pub const STEPS: usize = SIDE * SIDE;
 const PATCH_MM: f64 = 12.0;
 const PATCH_SPACINGS: f64 = 8.0;
 const PATCH_PX: usize = 16;
-/// The tone stage's greatest resolution, which caps the wedge's width in pixels.
-const MAX_PX: usize = 4000;
+/// A patch is at most this wide in mm and in pixels, so a wide spacing or a fine tone map keeps
+/// the wedge's run short; such a patch holds fewer spacings and measures more roughly.
+const MAX_PATCH_MM: f64 = 40.0;
+const MAX_PATCH_PX: usize = 256;
 /// The share of a patch's side left out on each side when it is measured, away from its edges.
 const INSET: f64 = 0.1;
 /// How much wider than the coverage raster's usual cells the wedge's are: `1 + (sqrt(5) - 1) / 20`.
@@ -79,9 +81,11 @@ pub struct Wedge {
 }
 
 impl Wedge {
-    /// A wedge of pixels `mm_per_px` wide whose patches are at least `patch_mm` wide.
+    /// A wedge of pixels `mm_per_px` wide whose patches are `patch_mm` wide, within the bounds
+    /// above.
     pub fn new(mm_per_px: f64, patch_mm: f64) -> Wedge {
-        let patch_px = ((patch_mm / mm_per_px).ceil() as usize).clamp(PATCH_PX, MAX_PX / SIDE);
+        let patch_mm = patch_mm.min(MAX_PATCH_MM);
+        let patch_px = ((patch_mm / mm_per_px).ceil() as usize).clamp(PATCH_PX, MAX_PATCH_PX);
         let side = SIDE * patch_px;
         let mut rgb = Vec::with_capacity(side * side * 3);
         for y in 0..side {
@@ -223,26 +227,28 @@ pub fn lookup(samples: &[(f64, f64)]) -> Option<Vec<f32>> {
         .iter()
         .map(|&x| c.iter().rev().fold(0.0, |acc, &k| acc * x + k))
         .collect();
+    if !fitted.iter().all(|v| v.is_finite()) {
+        return None;
+    }
     let ys = pava(&fitted);
     let (lo, hi) = (*ys.first()?, *ys.last()?);
-    if hi - lo < MIN_RANGE {
+    // Written so that a fit gone to NaN counts as no response too.
+    if !(hi - lo >= MIN_RANGE) {
         return None;
     }
     let inverse = |target: f64| {
         if target <= lo {
             return 0.0;
         }
-        // The first sample at or above the target; the one before it is below.
-        let i = ys
-            .iter()
-            .position(|&y| y >= target)
-            .expect("the last reaches it");
+        // The first sample at or above the target, which the last always is; the one before it
+        // is below.
+        let i = ys.iter().position(|&y| y >= target).unwrap_or(LOOKUP - 1);
         let (x0, x1, y0, y1) = (xs[i - 1], xs[i], ys[i - 1], ys[i]);
         (x0 + (target - y0) / (y1 - y0) * (x1 - x0)).clamp(0.0, 1.0)
     };
     Some(
         (0..LOOKUP)
-            .map(|j| inverse(lo + j as f64 / (LOOKUP - 1) as f64 * (hi - lo)) as f32)
+            .map(|j| inverse((lo + j as f64 / (LOOKUP - 1) as f64 * (hi - lo)).min(hi)) as f32)
             .collect(),
     )
 }
@@ -459,6 +465,28 @@ mod tests {
                 (f64::from(v) - j as f64 / 256.0).abs() < 0.04,
                 "tone {j}/256: {v}"
             );
+        }
+    }
+
+    #[test]
+    fn the_top_of_the_range_is_found_whatever_the_rounding() {
+        // `lo + 1 * (hi - lo)` can round above `hi`; the plot laws found ranges where it did.
+        for a in 0..40 {
+            for b in 1..40 {
+                let (lo, span) = (a as f64 * 0.0137, b as f64 * 0.0213);
+                let samples: Vec<(f64, f64)> = (0..16)
+                    .map(|i| {
+                        let s = i as f64 / 15.0;
+                        (s, lo + span * s)
+                    })
+                    .collect();
+                let l = lookup(&samples).unwrap();
+                assert!(
+                    (l[LOOKUP - 1] - 1.0).abs() < 1e-3,
+                    "{lo} {span}: {}",
+                    l[LOOKUP - 1]
+                );
+            }
         }
     }
 

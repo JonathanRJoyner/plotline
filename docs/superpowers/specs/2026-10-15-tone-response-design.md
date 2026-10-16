@@ -44,7 +44,7 @@ A run whose tone settings say `auto` first runs the wedge: a run of the same sty
 - an image of 4 by 4 grey patches at inks `i / 15` for `i` from 0 to 15, in snake order so that neighbours along a row differ by one step;
 - the tone stage at its plain defaults (`response` off, gamma 1, manual levels) and a resolution equal to the wedge's width in pixels, so the wedge's tone map is the wedge itself;
 - the patches at the real tone map's pixel size, which the run works out from the image size, the page and the resolution (`tone::map_size`), because some stages work in pixels;
-- patches 12 mm wide, or 8 spacings when the style's density setting is a spacing and that is wider, and at least 16 pixels;
+- patches 12 mm wide, or 8 spacings when the style's density setting is a spacing and that is wider, at least 16 pixels, and at most 40 mm and 256 pixels, so a wide spacing or a fine map keeps the wedge's run short (the plot laws found a 20 mm spacing making a 4000-pixel wedge);
 - the stage that splits between the pens at its defaults, one pen, and the first pen;
 - every other stage at the run's own settings.
 
@@ -59,7 +59,7 @@ The 16 coverages are fitted by a least-squares polynomial of degree 5. The patch
 
 The target is a straight line over the range the style can reach: tone `t` should cover `c_min + t (c_max - c_min)`. Aiming at the style's own darkest tone rather than full black is the spike's lesson. The lookup takes each tone to the least `s` with `c(s)` at or above its target, sampled at 257 tones and interpolated linearly. Inverting a device's measured tone curve to linearise it is standard print calibration (R. Bala, "Device characterization", in G. Sharma (ed.), *Digital Color Imaging Handbook*, CRC Press, 2003).
 
-A response that rises less than 0.01 of coverage from white to black cannot be inverted, and the tone map is left as it is. Level lines (`contours`) are such a style.
+A response that rises less than 0.01 of coverage from white to black cannot be inverted, and the tone map is left as it is; so is one whose fit is not finite. Level lines (`contours`) are such a style.
 
 ### 3.4 Running it
 
