@@ -19,6 +19,7 @@ pub mod spiral;
 pub mod split;
 pub mod stipple;
 pub mod tone;
+pub mod truchet;
 pub mod tsp;
 pub mod voronoi;
 pub mod waves;
