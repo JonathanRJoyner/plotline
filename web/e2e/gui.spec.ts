@@ -110,6 +110,32 @@ test("a plot lint finding's Apply clears it", async ({ page }) => {
   await expect(apply).toHaveCount(0);
 });
 
+test("a colour image's palette suggestion sets the pens and Pen use", async ({ page }) => {
+  await open(page);
+  // Four saturated stripes, drawn in the page and encoded as a PNG.
+  const png = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 240;
+    canvas.height = 320;
+    const g = canvas.getContext("2d")!;
+    ["#e00000", "#00b000", "#0000e0", "#f0e000"].forEach((c, i) => { g.fillStyle = c; g.fillRect(i * 60, 0, 60, 320); });
+    const blob = await new Promise<Blob>((done) => canvas.toBlob((b) => done(b!), "image/png"));
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  });
+  await page.locator('input[type="file"][accept^="image/"]').setInputFiles({ name: "colours.png", mimeType: "image/png", buffer: Buffer.from(png) });
+  const id = await ran(page, 0);
+  const apply = page.getByRole("button", { name: /^Apply: This is a colour image\./ });
+  await expect(apply).toBeVisible();
+  await apply.click();
+  await ran(page, id);
+  const names = page.locator(".pen .name");
+  await expect.poll(() => names.count()).toBeGreaterThanOrEqual(2);
+  expect(await names.count()).toBeLessThanOrEqual(4);
+  for (const name of await names.allTextContents()) expect(name).toMatch(/ 0\.3$/);
+  await expect(page.getByRole("combobox", { name: "Pen use" })).toHaveValue("by_colour");
+  await expect(apply).toHaveCount(0);
+});
+
 test("the thumbnail grid picks a style", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);

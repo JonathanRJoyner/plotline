@@ -216,6 +216,7 @@ summary:hover { color: var(--text); }
 .warnings { margin: 8px 0 0; padding-left: 1.2em; color: var(--muted); }
 
 /* The suggestions: a reason, then its button, with a rule between items. */
+[data-tour="suggestions"]:empty { display: none; } /* the tour's target, with no gap in the panel column while empty */
 .suggestions { margin: 0; padding: 0; list-style: none; }
 .suggestions li + li { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .suggestions p { margin: 0 0 6px; }

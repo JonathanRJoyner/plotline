@@ -33,7 +33,7 @@ Kind `colour`, as before. It is made when `colourfulness > 40` and the palette h
 
 ## 3. Front ends
 
-- **GUI.** `Patch` gains `pens`; the worker's `apply` sets them after the style and before the settings. The pens tour step mentions the suggestion. A Playwright flow loads a colour image made in the page with a canvas, clicks the colour suggestion's Apply, and checks the pen list and Pen use.
+- **GUI.** `Patch` gains `pens`; the worker's `apply` sets them after the style and before the settings. A new tour step, "Take a suggestion", rings the Suggestions panel, whose element stays in the page while empty so the tour can ring it before any image is open. A Playwright flow loads a colour image made in the page with a canvas, clicks the colour suggestion's Apply, and checks the pen list and Pen use.
 - **MCP.** `analyse_image`'s description and the instructions say a patch's `pens` apply with `set_pens`.
 - **CLI.** `plotline analyse` prints the new patch with no change.
 
