@@ -368,6 +368,45 @@ def test_a_failed_run_keeps_the_previous_result():
     assert s.state == RunState.error and s.result is first
 
 
+def test_testchart_is_the_result_and_needs_no_image():
+    s = Session()
+    assert s.state is RunState.idle
+    drawing = s.testchart()
+    assert s.state is RunState.done
+    assert s.result is drawing and len(drawing.layers) == 1 and drawing.tone is None
+    assert drawing.layers[0].pen == s.pens[0]
+    assert s.stats().path_count == len(drawing.layers[0].paths) > 0
+    assert s.svg().startswith("<svg")
+    assert "overdraw" in [f["code"] for f in s.lint()]
+    assert s.preview_png(200).startswith(b"\x89PNG")
+
+
+def test_testchart_cancels_a_run_and_a_small_page_leaves_the_result():
+    s = slow(Session(), frames=1000)
+    s.update("b", delay_ms=5)  # slow enough that the run is still going when the chart is made
+    handle = s.run()
+    assert s.state is RunState.running
+    chart = s.testchart()
+    assert handle.wait() is RunState.cancelled and s.result is chart
+    assert s.state is RunState.done
+    s.set_canvas(Canvas(74, 105, 10))
+    s.set_pens([Pen("Fat", 2.0, "#000000")])
+    with pytest.raises(ValueError, match="the page is too small for the test chart"):
+        s.testchart()
+    assert s.result is chart and s.state is RunState.done
+    # A later run takes the state back, and a refused chart leaves a run under way alone.
+    s.update("b", frames=1000)
+    handle = s.run()
+    with pytest.raises(ValueError, match="the page is too small for the test chart"):
+        s.testchart()
+    assert s.state is RunState.running and handle.state is RunState.running
+    handle.cancel()
+    assert handle.wait() is RunState.cancelled and s.state is RunState.cancelled
+    s.update("b", frames=2)
+    s.run_blocking()
+    assert s.state is RunState.done and s.result is not chart
+
+
 def test_cancelled_state_on_cancelled_run():
     s = slow(Session(), frames=5)
     s.subscribe(lambda frame: s.cancel())
@@ -581,6 +620,37 @@ def test_gcode_needs_a_machine_a_result_and_a_page_that_fits(tmp_path):
     with pytest.raises(ValueError, match="larger than the machine's"):
         s.export_gcode(out)
     assert not out.exists()
+
+
+def test_hpgl_is_one_program_with_a_pen_for_each_layer(tmp_path):
+    pens = (Pen("Light 0.3", 0.3, "#808080"), Pen("Dark 0.3", 0.3, "#000000"))
+    s = drawn(*pens, mode="light_to_dark")
+    text = s.hpgl()
+    lines = text.splitlines()
+    assert lines[:2] == ["IN;", "SP1;"] and lines[-2:] == ["PU;", "SP0;"] and "SP2;" in lines
+    assert text == s.hpgl(40.0) and s.hpgl(10) != text
+    # No machine is needed, and the file is ASCII with LF line ends.
+    s.set_machine(None)
+    file = tmp_path / "o.hpgl"
+    s.export_hpgl(file, 20)
+    raw = file.read_bytes()
+    assert raw.decode("ascii") == s.hpgl(20) and b"\r" not in raw
+
+
+def test_hpgl_needs_a_result_and_a_resolution_above_zero(tmp_path):
+    file = tmp_path / "o.hpgl"
+    with pytest.raises(RuntimeError, match="no drawing"):
+        Session().hpgl()
+    with pytest.raises(RuntimeError, match="no drawing"):
+        Session().export_hpgl(file)
+    s = drawn()
+    for bad in (0, -1, 1000.5, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="above 0 and at most 1000"):
+            s.hpgl(bad)
+        with pytest.raises(ValueError, match="above 0 and at most 1000"):
+            s.export_hpgl(file, bad)
+    assert s.hpgl(1000)
+    assert not file.exists()
 
 
 def test_a_preset_with_a_machine_brings_its_speeds(tmp_path):

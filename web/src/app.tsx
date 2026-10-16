@@ -128,11 +128,32 @@ function keepHelp(on: boolean) {
   } catch { /* ignored */ }
 }
 
-type ExportProps = { status: StatusStore; machine: boolean; onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void };
+// The plotter units to the millimetre of the HPGL export, kept like the theme. HPGL's own unit is
+// 0.025 mm, which is 40 to the mm. Missing storage, or a value that is no number above 0, gives 40.
+const HPGL_UNITS = "plotline.hpglUnits";
+const DEFAULT_HPGL_UNITS = 40;
+function savedHpglUnits(): number {
+  try {
+    const n = Number(localStorage.getItem(HPGL_UNITS));
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_HPGL_UNITS;
+  } catch {
+    return DEFAULT_HPGL_UNITS;
+  }
+}
+function keepHpglUnits(n: number) {
+  try {
+    localStorage.setItem(HPGL_UNITS, String(n));
+  } catch { /* ignored */ }
+}
 
-function Export({ status, machine, onExport, onGcode }: ExportProps) {
+type ExportProps = {
+  status: StatusStore; machine: boolean; error?: string;
+  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void; onTestchart: () => void;
+};
+
+function Export({ status, machine, error, onExport, onHpgl, onGcode, onTestchart }: ExportProps) {
   const { stats, layers } = useStatus(status);
-  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onGcode={onGcode} />;
+  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} error={error} onExport={onExport} onHpgl={onHpgl} onGcode={onGcode} onTestchart={onTestchart} />;
 }
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "view" | "onView" | "fits"> & {
@@ -198,8 +219,8 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
       {/* Grouped, so a narrow window wraps whole groups. */}
       <div class="toolbar" id="toolbar" tabIndex={-1}>
         <span class="group" data-tour="image">
-          <label class="button">
-            <ImageUp /> Open image
+          <label class="button" title="Open image">
+            <ImageUp /> <span class="label">Open image</span>
             <input
               class="visually-hidden" type="file" accept={ACCEPT}
               onChange={(e) => {
@@ -209,34 +230,34 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
               }}
             />
           </label>
-          <button type="button" onClick={onSample}><Sparkles /> Sample image</button>
+          <button type="button" title="Sample image" onClick={onSample}><Sparkles /> <span class="label">Sample image</span></button>
         </span>
         <span class="group" data-tour="run">
           <button type="button" class="primary" disabled={!preview.hasImage} onClick={onRun}><Play /> Run</button>
-          <button type="button" disabled={run.state !== "running" || stopping} onClick={() => { setStopFor(run.id); onStop(); }}><Square /> Stop</button>
+          <button type="button" title="Stop" disabled={run.state !== "running" || stopping} onClick={() => { setStopFor(run.id); onStop(); }}><Square /> <span class="label">Stop</span></button>
         </span>
         <span class="group" data-tour="undo">
           <button type="button" class="icon" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!onUndo} onClick={onUndo}><Undo2 /></button>
           <button type="button" class="icon" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!onRedo} onClick={onRedo}><Redo2 /></button>
         </span>
-        <span class="group" data-tour="view">
-          <label class="chip">
+        <span class="group shrink" data-tour="view">
+          <label class="chip" title="Source">
             <input class="visually-hidden" type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.currentTarget.checked)} />
-            <ImageIcon /> Source
+            <ImageIcon /> <span class="label">Source</span>
           </label>
-          <label class="chip">
+          <label class="chip" title="Travel">
             <input class="visually-hidden" type="checkbox" checked={showTravel} onChange={(e) => setShowTravel(e.currentTarget.checked)} />
-            <Route /> Travel
+            <Route /> <span class="label">Travel</span>
           </label>
         </span>
-        <span class="group">
-          <button type="button" title="Show the whole page; 0 does the same with the preview focused" onClick={() => setFits((n) => n + 1)}><Maximize /> Fit page</button>
+        <span class="group shrink">
+          <button type="button" title="Show the whole page; 0 does the same with the preview focused" onClick={() => setFits((n) => n + 1)}><Maximize /> <span class="label">Fit page</span></button>
           <span class="zoom" title="The preview's size against the paper's">{zoomPercent(view.scale)}%</span>
         </span>
-        <span class="group end">
-          <button type="button" disabled={stats === null} onClick={onSvg}><Download /> Export SVG</button>
-          <button type="button" data-tour="machine" onClick={onSettings}><Gear /> Settings</button>
-          <button type="button" onClick={onTour}><CircleHelp /> Tour</button>
+        <span class="group end shrink">
+          <button type="button" title="Export SVG" disabled={stats === null} onClick={onSvg}><Download /> <span class="label">Export SVG</span></button>
+          <button type="button" title="Settings" data-tour="machine" onClick={onSettings}><Gear /> <span class="label">Settings</span></button>
+          <button type="button" title="Tour" onClick={onTour}><CircleHelp /> <span class="label">Tour</span></button>
           <ThemeButton />
         </span>
       </div>
@@ -282,6 +303,7 @@ export function App() {
   const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
   const [hidden, setHidden] = useState(new Set<number>());
   const [help, setHelp] = useState(helpShown);
+  const [hpglUnits, setHpglUnits] = useState(savedHpglUnits);
   const [settingsOpens, setSettingsOpens] = useState(0);
   const [pensOpens, setPensOpens] = useState(0);
   const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
@@ -430,14 +452,7 @@ export function App() {
   }
 
   async function loadPreset(file: File) {
-    let preset: unknown;
-    try {
-      preset = JSON.parse(await file.text());
-    } catch {
-      setErrors((es) => ({ ...es, preset: `${file.name} is not a preset: it is not valid JSON.` }));
-      return;
-    }
-    const warned = await call<string[]>("loadPreset", [preset], "preset");
+    const warned = await call<string[]>("loadPresetText", [await file.text()], "preset");
     // The engine's message names no file, and a refusal is the only way `warned` is undefined.
     if (!warned) setErrors((es) => ({ ...es, preset: es.preset && `Could not load ${file.name} (${es.preset}).` }));
     setWarnings(warned ?? []);
@@ -446,6 +461,11 @@ export function App() {
   async function exportAs(format: "svg" | "json") {
     const text = await call<string>(format);
     if (text !== undefined) download(`plotline-${state?.style ?? "drawing"}.${format}`, text, format === "svg" ? "image/svg+xml" : "application/json");
+  }
+
+  async function exportHpgl() {
+    const text = await call<string>("hpgl", [hpglUnits]);
+    if (text !== undefined) download(`plotline-${state?.style ?? "drawing"}.hpgl`, text, "text/plain");
   }
 
   async function exportGcode(layer: number) {
@@ -551,12 +571,16 @@ export function App() {
         >
           <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
         </PensPanel>
-        <Export status={status} machine={state.machine !== null} onExport={exportAs} onGcode={exportGcode} />
+        <Export
+          status={status} machine={state.machine !== null} error={errors.testchart}
+          onExport={exportAs} onHpgl={exportHpgl} onGcode={exportGcode} onTestchart={() => call("testchart", [], "testchart")}
+        />
         <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
       </aside>
       <SettingsDialog
         opens={settingsOpens} machine={state.machine} error={errors.machine} speeds={state.speeds} onPick={pickMachine}
         onEdit={(m) => call("setMachine", [m], "machine")} onSpeeds={(s) => call("setSpeeds", [s])}
+        hpglUnits={hpglUnits} onHpglUnits={(n) => { setHpglUnits(n); keepHpglUnits(n); }}
       />
       <PensDialog
         opens={pensOpens} pens={state.pens} bank={bank} inks={inks} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}

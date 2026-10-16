@@ -166,6 +166,41 @@ async def test_export_gcode(tmp_path):
         assert "G1 Z4 F1200" in file.read_text(encoding="utf-8")
 
 
+async def test_export_hpgl(tmp_path):
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    out = tmp_path / "o.hpgl"
+    async with Client(build_server(session)) as c:
+        r = await call(c, "export", path=str(out), format="hpgl")
+        assert r.is_error
+        assert "no drawing" in text(r)
+        assert not out.exists()
+
+        settings = {"tone": {"resolution": 64}, "points": {"spacing_mm": 5}}
+        assert not (await call(c, "run", settings=settings)).is_error
+        r = await call(c, "export", path=str(out), format="hpgl")
+        assert not r.is_error, text(r)
+        assert data(r) == {"path": str(out), "format": "hpgl", "bytes": out.stat().st_size}
+        whole = out.read_text(encoding="ascii")
+        assert whole.startswith("IN;\nSP1;\n") and whole.endswith("PU;\nSP0;\n")
+
+        # A file that exists is kept, and the resolution is read.
+        r = await call(c, "export", path=str(out), format="hpgl", units_per_mm=10)
+        assert r.is_error
+        assert "overwrite=true" in text(r)
+        assert out.read_text(encoding="ascii") == whole
+        r = await call(c, "export", path=str(out), format="hpgl", units_per_mm=10, overwrite=True)
+        assert not r.is_error, text(r)
+        assert out.read_text(encoding="ascii") == session.hpgl(10)
+
+        for bad in (0, 1000.5):
+            r = await call(
+                c, "export", path=str(out), format="hpgl", units_per_mm=bad, overwrite=True
+            )
+            assert r.is_error
+            assert "above 0 and at most 1000" in text(r)
+
+
 async def test_file_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -218,6 +253,21 @@ async def test_preset_round_trip_and_warnings(tmp_path):
         assert "bogus" in r["warnings"][0]
 
 
+async def test_load_preset_reads_an_exported_svg(tmp_path):
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    svg = tmp_path / "o.svg"
+    async with Client(build_server(session)) as c:
+        await call(c, "set_page", width_mm=100, height_mm=75, margin_mm=5)
+        await call(c, "run", settings={"tone": {"resolution": 64}})
+        await call(c, "export", path=str(svg), format="svg")
+    async with Client(build_server(Session())) as c:
+        r = data(await call(c, "load_preset", path=str(svg)))
+        assert r == {"style": "grid", "warnings": []}
+        s = data(await call(c, "get_session"))
+        assert s["settings"]["tone"]["resolution"] == 64 and s["page"]["width_mm"] == 100
+
+
 def png(block):
     return base64.b64decode(block.data)
 
@@ -247,6 +297,24 @@ async def test_run_and_preview(tmp_path):
             out = tmp_path / f"o.{format}"
             assert not (await call(c, "export", path=str(out), format=format)).is_error
             assert out.read_bytes().startswith(start)
+
+
+async def test_testchart_draws_without_an_image_and_a_small_page_is_an_error():
+    session = Session()
+    async with Client(build_server(session)) as c:
+        r = await call(c, "testchart")
+        assert not r.is_error
+        stats = json.loads(r.content[0].text)
+        assert stats["path_count"] > 0
+        assert "overdraw" in [f["code"] for f in stats["lint"]]
+        assert png(r.content[1]).startswith(b"\x89PNG")
+        assert session.result is not None
+        # The chart is the result, so the exports work.
+        assert data(await call(c, "get_session"))["stats"]["path_count"] == stats["path_count"]
+        await call(c, "set_page", width_mm=74, height_mm=105)
+        await call(c, "set_pens", pens=[{"name": "Fat", "width_mm": 2, "color": "black"}])
+        r = await call(c, "testchart")
+        assert r.is_error and "the page is too small for the test chart" in text(r)
 
 
 async def test_fit_returns_the_value_and_the_curve():
@@ -542,6 +610,7 @@ async def test_stdio_server_lists_the_tools():
         "set_pens",
         "set_machine",
         "run",
+        "testchart",
         "fit",
         "optimize",
         "preview",

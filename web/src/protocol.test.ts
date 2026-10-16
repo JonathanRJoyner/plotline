@@ -102,6 +102,30 @@ test("a bad preset changes nothing", () => {
   expect(pick(ok("preset").state)).toEqual(pick(before));
 });
 
+test("loadPresetText reads a preset, an exported SVG and an exported JSON drawing, and redraws", async () => {
+  const { call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("setStyle", "hatch");
+  await ended(2);
+  ok("update", "hatch", { spacing_mm: 2.5 });
+  await ended(3);
+  const files = [JSON.stringify(ok("preset").value), ok("svg").value as string, ok("json").value as string];
+  let run = 3;
+  for (const text of files) {
+    ok("setStyle", "grid");
+    await ended(++run);
+    const reply = ok("loadPresetText", text);
+    expect(reply.state.style).toBe("hatch");
+    expect((reply.state.settings as { hatch: { spacing_mm: number } }).hatch.spacing_mm).toBe(2.5);
+    expect(reply.state.run.state).toBe("running");
+    await ended(++run);
+  }
+  const refusal = (text: string) => { const r = call("loadPresetText", text); return r.ok ? null : r.error; };
+  expect(refusal("plain words")).toBe("not a preset: it is neither JSON nor an SVG");
+  expect(refusal("<svg></svg>")).toBe("this SVG carries no plotline preset");
+});
+
 test("a bad pen is refused", () => {
   const { call, ok } = setup();
   const before = ok("preset").state.pens;
@@ -147,6 +171,46 @@ test("cancel stops the current run", async () => {
   expect(posted.filter((m) => m.type === "end")).toEqual([expect.objectContaining({ id: 1, state: "cancelled" })]);
 });
 
+test("testchart posts the events of a finished run, and the next run replaces the chart", async () => {
+  const { posted, ok, ended } = setup();
+  const { state } = ok("testchart"); // no image is needed
+  expect(state.run).toEqual({ id: 1, state: "done", error: null });
+  expect(state.stats!.path_count).toBeGreaterThan(0);
+  expect(state.lint.map((f) => f.code)).toContain("overdraw");
+  expect(state.layers).toHaveLength(1);
+  await ended(1);
+  expect(posted.filter((m) => "type" in m).map((m) => m.type)).toEqual(["run", "result", "end"]);
+  expect(posted.find((m) => m.type === "end")).toEqual(expect.objectContaining({ id: 1, state: "done", fit: null }));
+  expect(ok("svg").value as string).toContain("<svg");
+  ok("setImage", ...image());
+  await ended(2);
+  expect(posted.some((m) => m.type === "result" && m.id === 2)).toBe(true);
+});
+
+test("a testchart in the middle of a run cancels it", async () => {
+  let sent = false;
+  const { posted, ok, ended } = setup((m, call) => { if (m.type === "frame" && !sent) { sent = true; expect(call("testchart").ok).toBe(true); } });
+  ok("setImage", ...image());
+  await ended(1);
+  expect(posted.find((m) => m.type === "end" && m.id === 1)).toEqual(expect.objectContaining({ state: "cancelled" }));
+  expect(posted.some((m) => m.type === "result" && m.id === 2)).toBe(true);
+  expect(posted.some((m) => m.type === "result" && m.id === 1)).toBe(false);
+});
+
+test("a test chart that does not fit is refused and the drawing stays", () => {
+  const { posted, call, ok } = setup();
+  ok("testchart");
+  const stats = ok("preset").state.stats;
+  ok("setCanvas", { width_mm: 74, height_mm: 105, margin_mm: 10, fit: "fit" });
+  ok("setPens", [{ name: "Fat", width_mm: 2, color: "#000000" }]);
+  const before = posted.length;
+  const refused = call("testchart");
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toContain("the page is too small for the test chart");
+  expect(posted.length).toBe(before + 1); // the refusal, and no run events
+  expect(ok("preset").state.stats).toEqual(stats);
+});
+
 test("listPens gives the bank", () => {
   const { ok } = setup();
   const pens = ok("listPens").value as Pen[];
@@ -189,6 +253,20 @@ test("gcode needs a drawing, whose layers the state lists", async () => {
   await ended(1);
   expect(ok("preset").state.layers.map((p) => p.name)).toEqual(["Black 0.3"]);
   expect(ok("gcode", 0).value as string).toContain("G1 Z4 F1200");
+});
+
+test("hpgl needs a drawing but no machine, and a resolution above 0", async () => {
+  const { call, ok, ended } = setup();
+  ok("setCanvas", { width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" });
+  expect(call("hpgl", 40).ok).toBe(false);
+  ok("update", "tone", { resolution: 64 });
+  ok("setImage", ...image());
+  await ended(1);
+  const text = ok("hpgl", 40).value as string;
+  expect(text.startsWith("IN;\nSP1;\nPU")).toBe(true);
+  expect(text.endsWith("PU;\nSP0;\n")).toBe(true);
+  expect(ok("hpgl", 10).value).not.toBe(text);
+  expect(call("hpgl", 0).ok).toBe(false);
 });
 
 test("the lint findings come with the end event and the state, and their patches apply", async () => {

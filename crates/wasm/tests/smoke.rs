@@ -58,6 +58,12 @@ fn grid_matches_the_golden_file() {
             assert!((va.as_f64().unwrap() - ve.as_f64().unwrap()).abs() <= 1e-3);
         }
     }
+    // The exported SVG holds the run's preset.
+    let svg = s.svg().unwrap();
+    let preset: serde_json::Value =
+        serde_json::from_str(&plotline_wasm::preset_from_text(&svg).unwrap()).unwrap();
+    assert_eq!(preset["style"], "grid");
+    assert_eq!(preset["settings"]["points"]["spacing_mm"], 2.0);
 }
 #[wasm_bindgen_test]
 fn stipple_matches_the_golden_file() {
@@ -155,6 +161,21 @@ fn machines_and_gcode() {
     assert!(g.contains("G1 Z4 F1200") && g.contains("G1 Z20 F1200"));
     s.set_machine("null").unwrap();
     assert!(s.machine().is_none());
+}
+#[wasm_bindgen_test]
+fn hpgl_is_one_program_without_a_machine() {
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(64, 48, &plotline_wasm::synthetic_gradient(64, 48))
+        .unwrap();
+    s.set_canvas(r#"{"width_mm":100,"height_mm":75,"margin_mm":5,"fit":"fit"}"#)
+        .unwrap();
+    s.update("tone", r#"{"resolution":64}"#).unwrap();
+    assert!(s.hpgl(40.0).is_err());
+    let mut run = s.start().unwrap();
+    while run.next_frame().is_some() {}
+    let h = s.hpgl(40.0).unwrap();
+    assert!(h.starts_with("IN;\nSP1;\nPU") && h.ends_with("PU;\nSP0;\n"));
+    assert!(s.hpgl(0.0).is_err());
 }
 #[wasm_bindgen_test]
 fn still_life_analysis_matches_native() {

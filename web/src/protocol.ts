@@ -1,8 +1,8 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
-import { describe, listInks, listPens, listStyles, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
-import { drive, free, macrotask } from "./driver";
+import { describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
+import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
@@ -29,7 +29,7 @@ export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
 // The commands that change what a drawing is made from: each one redraws once it succeeds.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "apply", "restore"]);
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
 // A trap: a panic or memory running out aborts the call with a `RuntimeError`, and a stack
@@ -57,6 +57,7 @@ export class Protocol {
       listInks: () => JSON.parse(listInks()),
       setMachine: (machine: Machine | null) => s().setMachine(JSON.stringify(machine)),
       gcode: (layer: number) => s().gcode(layer),
+      hpgl: (unitsPerMm: number) => s().hpgl(unitsPerMm),
       describe: (name: string) => JSON.parse(describe(name)),
       setImageBytes: (bytes: Uint8Array) => this.setSource((t) => t.setImageBytes(bytes)),
       setImage: (width: number, height: number, rgb: Float32Array) => this.setSource((t) => t.setImage(width, height, rgb)),
@@ -83,8 +84,18 @@ export class Protocol {
       // The settings stay as they are, and the page only offers what the search found.
       optimize: (metric?: string, target?: number) => this.start(() => s().optimize(metric ?? null, target ?? null), "optimize"),
       cancel: () => this.current?.cancel(),
+      // The calibration chart for the page and the first pen. The engine cancels the run, and the
+      // events a finished run posts follow the reply. A refusal changes nothing.
+      testchart: () => {
+        s().testchart();
+        const id = ++this.counter;
+        this.current = null;
+        this.go = () => postDone(s(), id, this.post);
+      },
       preset: () => JSON.parse(s().preset()),
       loadPreset: (preset: unknown) => s().loadPreset(JSON.stringify(preset)),
+      // The text of a preset file, an exported SVG or an exported JSON drawing.
+      loadPresetText: (text: string) => s().loadPreset(presetFromText(text)),
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
       restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
       // Draws every style after the reply, which carries the id its `thumb` events will have.

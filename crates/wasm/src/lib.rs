@@ -12,8 +12,8 @@ use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::machine::Machine;
 use plotline_core::runner::Shared;
 use plotline_core::{
-    image, pens, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen, RunState,
-    SessionError, DEFAULT_CACHE_BYTES,
+    image, pens, presets, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen,
+    RunState, SessionError, DEFAULT_CACHE_BYTES,
 };
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -126,6 +126,12 @@ impl Session {
         Ok(self.inner.gcode(layer)?)
     }
 
+    /// The last finished drawing as one HPGL program with `unitsPerMm` plotter units to the
+    /// millimetre, above 0 and at most 1000.
+    pub fn hpgl(&self, units_per_mm: f64) -> Result<String, JsError> {
+        Ok(self.inner.hpgl(units_per_mm)?)
+    }
+
     /// Switch to the built-in style `name`; a stage the old style also has keeps the values the
     /// user changed, and everything else takes the new style's defaults.
     #[wasm_bindgen(js_name = setStyle)]
@@ -189,6 +195,12 @@ impl Session {
         Ok(Run {
             inner: Box::new(self.inner.fit(metric, target)?),
         })
+    }
+
+    /// Cancel the latest run and make the test chart for the page and the first pen the latest
+    /// drawing, finished. Needs no image. Fails when the chart does not fit the page.
+    pub fn testchart(&mut self) -> Result<(), JsError> {
+        Ok(self.inner.testchart()?)
     }
 
     /// Cancel the latest run and start a search of the style's density setting for the value
@@ -504,6 +516,13 @@ pub fn describe(name: &str) -> Result<String, JsError> {
     let style =
         registry::get_style(name).ok_or_else(|| SessionError::UnknownStyle(name.to_string()))?;
     Ok(style.schema().to_string())
+}
+
+/// The preset in `text`, as JSON: a preset file, an exported SVG or an exported JSON drawing; see
+/// [`presets::from_text`].
+#[wasm_bindgen(js_name = presetFromText)]
+pub fn preset_from_text(text: &str) -> Result<String, JsError> {
+    Ok(presets::from_text(text)?.to_string())
 }
 
 /// A `w` by `h` left-to-right gradient as RGB floats; see [`synthetic::gradient`].

@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::cache::StageCache;
+use crate::presets;
 use crate::response::{self, Prelude};
 use crate::settings::merge;
 use crate::stage::{
@@ -516,10 +517,14 @@ impl Run {
                 Artifact::Tone(t) => Some(self.source.clone().unwrap_or_else(|| t.clone())),
                 _ => None,
             });
+        // The run's own snapshot, not the session's state, which may have moved on; it holds no
+        // machine, so the session fills that in when it exports.
+        let preset = presets::to_value(&self.style.name, canvas, pens, None, &self.settings);
         Ok(Drawing {
             canvas: Canvas::clone(canvas),
             layers,
             tone,
+            preset: Some(preset),
         })
     }
 

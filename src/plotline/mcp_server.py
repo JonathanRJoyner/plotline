@@ -46,7 +46,8 @@ INSTRUCTIONS = (
     "budget of plot time, paths, pen-down metres or dots, call fit, which sets the style's "
     "density setting. To make the drawing's tones follow the image more closely, call optimize, "
     "which suggests a density, or set tone.response to auto. Use preview with region_mm to "
-    "inspect detail. export writes the result. set_machine describes a pen plotter or "
+    "inspect detail. export writes the result. testchart draws a calibration chart for the "
+    "first pen, to plot and compare by eye. set_machine describes a pen plotter or "
     "pen-fitted printer; export with gcode then writes one file per pen. All lengths are "
     "millimetres, the page origin is its top-left corner and y grows down. Paths must be "
     "absolute."
@@ -345,6 +346,19 @@ def build_server(session: Session | None = None) -> MCPServer:
             return shown()
 
     @server.tool()
+    async def testchart() -> list[str | Image]:
+        """Draw a test chart for the page and the first pen and return the stats as JSON, with
+        the lint, and a preview, as run does. It needs no image and replaces the result. Plot it
+        and compare by eye. SPACING MM shows lines at 0.5 to 4 pen widths apart, to see where
+        they merge. DOT MM shows grids of dots 1 to 6 pen widths wide, to see how big a dot
+        really comes out. PASSES draws a solid fill 1 to 8 times over, to see how many passes the
+        paper takes; the lint reports overdraw on it by design. The stats' plot time is the
+        estimate to check against a stopwatch. Fails when the page is too small."""
+        with _errors():
+            session.testchart()
+            return shown()
+
+    @server.tool()
     async def fit(
         ctx: Context,
         metric: Literal["minutes", "paths", "metres", "dots"],
@@ -443,8 +457,9 @@ def build_server(session: Session | None = None) -> MCPServer:
 
     @server.tool()
     async def load_preset(path: str) -> dict[str, Any]:
-        """Load the preset file at the absolute path, which replaces the style, page, pens and
-        settings. Settings that the style does not have are dropped and named in the warnings."""
+        """Load the preset at the absolute path, which replaces the style, page, pens and settings.
+        The file is a saved preset, an exported SVG or an exported JSON drawing. Settings that the
+        style does not have are dropped and named in the warnings."""
         with _errors(), warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             session.load_preset(_absolute(path))
@@ -453,15 +468,19 @@ def build_server(session: Session | None = None) -> MCPServer:
     @server.tool()
     async def export(
         path: str,
-        format: Literal["svg", "json", "png", "preset", "gcode"],
+        format: Literal["svg", "json", "png", "preset", "gcode", "hpgl"],
         overwrite: bool = False,
+        units_per_mm: float = 40.0,
     ) -> dict[str, Any]:
-        """Write the result as svg, json (the paths) or png (a preview), or the settings as a
-        preset, to the absolute path. A file that exists is kept unless overwrite is true. With
-        format gcode the path is a folder, made if it is missing, and the result is written into
-        it as one file per pen, plot_1_<pen>.gcode and so on, for the machine from set_machine;
-        if any of those files exists, none is written unless overwrite is true. Returns the path
-        and size of each file for gcode, and the size of the file for the other formats."""
+        """Write the result as svg, json (the paths), png (a preview) or hpgl (one plotter file,
+        with a pen selected for each layer), or the settings as a preset, to the absolute path.
+        units_per_mm is the plotter units to the millimetre of hpgl, above 0 and at most 1000,
+        40 for most plotters, and no other format reads it. A file that exists is kept unless
+        overwrite is true. With format gcode the path is a folder, made if it is missing, and the
+        result is written into it as one file per pen, plot_1_<pen>.gcode and so on, for the
+        machine from set_machine; if any of those files exists, none is written unless overwrite
+        is true. Returns the path and size of each file for gcode, and the size of the file for
+        the other formats."""
         with _errors():
             p = _absolute(path)
             if format == "gcode":
@@ -474,6 +493,8 @@ def build_server(session: Session | None = None) -> MCPServer:
                 session.export_svg(p)
             elif format == "json":
                 session.export_json(p)
+            elif format == "hpgl":
+                session.export_hpgl(p, units_per_mm)
             elif format == "png":
                 p.write_bytes(session.preview_png(_page_px(session)))
             else:

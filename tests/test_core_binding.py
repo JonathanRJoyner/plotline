@@ -20,6 +20,9 @@ def test_session_runs_grid_and_exposes_drawing():
     assert d["layers"][0]["coords"].dtype == np.float64 and d["layers"][0]["offsets"][0] == 0
     assert s.svg().startswith("<svg") and s.json()["format"] == "plotline-paths"
     assert s.preview_png(100, False, False)[:4] == b"\x89PNG"
+    assert s.hpgl(40.0).startswith("IN;\nSP1;\n")
+    with pytest.raises(ValueError, match="above 0"):
+        s.hpgl(0.0)
 
 
 def test_validation_errors_are_value_errors():
