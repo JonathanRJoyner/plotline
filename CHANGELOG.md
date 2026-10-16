@@ -37,7 +37,7 @@ A style switch keeps the settings you changed in the stages both styles share, P
 ### Output
 
 - SVG in millimetres with one group per pen layer, a plain JSON paths format, and PNG previews drawn at the real pen width.
-- **A G-code adapter** writes one file per pen for a machine the user describes: its drawable area, pen heights, feeds, and start and end G-code. A pen lifted by a servo or a solenoid takes the machine's own pen-down and pen-up lines in place of Z moves, and a longest move cuts straight moves into short pieces for firmware that would draw a long one as a curve, as on a hanging plotter. Nothing is built in for any particular machine.
+- **A G-code adapter** writes one file per pen for a machine the user describes: its drawable area, pen heights, feeds, and start and end G-code. Nothing is built in for any particular machine.
 - **Presets, version 3:** a JSON file with the style, page, pens, settings and machine. Version 1 and 2 files migrate on load.
 
 ### Front ends
