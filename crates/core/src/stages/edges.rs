@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(DelaunayRenderer.requires(), &[Kind::Points]);
         assert_eq!(CellsRenderer.requires(), &[Kind::Points, Kind::Tone]);
         assert!(MstRenderer.schema()["properties"].is_null());
-        assert!(CellsRenderer.schema()["properties"].is_null());
+        assert!(CellsRenderer.schema()["properties"]["max_edge_mm"].is_object());
     }
 
     #[test]
@@ -502,7 +502,7 @@ mod tests {
         // The flat triangle (10, 10), (50, 10), (30, 11) has its circumcentre at y = -189.5, far
         // above the rect on the page, so the two Voronoi edges that reach it are cut at y = 10.
         let points = vec![[10.0, 10.0], [50.0, 10.0], [30.0, 11.0], [30.0, 49.0]];
-        let paths = run(&CellsRenderer, points, json!({}));
+        let paths = run(&CellsRenderer, points, json!({"max_edge_mm": 50.0}));
         assert_inside(&paths, RECT);
         let cut = paths.coords().iter().filter(|p| (p[1] - 10.0).abs() < 1e-9);
         assert_eq!(cut.count(), 2);

@@ -1677,7 +1677,7 @@ mod tests {
         // built-in blue's hex: the audit's case, which used to add a blue pen to a blue pen.
         let image = painted(200, 120, |u, v| {
             let ridge = 0.6 - 0.3 * ((u * 2.0).fract() * 2.0 - 1.0).abs();
-            if (u - 0.7).powi(2) + (v - 0.3).powi(2) < 0.15 * 0.15 {
+            if (u - 0.7) * (u - 0.7) + (v - 0.3) * (v - 0.3) < 0.15 * 0.15 {
                 Some([0.94, 0.49, 0.10])
             } else if v > ridge {
                 Some([0.03, 0.32, 0.18])
