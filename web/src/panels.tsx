@@ -1,21 +1,27 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
 import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Optimum, Pen, Stats, ToneMatch } from "./events";
+import { download } from "./files";
+import { lengthText, pathsText } from "./format";
+import { addPen, libraryFile, mergeLibraries, parseLibrary, removePen, samePen, usable } from "./library";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 import { controlsFor } from "./schema";
 import { place } from "./tour";
+import { onPaper } from "./view";
 
 const SIZES: [string, number, number][] = [
   ["A5", 148, 210], ["A4", 210, 297], ["A3", 297, 420], ["Letter", 215.9, 279.4], ["Tabloid", 279.4, 431.8],
 ];
 const near = (a: number, b: number) => Math.abs(a - b) <= 0.05;
 
-export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?: string; onChange: (canvas: Canvas) => void }): JSX.Element {
+type PageProps = { canvas: Canvas; paper: string; error?: string; onChange: (canvas: Canvas) => void; onPaper: (color: string) => void };
+
+export function PagePanel({ canvas, paper, error, onChange, onPaper }: PageProps): JSX.Element {
   const { width_mm: w, height_mm: h } = canvas;
   const size = SIZES.find(([, a, b]) => (near(a, w) && near(b, h)) || (near(a, h) && near(b, w)));
   const set = (patch: Partial<Canvas>) => onChange({ ...canvas, ...patch });
@@ -56,14 +62,24 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
             <option value="fill">fill</option>
           </select>
         </label>
+        <label>
+          Paper
+          {/* onChange fires when the picker closes, so one pick is one undo step. */}
+          <input type="color" value={paper} onChange={(e) => onPaper(e.currentTarget.value)} />
+        </label>
       </div>
+      {canvas.crop?.some((share) => share > 0) && (
+        <p class="crop">Cropped <button type="button" onClick={() => set({ crop: [0, 0, 0, 0] })}>Remove crop</button></p>
+      )}
       {error && <p class="error">{error}</p>}
     </fieldset>
   );
 }
 
-// What the engine suggests for the image: each reason, with an Apply button when it has a change to make.
-export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions: Suggestion[]; error?: string; onApply: (patch: Patch) => void }): JSX.Element {
+// What the engine suggests for the image: each reason, with an Apply button when it has a change to
+// make and a button that hides it.
+type SuggestionsProps = { suggestions: Suggestion[]; error?: string; onApply: (patch: Patch) => void; onDismiss: (kind: string) => void };
+export function SuggestionsPanel({ suggestions, error, onApply, onDismiss }: SuggestionsProps): JSX.Element {
   return (
     <fieldset>
       <legend>Suggestions</legend>
@@ -74,7 +90,10 @@ export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions:
           return (
             <li key={s.kind}>
               <p>{s.reason}</p>
-              {p && <button type="button" aria-label={`Apply: ${s.reason}`} onClick={() => onApply(p)}><Check /> Apply</button>}
+              <div class="buttons">
+                {p && <button type="button" aria-label={`Apply: ${s.reason}`} onClick={() => onApply(p)}><Check /> Apply</button>}
+                <button type="button" class="icon" title="Dismiss" aria-label={`Dismiss: ${s.reason}`} onClick={() => onDismiss(s.kind)}><X /></button>
+              </div>
             </li>
           );
         })}
@@ -86,13 +105,14 @@ export function SuggestionsPanel({ suggestions, error, onApply }: { suggestions:
 
 type PensProps = {
   pens: Pen[]; hidden: Set<number>; error?: string;
-  onEdit: () => void; onToggle: (index: number) => void;
+  onEdit: () => void; onToggle: (index: number) => void; onTestchart: () => void;
   // Shown right after the pen list: the Pen use setting.
   children?: ComponentChildren;
 };
 
-// The pens as a short list with their preview toggles; they are edited in the pens dialog.
-export function PensPanel({ pens, hidden, error, onEdit, onToggle, children }: PensProps): JSX.Element {
+// The pens as a short list with their preview toggles; they are edited in the pens dialog. The test
+// chart replaces the drawing with a calibration page for the first pen, so it needs no image.
+export function PensPanel({ pens, hidden, error, onEdit, onToggle, onTestchart, children }: PensProps): JSX.Element {
   return (
     <fieldset data-tour="pens">
       <legend>Pens</legend>
@@ -108,6 +128,7 @@ export function PensPanel({ pens, hidden, error, onEdit, onToggle, children }: P
       {children}
       {hidden.size > 0 && <p class="help">A hidden pen is only hidden in the preview: it still exports.</p>}
       <button type="button" onClick={onEdit}><PenLine /> Edit pens</button>
+      <button type="button" data-tour="testchart" title="Replace the drawing with a page of labelled test patches for the first pen" onClick={onTestchart}><Ruler /> Test chart</button>
     </fieldset>
   );
 }
@@ -136,7 +157,7 @@ function Modal({ opens, title, icon, wide, onClose, children }: ModalProps): JSX
 
 export type Thumb = { url: string | null; error: string | null };
 type StylesDialogProps = {
-  opens: number; styles: Array<{ name: string; label: string; description: string }>; style: string; canvas: Canvas;
+  opens: number; styles: Array<{ name: string; label: string; description: string }>; style: string; canvas: Canvas; paper: string;
   thumbs: Record<string, Thumb>; onPick: (style: string) => void; onClose: () => void;
 };
 
@@ -149,7 +170,7 @@ const FRAME = { w: 14, h: 36 };
 // (spec 2026-10-15-try-styles-and-undo section 2). The pictures arrive one by one; closing stops them.
 // Pointing at a cell, or tabbing to it, shows its picture enlarged beside it, inside the dialog. The
 // enlargement takes no clicks, and a touch shows none, so a tap still picks.
-export function StylesDialog({ opens, styles, style, canvas, thumbs, onPick, onClose }: StylesDialogProps): JSX.Element {
+export function StylesDialog({ opens, styles, style, canvas, paper, thumbs, onPick, onClose }: StylesDialogProps): JSX.Element {
   const [zoom, setZoom] = useState<{ name: string; label: string; left: number; top: number; width: number } | null>(null);
   const ratio = canvas.width_mm / canvas.height_mm;
   const show = (name: string, label: string, cell: HTMLElement) => {
@@ -177,7 +198,7 @@ export function StylesDialog({ opens, styles, style, canvas, thumbs, onPick, onC
                 onFocus={(e) => e.currentTarget.matches(":focus-visible") && show(s.name, s.label, e.currentTarget)}
                 onBlur={hide}
               >
-                <span class="paper" style={{ aspectRatio: `${canvas.width_mm} / ${canvas.height_mm}` }}>
+                <span class="paper" style={{ aspectRatio: `${canvas.width_mm} / ${canvas.height_mm}`, background: paper, color: onPaper(paper) }}>
                   {t?.url ? <img src={t.url} alt="" /> : <span>{t?.error ?? "Drawing…"}</span>}
                 </span>
                 {s.label}
@@ -196,23 +217,50 @@ export function StylesDialog({ opens, styles, style, canvas, thumbs, onPick, onC
   );
 }
 
-type PensDialogProps = { opens: number; pens: Pen[]; bank: BankPen[]; inks: Ink[]; error?: string; onChange: (pens: Pen[]) => void };
+type PensDialogProps = {
+  opens: number; pens: Pen[]; bank: BankPen[]; inks: Ink[]; error?: string; onChange: (pens: Pen[]) => void;
+  /** My pens, the saved pen library, and where a changed one goes. */
+  library: Pen[]; onLibrary: (library: Pen[]) => void;
+};
 
 // Your pens in drawing order on the left, the chosen one's name, width and colour on the right,
-// and the pen bank under them to give it a maker's pen. Changes apply as they are made.
-export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDialogProps): JSX.Element {
+// and under them your saved pens and the pen bank to give it a pen. Changes apply as they are made.
+export function PensDialog({ opens, pens, bank, inks, error, onChange, library, onLibrary }: PensDialogProps): JSX.Element {
   const [chosen, choose] = useState(0);
   const [kind, setKind] = useState("");
   const [query, setQuery] = useState("");
+  const [importError, setImportError] = useState<string>();
   const i = Math.min(chosen, pens.length - 1); // the list can shrink under it, as on a refused change
   const pen = pens[i];
-  const set = (patch: Partial<Pen>) => onChange(pens.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  // The list the dialog last sent, which the prop catches up with on the reply, so a second edit made
+  // before it builds on the first rather than undoing it.
+  const latest = useRef(pens);
+  useEffect(() => { latest.current = pens; }, [pens]);
+  const send = (list: Pen[]) => { latest.current = list; onChange(list); };
+  const set = (patch: Partial<Pen>) => send(latest.current.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   // Puts `list` in place and chooses the pen at `next`.
-  const put = (list: Pen[], next: number) => { onChange(list); choose(next); };
+  const put = (list: Pen[], next: number) => { send(list); choose(next); };
   const move = (by: number) => {
-    const list = [...pens];
+    const list = [...latest.current];
+    if (!list[i] || !list[i + by]) return; // the sent list is shorter than the one shown
     [list[i], list[i + by]] = [list[i + by], list[i]];
     put(list, i + by);
+  };
+  const keep = onLibrary;
+  // Merges the pens of a library file in, or says why it cannot.
+  const importFile = async (file: File) => {
+    let value: unknown;
+    try {
+      value = JSON.parse(await file.text());
+    } catch {
+      return setImportError(`${file.name} is not a pen library: it is not valid JSON.`);
+    }
+    try {
+      keep(mergeLibraries(library, parseLibrary(value)));
+      setImportError(undefined);
+    } catch (e) {
+      setImportError(`${file.name} could not be imported (${(e as Error).message}).`);
+    }
   };
   const kinds = [...new Set(bank.map((p) => p.kind))];
   const groups = filterBank(bank, kind, query);
@@ -232,12 +280,12 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
           ))}
         </ol>
         <div class="actions">
-          <button type="button" class="icon" title="Add pen" aria-label="Add pen" onClick={() => put([...pens, { name: `Pen ${pens.length + 1}`, width_mm: 0.3, color: "#000000" }], pens.length)}><Plus /></button>
-          <button type="button" class="icon" title="Duplicate pen" aria-label="Duplicate pen" onClick={() => put([...pens.slice(0, i + 1), { ...pen }, ...pens.slice(i + 1)], i + 1)}><Copy /></button>
+          <button type="button" class="icon" title="Add pen" aria-label="Add pen" onClick={() => put([...latest.current, { name: `Pen ${latest.current.length + 1}`, width_mm: 0.3, color: "#000000" }], latest.current.length)}><Plus /></button>
+          <button type="button" class="icon" title="Duplicate pen" aria-label="Duplicate pen" onClick={() => put([...latest.current.slice(0, i + 1), { ...(latest.current[i] ?? pen) }, ...latest.current.slice(i + 1)], i + 1)}><Copy /></button>
           <button type="button" class="icon" title="Move up: draws earlier" aria-label="Move up" disabled={i === 0} onClick={() => move(-1)}><ArrowUp /></button>
           <button type="button" class="icon" title="Move down: draws later" aria-label="Move down" disabled={i === pens.length - 1} onClick={() => move(1)}><ArrowDown /></button>
           {/* The session refuses an empty pen list. */}
-          <button type="button" class="icon" title="Remove pen" aria-label="Remove pen" disabled={pens.length === 1} onClick={() => put(pens.filter((_, j) => j !== i), Math.max(0, i - 1))}><X /></button>
+          <button type="button" class="icon" title="Remove pen" aria-label="Remove pen" disabled={pens.length === 1} onClick={() => put(latest.current.filter((_, j) => j !== i), Math.max(0, i - 1))}><X /></button>
         </div>
         <p class="help">Pens plot in this order, and with Pen use set to one pen the first draws alone. List light inks first.</p>
       </nav>
@@ -255,6 +303,41 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
             />
           ))}
           <input type="color" title="Any colour" aria-label="Any colour" value={pen.color} onChange={(e) => set({ color: e.currentTarget.value })} />
+        </div>
+        <div data-tour="library">
+          <h3>My pens</h3>
+          <p class="help">Pens you save stay in this browser. Choosing one gives this pen its name, line width and colour. A colour image's suggested pens come from them.</p>
+          {library.length === 0 ? <p class="help">No saved pens yet. Save this pen keeps the pen above for next time.</p> : (
+            <ul class="library">
+              {library.map((p, j) => (
+                <li>
+                  <button type="button" aria-pressed={samePen(p, pen)} onClick={() => set({ name: p.name, width_mm: p.width_mm, color: p.color })}>
+                    <span class="swatch" style={{ background: p.color }} />
+                    <span class="name">{p.name}</span>
+                    <span class="muted">{p.width_mm}</span>
+                  </button>
+                  <button type="button" class="icon" title="Remove from my pens" aria-label={`Remove ${p.name} from my pens`} onClick={() => keep(removePen(library, j))}><X /></button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div class="actions">
+            {/* A pen the file could not read back stays out, such as one with no name. */}
+            <button type="button" disabled={!usable(pen) || library.some((p) => samePen(p, pen))} onClick={() => keep(addPen(library, { name: pen.name, width_mm: pen.width_mm, color: pen.color }))}><BookmarkPlus /> Save this pen</button>
+            <button type="button" disabled={library.length === 0} onClick={() => download("plotline-pens.json", libraryFile(library), "application/json")}><Download /> Export</button>
+            <label class="button">
+              <FolderOpen /> Import
+              <input
+                class="visually-hidden" type="file" accept="application/json,.json"
+                onChange={(e) => {
+                  const file = e.currentTarget.files?.[0];
+                  e.currentTarget.value = ""; // so the same file can be imported again
+                  if (file) void importFile(file);
+                }}
+              />
+            </label>
+          </div>
+          {importError && <p class="error">{importError}</p>}
         </div>
         <h3>Pen bank</h3>
         <p class="help">Choosing a size gives this pen its name and line width, as the maker publishes it. The colour stays.</p>
@@ -293,7 +376,7 @@ export function StatsPanel({ stats, tone }: { stats: Stats | null; tone: ToneMat
   if (stats.path_count === 0) return <p class="stats">No marks at these settings.</p>;
   return (
     <p class="stats">
-      {stats.path_count} paths · pen down {stats.pen_down_mm.toFixed(1)} mm · pen up {stats.pen_up_mm.toFixed(1)} mm
+      {pathsText(stats.path_count)} · pen down {lengthText(stats.pen_down_mm)} · pen up {lengthText(stats.pen_up_mm)}{" "}
       · about {Math.floor(t / 60)} min {t % 60} s to plot
       {tone && (
         <span title="How far the drawing's tones are from the image's, seen from a metre or two: the tone error is in the image's own ink, 0 for a perfect match, and SSIM compares their shapes, 1 for identical.">
@@ -333,15 +416,26 @@ const UNITS = [["minutes", "min"], ["paths", "paths"], ["metres", "m"], ["dots",
 const FIT_TOLERANCE = 0.02;
 
 type FitProps = {
-  disabled: boolean; error?: string; fitted: FitResult | null; optimum: Optimum | null;
+  disabled: boolean; error?: string; fitted: FitResult | null; optimum: Optimum | null; settings: State["settings"];
   stages: { name: string; label: string; schema: Record<string, unknown> }[];
   onFit: (metric: string, target: number) => void; onOptimize: (metric?: string, target?: number) => void; onApply: (patch: Patch) => void;
 };
 
 // A budget: a target in one of the units, which Fit meets by changing the style's density setting.
-export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
+// What a fit or a search says holds only for the settings it was made with, so it shows while they do.
+export function FitPanel({ disabled, error, fitted, optimum, settings, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
   const [target, setTarget] = useState("");
   const [metric, setMetric] = useState("minutes");
+  // Closed until the first need, so the stats lead; a result or an error opens it so none is hidden, and nothing closes it again.
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (error || fitted || optimum) setOpen(true); }, [error, fitted, optimum]);
+  // A fit applies its value, so its message shows once the setting holds it and while it still does.
+  const fit = fitted && settings[fitted.stage]?.[fitted.key] === fitted.value ? fitted : null;
+  // A search applies nothing, so its suggestion shows while the settings are those of the render it arrived in.
+  const now = JSON.stringify(settings);
+  const arrival = useRef<{ optimum: Optimum | null; settings: string }>({ optimum: null, settings: "" });
+  if (arrival.current.optimum !== optimum) arrival.current = { optimum, settings: now };
+  const search = optimum && arrival.current.settings === now ? optimum : null;
   const unit = (m: string) => UNITS.find(([name]) => name === m)?.[1] ?? m;
   // What the fit says: the setting under its label and unit from the settings panel, and whether the target was met.
   const text = (f: FitResult) => {
@@ -362,39 +456,45 @@ export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOp
     const label = c?.label ?? o.key;
     const at = (v: unknown) => `${String(v)}${c && "unit" in c && c.unit ? ` ${c.unit}` : ""}`;
     const within = o.budget ? ` within ${o.budget.target} ${unit(o.budget.metric)}` : "";
-    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best${within}, with a tone error of ${o.error.toFixed(3)}.`;
-    const against = o.current_error === null ? `${at(o.current)} goes over the target` : `against ${o.current_error.toFixed(3)} at ${at(o.current)}`;
-    return `${label} at ${at(o.value)} follows the image's tones best${within}: a tone error of ${o.error.toFixed(3)}, ${against}.`;
+    const time = (minutes: number) => `${minutes.toFixed(1)} min`;
+    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best${within}, with a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot.`;
+    const against = o.current_error === null
+      ? `${at(o.current)} goes over the target in ${time(o.current_minutes)}`
+      : `against ${o.current_error.toFixed(3)} and ${time(o.current_minutes)} at ${at(o.current)}`;
+    return `${label} at ${at(o.value)} follows the image's tones best${within}: a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot, ${against}.`;
   };
   return (
-    <form
-      class="fit" data-tour="fit"
-      onSubmit={(e) => { e.preventDefault(); if (Number(target) > 0) onFit(metric, Number(target)); }}
-    >
-      <input type="number" min="0" step="any" required aria-label="Target" placeholder="Target" value={target} onInput={(e) => setTarget(e.currentTarget.value)} />
-      <select aria-label="Target unit" value={metric} onChange={(e) => setMetric(e.currentTarget.value)}>
-        {UNITS.map(([name, label]) => <option value={name}>{label}</option>)}
-      </select>
-      <button
-        type="submit" disabled={disabled}
-        title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says."
+    <details class="fit-panel" data-tour="fit" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>Fit and optimize</summary>
+      <form
+        class="fit"
+        onSubmit={(e) => { e.preventDefault(); if (Number(target) > 0) onFit(metric, Number(target)); }}
       >
-        <Target /> Fit to target
-      </button>
-      <button
-        type="button" disabled={disabled} data-tour="optimize"
-        title="Reruns the style eight times with its density setting changed and suggests the value whose drawing's tones follow the image best, within the target if one is typed. Nothing changes until you apply it."
-        onClick={() => (Number(target) > 0 ? onOptimize(metric, Number(target)) : onOptimize())}
-      >
-        <Wand /> Optimize
-      </button>
-      {error ? <span class="error">{error}</span> : fitted ? <span>{text(fitted)}</span> : optimum && (
-        <span>
-          {found(optimum)}
-          {optimum.patch && <button type="button" aria-label={`Apply: ${found(optimum)}`} onClick={() => onApply(optimum.patch!)}><Check /> Apply</button>}
-        </span>
-      )}
-    </form>
+        <input type="number" min="0" step="any" required aria-label="Target" placeholder="Target" value={target} onInput={(e) => setTarget(e.currentTarget.value)} />
+        <select aria-label="Target unit" value={metric} onChange={(e) => setMetric(e.currentTarget.value)}>
+          {UNITS.map(([name, label]) => <option value={name}>{label}</option>)}
+        </select>
+        <button
+          type="submit" disabled={disabled}
+          title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says."
+        >
+          <Target /> Fit to target
+        </button>
+        <button
+          type="button" disabled={disabled}
+          title="Reruns the style up to nine times with its density setting from a quarter to four times its value, and suggests the value whose drawing's tones follow the image best. It leaves out values that plot for over twice as long, or an hour if that is more, or that the plot lint warns about, and keeps within the target if one is typed. Nothing changes until you apply it."
+          onClick={() => (Number(target) > 0 ? onOptimize(metric, Number(target)) : onOptimize())}
+        >
+          <Wand /> Optimize
+        </button>
+        {error ? <span class="error">{error}</span> : fit ? <span>{text(fit)}</span> : search && (
+          <span>
+            {found(search)}
+            {search.patch && <button type="button" aria-label={`Apply: ${found(search)}`} onClick={() => onApply(search.patch!)}><Check /> Apply</button>}
+          </span>
+        )}
+      </form>
+    </details>
   );
 }
 
@@ -453,17 +553,19 @@ export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps):
 
 type ExportProps = {
   drawing: boolean; layers: Pen[]; machine: boolean;
-  onExport: (format: "svg" | "json") => void; onGcode: (layer: number) => void;
+  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void;
 };
 
-// One G-code file per layer of the drawing, once a machine is set. With several pens each gets a
-// row told apart by its number and swatch, since pens can share a name.
-export function ExportPanel({ drawing, layers, machine, onExport, onGcode }: ExportProps): JSX.Element {
+// SVG, JSON and one HPGL file for the whole drawing; then, once a machine is set, one G-code file
+// per layer. With several pens each G-code file gets a row told apart by its number and swatch,
+// since pens can share a name.
+export function ExportPanel({ drawing, layers, machine, onExport, onHpgl, onGcode }: ExportProps): JSX.Element {
   return (
     <fieldset data-tour="export">
       <legend>Export</legend>
       <button type="button" disabled={!drawing} onClick={() => onExport("svg")}><Download /> SVG</button>
       <button type="button" disabled={!drawing} onClick={() => onExport("json")}><Download /> JSON</button>
+      <button type="button" disabled={!drawing} onClick={onHpgl}><Download /> HPGL</button>
       {!machine ? <p class="help">For G-code, set up a machine in Settings.</p>
         : layers.length < 2 ? <button type="button" disabled={!drawing} onClick={() => onGcode(0)}><Download /> G-code</button>
         : (
@@ -495,7 +597,7 @@ const AREA: [keyof Area, string][] = [["width", "Width"], ["height", "Height"], 
 const SPEEDS: [keyof Speeds, string, string, number][] = [
   ["draw_mm_s", "Draw", "mm/s", 0.1], ["travel_mm_s", "Travel", "mm/s", 0.1], ["pen_lift_s", "Pen lift", "s", 0],
 ];
-const SECTIONS = ["Machine", "Pen lift", "G-code", "Plot time"] as const;
+const SECTIONS = ["Machine", "Pen lift", "G-code", "HPGL", "Plot time"] as const;
 // A starting point to edit, not a real machine: its values must be replaced with the machine's own.
 const NEW_MACHINE: Machine = {
   name: "My machine", area: { x: 0, y: 0, width: 200, height: 200 },
@@ -520,13 +622,14 @@ type SettingsProps = {
   opens: number;
   machine: Machine | null; error?: string; speeds: Speeds;
   onPick: (machine: Machine | null) => void; onEdit: (machine: Machine) => void; onSpeeds: (speeds: Speeds) => void;
+  hpglUnits: number; onHpglUnits: (units: number) => void;
 };
 
 // The setup that rarely changes, in a modal dialog: the machine, its pen lift and G-code, and the
 // speeds the time estimate uses (spec 2026-10-12-settings-dialog section 4). Changes apply as they
 // are made. Picking is told apart from editing because a pick also sets the page to the machine's
 // area.
-export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, onSpeeds }: SettingsProps): JSX.Element {
+export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, onSpeeds, hpglUnits, onHpglUnits }: SettingsProps): JSX.Element {
   const [section, setSection] = useState<(typeof SECTIONS)[number]>("Machine");
   const value = machine === null ? "none" : "current";
   const choose = <p>Choose a machine first</p>;
@@ -612,6 +715,23 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
         <p class="help">For firmware that draws a long straight move as a curve, as a hanging plotter's may: plotline cuts every move into pieces no longer than this. Leave it empty to keep moves whole.</p>
       </>
     ) : choose,
+    "HPGL": (
+      <>
+        <label>
+          Plotter units per mm{" "}
+          <input
+            type="number" min={0} step="any" value={hpglUnits}
+            onChange={(e) => {
+              // Above 0, as the engine requires; anything else snaps back.
+              const v = e.currentTarget.valueAsNumber;
+              if (Number.isFinite(v) && v > 0) onHpglUnits(v);
+              else e.currentTarget.value = String(hpglUnits);
+            }}
+          />
+        </label>
+        <p class="help">The resolution of the HPGL file, which needs no machine. HPGL's plotter unit is 0.025 mm, so 40 to the mm, which most plotters use; change it only if your plotter's manual gives another, up to 1000. It is kept in this browser.</p>
+      </>
+    ),
     "Plot time": (
       <>
         {SPEEDS.map(([key, label, unit, min]) => (

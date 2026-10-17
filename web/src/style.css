@@ -7,6 +7,8 @@
   --field: light-dark(#f5f6f9, #1e222b);
   --hover: light-dark(#eceef3, #262b36);
   --border: light-dark(#e2e5eb, #2a2f3a);
+  /* A control's boundary, 3:1 (WCAG 1.4.11): light 3.35 on --surface and 3.10 on --field; dark 3.70 and 3.35. */
+  --control-border: light-dark(#848d9d, #6b7385);
   --text: light-dark(#171a20, #e7e9ef);
   --muted: light-dark(#5f6878, #8f97a8);
   --accent: light-dark(#4f46e5, #8b8ff9);
@@ -33,16 +35,23 @@ body {
 }
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
-/* The side columns narrow with the window so the preview keeps room. */
-.app { display: grid; grid-template-columns: clamp(230px, 22vw, 300px) minmax(0, 1fr) clamp(230px, 22vw, 300px); height: 100vh; }
+/* The side columns narrow with the window so the preview keeps room. The page holds the main column
+   first, so Tab reaches the toolbar before the settings; the areas keep each column in its place. */
+.app { display: grid; grid-template-columns: clamp(230px, 22vw, 300px) minmax(0, 1fr) clamp(230px, 22vw, 300px); grid-template-areas: "left main right"; height: 100vh; }
+.app > .side-left { grid-area: left; }
+.app > main { grid-area: main; }
+.app > .side-right { grid-area: right; }
 .app > aside { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding: 12px; }
 .app > aside > label { margin: 0 4px; }
 .stages { display: flex; flex-direction: column; gap: 12px; }
 .app > main { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; padding: 12px 0; }
-/* A phone: one column that scrolls as a page, the toolbar and preview first. */
+/* A phone: one column that scrolls as a page, main first as the page holds it. The preview takes the
+   screen less the 420 px the toolbar, status and Style card need (402 px measured at 375 px wide), so the
+   Style menu shows in the first screen; a short screen keeps a preview big enough for the empty card. */
 @media (max-width: 760px) {
   .app { display: flex; flex-direction: column; height: auto; min-height: 100vh; }
-  .app > main { order: -1; padding: 12px 12px 0; height: 90svh; min-height: 520px; }
+  .app > main { height: auto; padding: 12px 12px 0; }
+  .app > main .preview { flex: none; height: max(240px, calc(100svh - 420px)); }
   .app > aside { overflow: visible; }
 }
 
@@ -91,12 +100,29 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
 .toolbar .group + .group { padding-left: 6px; border-left: 1px solid var(--border); }
 .toolbar .group.end { margin-left: auto; padding-left: 0; border-left: none; }
 .toolbar .zoom { min-width: 3.5em; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Rather than wrap, the toolbar sheds labels as it narrows: the view and app buttons first, then
+   all but Run. A shed label stays the button's accessible name, and its title shows on hover. */
+.app > main { container-type: inline-size; }
+@container (max-width: 1340px) {
+  .toolbar .shrink .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .toolbar .shrink :has(> .label) { width: 30px; padding: 0; justify-content: center; }
+}
+@container (max-width: 910px) {
+  .toolbar .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .toolbar :has(> .label) { width: 30px; padding: 0; justify-content: center; }
+}
+/* Still too narrow: two even rows, the tools above the view and app buttons, not a stray last group. */
+@container (340px <= width < 660px) {
+  .toolbar { display: grid; grid-template-columns: auto auto 1fr; }
+  .toolbar .group:nth-child(4) { padding-left: 0; border-left: none; }
+  .toolbar .zoom { min-width: 0; }
+}
 
 .preview { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--backdrop); border: 1px solid var(--border); border-radius: var(--radius); }
 .preview canvas:focus-visible { outline-offset: -2px; }
 .preview .hint {
   position: absolute;
-  top: 10px;
+  bottom: 10px; /* the top left is the compare card's */
   left: 50%;
   width: max-content; /* else left: 50% caps its width at half the preview */
   max-width: calc(100% - 20px);
@@ -112,10 +138,71 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
   pointer-events: none;
 }
 
-/* Hidden until focused, so a keyboard user can jump past the settings to the toolbar. */
+/* How to start, centred over the empty preview until an image is open. */
+.preview .empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(300px, calc(100% - 24px));
+  padding: 18px 16px 14px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transform: translate(-50%, -50%);
+}
+.preview .empty p { margin: 0; }
+.preview .empty .lead { font-size: 15px; font-weight: 600; }
+.preview .empty button, .preview .empty .button { justify-content: center; width: 100%; }
+
+/* The compare view's controls: a card at the top left with the chip and its menu, the slider along
+   the bottom and, between them, a handle on the divider that the canvas draws. The hint moves above the slider. */
+.preview .compare-pick, .preview .compare-swipe {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.preview .compare-pick[hidden] { display: none; } /* until there is a drawing; the flex above would show it */
+.preview .compare-pick { top: 10px; left: 10px; max-width: calc(100% - 20px); padding: 4px; }
+.preview .compare-pick > span { padding: 0 8px 0 4px; }
+.preview .compare-pick select { height: 28px; min-width: 0; }
+.preview .compare-swipe { right: 10px; bottom: 10px; left: 10px; padding: 8px 12px; }
+.preview .compare-handle { position: absolute; top: 0; bottom: 0; width: 16px; margin-left: -8px; cursor: ew-resize; touch-action: none; }
+.preview.comparing .hint { bottom: 56px; }
+
+/* The focus points over the preview: a dashed ring of the radius, a dot, and while focusing a
+   target that takes the click which removes the point. The paper is white in both themes, so the
+   ring is a dark indigo that reads on it whatever the theme, and a white casing keeps it visible
+   where it runs past the paper onto the dark backdrop. */
+.focus-rings { --ring: #4338ca; position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.focus-rings .ring-halo, .focus-rings .ring { fill: none; stroke-dasharray: 6 4; }
+.focus-rings .ring-halo { stroke: #fff; stroke-width: 4; }
+.focus-rings .ring { stroke: var(--ring); stroke-width: 1.5; }
+.focus-rings .dot { fill: var(--ring); stroke: #fff; stroke-width: 1.5; }
+.focus-rings .hit { fill: transparent; stroke: transparent; stroke-width: 1.5; pointer-events: all; cursor: pointer; }
+.focus-rings .hit:hover, .focus-rings .hit:focus-visible { stroke: var(--ring); }
+.focus-line { margin: 4px 0; }
+.focus-line button { margin-left: 6px; }
+
+/* Hidden until focused, so a keyboard user can jump past the toolbar and preview to the style settings. */
 .skip { position: absolute; top: 8px; left: 8px; z-index: 1; padding: 6px 12px; color: var(--on-accent); background: var(--accent); border-radius: 8px; transform: translateY(-200%); }
 .skip:focus { transform: none; }
-.toolbar:focus { outline: none; }
+#style-settings:focus { outline: none; }
 
 footer {
   padding: 8px 14px;
@@ -135,6 +222,7 @@ footer {
 .status li[data-state="running"]::before { background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
 @keyframes pulse { to { opacity: 0.3; } }
 .stats { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+details.fit-panel { margin-top: 6px; }
 .fit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
 .fit input { width: 7em; }
 .fit .error { margin: 0; }
@@ -159,7 +247,7 @@ input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [ty
   font: inherit;
   color: inherit;
   background: var(--field);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 7px;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -168,7 +256,7 @@ input[type="number"] { width: 6.5em; font-variant-numeric: tabular-nums; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 input[type="checkbox"], input[type="range"] { margin: 0; }
 input[type="checkbox"] { width: 15px; height: 15px; flex: none; }
-input[type="color"] { width: 36px; height: 26px; margin-left: auto; padding: 2px; background: var(--field); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+input[type="color"] { width: 36px; height: 26px; margin-left: auto; padding: 2px; background: var(--field); border: 1px solid var(--control-border); border-radius: 7px; cursor: pointer; }
 input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 input[type="color"]::-moz-color-swatch { border: none; border-radius: 4px; }
@@ -203,6 +291,7 @@ button.primary { color: var(--on-accent); background: var(--accent); border-colo
 button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
 button.icon { width: 30px; padding: 0; justify-content: center; }
 .button:has(:focus-visible), .chip:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip:has(:disabled) { opacity: 0.45; background: var(--field); cursor: not-allowed; }
 .chip:has(:checked) { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 fieldset > button, fieldset > .button { margin: 4px 6px 0 0; }
 .gcode { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
@@ -213,10 +302,13 @@ fieldset > button, fieldset > .button { margin: 4px 6px 0 0; }
 .control { margin-bottom: 4px; }
 .help { margin: -2px 0 8px; color: var(--muted); font-size: 12px; }
 details details { margin-top: 6px; }
-details details > summary { color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+details details > summary, details.fit-panel > summary { color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
 summary { cursor: pointer; }
 summary:hover { color: var(--text); }
 .error { margin: 4px 0; color: var(--danger); }
+/* The page's crop: the word and the button that takes the crop off. */
+.crop { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 8px 0 0; }
+.crop button { margin: 0; }
 .warnings { margin: 8px 0 0; padding-left: 1.2em; color: var(--muted); }
 
 /* The suggestions: a reason, then its button, with a rule between items. */
@@ -225,6 +317,7 @@ summary:hover { color: var(--text); }
 .suggestions li + li { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .suggestions p { margin: 0 0 6px; }
 .suggestions button { margin: 0; }
+.suggestions .buttons { display: flex; gap: 6px; }
 /* The lint findings under the stats: the severity as a small label before each message, the
    Apply button at the row's end, and a scroll past a fifth of the window so the preview keeps
    its room. */
@@ -241,6 +334,7 @@ summary:hover { color: var(--text); }
 .grid label { flex-direction: column; align-items: stretch; gap: 2px; margin: 0; color: var(--muted); font-size: 12px; }
 .grid label > span { display: flex; align-items: center; gap: 4px; color: var(--text); }
 .grid select, .grid input[type="number"] { width: 100%; max-width: none; min-width: 0; margin-left: 0; }
+.grid input[type="color"] { width: 100%; margin-left: 0; }
 
 .muted { color: var(--muted); }
 .swatch { width: 14px; height: 14px; flex: none; border: 1px solid var(--edge); border-radius: 4px; }
@@ -279,7 +373,7 @@ dialog.modal.wide .body { grid-template-columns: 220px minmax(0, 1fr); }
 dialog.modal nav .help { margin: 8px 4px 0; }
 ol.pens { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 ol.pens button { width: 100%; gap: 8px; font-variant-numeric: tabular-nums; }
-dialog.modal .actions { display: flex; gap: 4px; margin-top: 8px; }
+dialog.modal .actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 /* The styles dialog: one cell per style across the whole body, its picture on white paper over its name. */
 dialog.modal .thumbs { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); align-content: start; gap: 10px; margin: 0; padding: 12px 16px 16px; overflow-y: auto; list-style: none; }
 dialog.modal .thumbs button { flex-direction: column; align-items: stretch; width: 100%; height: auto; padding: 6px; }
@@ -298,6 +392,10 @@ dialog.modal .zoom figcaption { height: 18px; margin-top: 4px; font-size: 13px; 
 button.ink { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--edge); }
 button.ink:hover:not(:disabled) { filter: brightness(1.1); }
 button.ink[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* My pens: each saved pen is a row like the pen list's, with a button to remove it. */
+ul.library { display: flex; flex-direction: column; gap: 2px; margin: 0 0 8px; padding: 0; list-style: none; }
+ul.library li { display: flex; gap: 4px; }
+ul.library li > :first-child { flex: 1; min-width: 0; gap: 8px; font-variant-numeric: tabular-nums; }
 /* The bank: a kind filter and a search, then each model with its sizes as buttons. */
 .filter { display: flex; gap: 6px; margin-bottom: 8px; }
 .filter input { flex: 1; min-width: 0; }
@@ -305,7 +403,7 @@ button.ink[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offs
 .sizes { display: flex; flex-wrap: wrap; gap: 4px; }
 .sizes button { height: 26px; padding: 0 8px; font-variant-numeric: tabular-nums; }
 .sizes button .muted { font-size: 11px; font-weight: 400; }
-.sizes button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.sizes button[aria-pressed="true"], ul.library button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 @media (max-width: 600px) {
   dialog.modal .body, dialog.modal.wide .body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   dialog.modal nav { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); }

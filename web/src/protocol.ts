@@ -2,18 +2,21 @@
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
 import { describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
-import { drive, free, macrotask } from "./driver";
+import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
-export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
+export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } | Pick<Canvas, "crop"> };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
 export type State = {
   image: boolean; style: string;
   /** The name of the style's look the settings match; null when they match none, which the page calls Custom. */
   look: string | null;
-  canvas: Canvas; pens: Pen[]; machine: Machine | null;
+  canvas: Canvas;
+  /** The paper's colour as `#rrggbb`: a setting beside the page that the preview and the style pictures draw onto. */
+  paper: string;
+  pens: Pen[]; machine: Machine | null;
   settings: Record<string, Record<string, unknown>>; speeds: Speeds;
   run: { id: number; state: string; error: string | null }; stats: Stats | null;
   /** The pens of the last drawing's layers; empty without a drawing. */
@@ -24,11 +27,15 @@ export type State = {
   lint: Finding[];
   /** How the last drawing's tones follow its tone map; null without one or with nothing to compare. */
   tone: ToneMatch | null;
+  /** Where the tone stage's focus points are drawn, in page mm; empty without an image. */
+  focus: [number, number][];
 };
 export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
-// The commands that change what a drawing is made from: each one redraws once it succeeds.
+// The commands that change what a drawing is made from: each one redraws once it succeeds. `setPaper` is
+// not among them: the paper is no input of a run, so a change only repaints. Nor is `setPenLibrary`: the
+// user's own pens only change the suggestions, which every reply's state carries.
 const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
@@ -46,6 +53,8 @@ export class Protocol {
   // reply carried.
   private source: ((s: Session) => void) | null = null;
   private saved: { preset: string; speeds: string } | null = null;
+  // The pen library as the session last took it, which a rebuilt session gets again.
+  private library = "[]";
   private readonly methods: Record<string, (...args: any[]) => unknown>;
 
   constructor(private session: Session, private readonly post: (msg: Reply | Event | ThumbEvent, transfer?: Transferable[]) => void) {
@@ -57,13 +66,20 @@ export class Protocol {
       listInks: () => JSON.parse(listInks()),
       setMachine: (machine: Machine | null) => s().setMachine(JSON.stringify(machine)),
       gcode: (layer: number) => s().gcode(layer),
+      hpgl: (unitsPerMm: number) => s().hpgl(unitsPerMm),
       describe: (name: string) => JSON.parse(describe(name)),
       setImageBytes: (bytes: Uint8Array) => this.setSource((t) => t.setImageBytes(bytes)),
       setImage: (width: number, height: number, rgb: Float32Array) => this.setSource((t) => t.setImage(width, height, rgb)),
       // The default A4 drawing area's shape, 190 x 277 mm, so the sample fills it.
       sample: () => this.methods.setImage(600, 875, syntheticStillLife(600, 875)),
       setCanvas: (canvas: Canvas) => s().setCanvas(JSON.stringify(canvas)),
+      setPaper: (color: string) => s().setPaper(color),
       setPens: (pens: Pen[]) => s().setPens(JSON.stringify(pens)),
+      setPenLibrary: (pens: Pen[]) => {
+        const json = JSON.stringify(pens);
+        s().setPenLibrary(json);
+        this.library = json;
+      },
       setStyle: (name: string) => s().setStyle(name),
       applyLook: (name: string) => s().applyLook(name),
       resetSettings: () => s().resetSettings(),
@@ -83,6 +99,19 @@ export class Protocol {
       // The settings stay as they are, and the page only offers what the search found.
       optimize: (metric?: string, target?: number) => this.start(() => s().optimize(metric ?? null, target ?? null), "optimize"),
       cancel: () => this.current?.cancel(),
+      // The share of the image, from its top-left corner, under a page point in mm; null off the image.
+      imagePoint: (x: number, y: number) => {
+        const p = s().imagePoint(x, y);
+        return p ? Array.from(p) : null;
+      },
+      // The calibration chart for the page and the first pen. The engine cancels the run, and the
+      // events a finished run posts follow the reply. A refusal changes nothing.
+      testchart: () => {
+        s().testchart();
+        const id = ++this.counter;
+        this.current = null;
+        this.go = () => postDone(s(), id, this.post);
+      },
       preset: () => JSON.parse(s().preset()),
       loadPreset: (preset: unknown) => s().loadPreset(JSON.stringify(preset)),
       // The text of a preset file, an exported SVG or an exported JSON drawing.
@@ -90,9 +119,9 @@ export class Protocol {
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
       restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
       // Draws every style after the reply, which carries the id its `thumb` events will have.
-      thumbs: (width: number) => {
+      thumbs: (width: number, shrink = 1) => {
         const id = ++this.thumbsId;
-        this.go = () => void this.thumbs(id, width);
+        this.go = () => void this.thumbs(id, width, shrink);
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
@@ -141,6 +170,7 @@ export class Protocol {
     this.current = null;
     this.session = new Session();
     try {
+      this.session.setPenLibrary(this.library); // before the image, so it is measured once
       this.source?.(this.session);
       if (this.saved) {
         this.session.loadPreset(this.saved.preset);
@@ -175,7 +205,7 @@ export class Protocol {
   // Draws every listed style in turn as a trial, which leaves the session's own run, drawing and
   // settings alone, and posts each as a `thumb` event. It yields as `drive` does, so commands get
   // their turn, and a newer `thumbs` or a `cancelThumbs` ends it.
-  private async thumbs(id: number, width: number): Promise<void> {
+  private async thumbs(id: number, width: number, shrink: number): Promise<void> {
     let lastYield = performance.now();
     for (const { name } of JSON.parse(listStyles()) as Array<{ name: string }>) {
       if (id !== this.thumbsId) return;
@@ -193,7 +223,7 @@ export class Protocol {
             }
           }
           error = trial.error() ?? null;
-          png = trial.previewPng(width) ?? null;
+          png = trial.previewPng(width, shrink) ?? null;
         } finally {
           free(trial);
         }
@@ -213,7 +243,7 @@ export class Protocol {
     const s = this.session;
     const preset = s.preset();
     this.saved = { preset, speeds: s.speeds() };
-    const { style, canvas, pens, machine, settings } = JSON.parse(preset);
+    const { style, canvas, paper, pens, machine, settings } = JSON.parse(preset);
     const stats = s.stats();
     const layers: Pen[] = [];
     const drawing = s.drawing();
@@ -227,11 +257,17 @@ export class Protocol {
     const analysis = s.analysis();
     const lint = s.lint();
     const tone = s.toneMatch();
+    const focus: [number, number][] = [];
+    for (const [x, y] of (settings.tone?.focus ?? []) as [number, number][]) {
+      const p = s.pagePoint(x, y);
+      if (p) focus.push([p[0], p[1]]);
+    }
     return {
-      image: this.image, style, look: s.look() ?? null, canvas, pens, machine, settings, speeds: JSON.parse(this.saved.speeds), layers,
+      image: this.image, style, look: s.look() ?? null, canvas, paper, pens, machine, settings, speeds: JSON.parse(this.saved.speeds), layers,
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
       tone: tone ? JSON.parse(tone) : null,
+      focus,
       run: { id: this.counter, state: s.state(), error: s.error() ?? null },
       stats: stats ? JSON.parse(stats) : null,
     };

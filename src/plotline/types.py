@@ -17,13 +17,19 @@ from plotline import _core
 
 @dataclass(frozen=True)
 class Canvas:
-    """The page in mm, the margin on every side, and whether the image fits inside the drawing
-    area (``fit``) or fills it (``fill``)."""
+    """The page in mm, the margin on every side, whether the image fits inside the drawing area
+    (``fit``) or fills it (``fill``), and the shares of the image cut from its left, top, right
+    and bottom before it is fitted (``crop``), each 0 to 0.45."""
 
     width_mm: float
     height_mm: float
     margin_mm: float = 0.0
     fit: Literal["fit", "fill"] = "fit"
+    crop: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        # The engine hands a crop back as a list; a tuple keeps equal pages equal.
+        object.__setattr__(self, "crop", tuple(self.crop))
 
 
 @dataclass(frozen=True)

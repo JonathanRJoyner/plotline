@@ -1,9 +1,10 @@
 //! Presets: the style, canvas, pens and settings of a session as a small, versioned JSON value.
 //!
 //! A preset is an object with the format name `plotline-preset`, an integer `version`, the `style`
-//! name, the `canvas`, the `pens`, the `machine` (an object, or null for none) and the `settings`
-//! of each stage (an object of objects). It is the wire format a front end sends and the file
-//! format a preset is saved in.
+//! name, the `canvas`, the `pens`, the `machine` (an object, or null for none), the `paper` (a
+//! colour written as `#rrggbb`) and the `settings` of each stage (an object of objects). The
+//! `paper` key is optional: a preset without it, such as one written before it existed, has
+//! white paper. It is the wire format a front end sends and the file format a preset is saved in.
 //!
 //! [`parse`] checks the format, brings a value of an older version up to [`PRESET_VERSION`]
 //! through the `MIGRATIONS` chain, checks that each section has the right shape and builds the
@@ -22,7 +23,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::machine::Machine;
-use crate::types::{Canvas, Fit, Pen};
+use crate::types::{check_color, Canvas, Fit, Pen, DEFAULT_PAPER};
 
 /// The `format` of every preset.
 pub const PRESET_FORMAT: &str = "plotline-preset";
@@ -105,16 +106,19 @@ pub struct PresetData {
     pub pens: Vec<Pen>,
     /// The machine, if the preset names one.
     pub machine: Option<Machine>,
+    /// The colour of the paper, written as `#rrggbb`; [`DEFAULT_PAPER`] when the preset has none.
+    pub paper: String,
     /// The settings of each stage by stage name, an object of objects; not yet validated.
     pub settings: Value,
 }
 
-/// The preset of a session with this `style`, `canvas`, `pens`, `machine` and `settings`.
+/// The preset of a session with this `style`, `canvas`, `pens`, `machine`, `paper` and `settings`.
 pub fn to_value(
     style: &str,
     canvas: &Canvas,
     pens: &[Pen],
     machine: Option<&Machine>,
+    paper: &str,
     settings: &Value,
 ) -> Value {
     json!({
@@ -124,6 +128,7 @@ pub fn to_value(
         "canvas": canvas,
         "pens": pens,
         "machine": machine,
+        "paper": paper,
         "settings": settings,
     })
 }
@@ -235,6 +240,8 @@ struct RawCanvas {
     #[serde(default)]
     margin_mm: f64,
     fit: Option<Fit>,
+    #[serde(default)]
+    crop: [f64; 4],
 }
 
 /// A pen as written in a preset.
@@ -250,9 +257,10 @@ struct RawPen {
 ///
 /// Fails when the format is not `plotline-preset`, when the version is not a whole number up to
 /// [`PRESET_VERSION`] or has no migration, when `style`, `canvas`, `pens` or `settings` is missing
-/// or the wrong shape (the message names the field), and when the canvas, a pen or the machine is
-/// refused by [`Canvas::new`], [`Pen::new`] or [`Machine::validate`]. A missing or null `machine`
-/// is none.
+/// or the wrong shape (the message names the field), when `paper` is there but is not a string
+/// written as `#rrggbb`, and when the canvas, a pen or the machine is refused by [`Canvas::new`],
+/// [`Pen::new`] or [`Machine::validate`]. A missing or null `machine` is none, and a missing
+/// `paper` is [`DEFAULT_PAPER`].
 pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
     if value.get("format") != Some(&json!(PRESET_FORMAT)) {
         return Err(PresetError::NotAPreset);
@@ -282,6 +290,17 @@ pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
             "an object with an object for each stage",
         ))?;
 
+    let paper = match value.get("paper") {
+        None => DEFAULT_PAPER,
+        Some(paper) => paper
+            .as_str()
+            .filter(|paper| check_color("paper", paper).is_ok())
+            .ok_or(PresetError::BadField(
+                "paper",
+                "a colour written as #rrggbb",
+            ))?,
+    };
+
     let c: RawCanvas = serde_json::from_value(canvas.clone())
         .map_err(|e| PresetError::Invalid(format!("canvas: {e}")))?;
     let canvas = Canvas::new(
@@ -290,6 +309,7 @@ pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
         c.margin_mm,
         c.fit.unwrap_or(Fit::Fit),
     )
+    .and_then(|canvas| canvas.with_crop(c.crop))
     .map_err(|e| PresetError::Invalid(e.to_string()))?;
     let pens = pens
         .iter()
@@ -315,6 +335,7 @@ pub fn parse(value: &Value) -> Result<PresetData, PresetError> {
         canvas,
         pens,
         machine,
+        paper: paper.to_string(),
         settings: Value::Object(settings.clone()),
     })
 }
@@ -332,6 +353,7 @@ mod tests {
             &a4(),
             &[black()],
             None,
+            DEFAULT_PAPER,
             &json!({"tone": {"resolution": 500}}),
         );
         assert_eq!(v["format"], "plotline-preset");
@@ -343,7 +365,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_shapes_with_named_fields() {
-        let good = to_value("grid", &a4(), &[black()], None, &json!({}));
+        let good = to_value("grid", &a4(), &[black()], None, DEFAULT_PAPER, &json!({}));
         let mut v = good.clone();
         v["format"] = json!("x");
         assert!(parse(&v)
@@ -369,7 +391,7 @@ mod tests {
 
     /// The message that `parse` gives for a good preset with `key` set to `value`.
     fn error_with(key: &str, value: Value) -> String {
-        let mut v = to_value("grid", &a4(), &[black()], None, &json!({}));
+        let mut v = to_value("grid", &a4(), &[black()], None, DEFAULT_PAPER, &json!({}));
         v[key] = value;
         parse(&v).unwrap_err().to_string()
     }
@@ -416,7 +438,7 @@ mod tests {
                 format!("unsupported preset version {shown}: this build reads up to 3")
             );
         }
-        let mut v = to_value("grid", &a4(), &[black()], None, &json!({}));
+        let mut v = to_value("grid", &a4(), &[black()], None, DEFAULT_PAPER, &json!({}));
         v.as_object_mut().unwrap().remove("version");
         assert!(parse(&v).unwrap_err().to_string().contains("version null"));
     }
@@ -424,10 +446,61 @@ mod tests {
     #[test]
     fn canvas_and_pens_come_back_as_they_went_in() {
         let pens = [black(), Pen::new("Red", 0.5, "#FF0000").unwrap()];
-        let p = parse(&to_value("grid", &a4(), &pens, None, &json!({}))).unwrap();
+        let p = parse(&to_value(
+            "grid",
+            &a4(),
+            &pens,
+            None,
+            DEFAULT_PAPER,
+            &json!({}),
+        ))
+        .unwrap();
         assert_eq!((p.canvas, p.pens), (a4(), pens.to_vec()));
-        let v = to_value("grid", &a4(), &[], None, &json!({}));
+        let v = to_value("grid", &a4(), &[], None, DEFAULT_PAPER, &json!({}));
         assert_eq!(v["canvas"]["fit"], "fit");
+    }
+
+    #[test]
+    fn a_crop_comes_back_a_bad_one_is_named_and_no_crop_is_left_out() {
+        let canvas = a4().with_crop([0.1, 0.0, 0.25, 0.3]).unwrap();
+        let v = to_value("grid", &canvas, &[black()], None, DEFAULT_PAPER, &json!({}));
+        assert_eq!(v["canvas"]["crop"], json!([0.1, 0.0, 0.25, 0.3]));
+        assert_eq!(parse(&v).unwrap().canvas, canvas);
+        let plain = to_value("grid", &a4(), &[black()], None, DEFAULT_PAPER, &json!({}));
+        assert!(plain["canvas"].get("crop").is_none());
+        let page = |crop: Value| json!({"width_mm": 5, "height_mm": 5, "crop": crop});
+        assert_eq!(
+            error_with("canvas", page(json!([0.5, 0, 0, 0]))),
+            "crop left must be from 0 to 0.45, got 0.5"
+        );
+        assert!(error_with("canvas", page(json!([0.1]))).contains("canvas: invalid length 1"));
+    }
+
+    #[test]
+    fn the_paper_round_trips_and_is_white_when_missing() {
+        let v = to_value("grid", &a4(), &[black()], None, "#f5f0e1", &json!({}));
+        assert_eq!(v["paper"], "#f5f0e1");
+        assert_eq!(parse(&v).unwrap().paper, "#f5f0e1");
+        // A preset written before the key existed.
+        let mut old = v.clone();
+        old.as_object_mut().unwrap().remove("paper");
+        assert_eq!(parse(&old).unwrap().paper, DEFAULT_PAPER);
+    }
+
+    #[test]
+    fn a_bad_paper_is_named() {
+        for bad in [
+            json!("cream"),
+            json!("#fff"),
+            json!("f5f0e1"),
+            json!(5),
+            json!(null),
+        ] {
+            assert_eq!(
+                error_with("paper", bad),
+                "preset field 'paper' must be a colour written as #rrggbb"
+            );
+        }
     }
 
     #[test]
@@ -503,7 +576,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(p.machine, None);
-        let mut v = to_value("grid", &a4(), &[black()], None, &json!({}));
+        let mut v = to_value("grid", &a4(), &[black()], None, DEFAULT_PAPER, &json!({}));
         assert_eq!(v["machine"], Value::Null);
         v.as_object_mut().unwrap().remove("machine");
         assert_eq!(parse(&v).unwrap().machine, None);
@@ -512,12 +585,26 @@ mod tests {
     #[test]
     fn the_machine_round_trips() {
         let m: Machine = machine();
-        let v = to_value("grid", &a4(), &[black()], Some(&m), &json!({}));
+        let v = to_value(
+            "grid",
+            &a4(),
+            &[black()],
+            Some(&m),
+            DEFAULT_PAPER,
+            &json!({}),
+        );
         assert_eq!(v["machine"]["area"]["x"], 28.0);
         assert_eq!(parse(&v).unwrap().machine, Some(m));
         let mut m = crate::test_util::servo_machine();
         m.max_segment_mm = Some(1.0);
-        let v = to_value("grid", &a4(), &[black()], Some(&m), &json!({}));
+        let v = to_value(
+            "grid",
+            &a4(),
+            &[black()],
+            Some(&m),
+            DEFAULT_PAPER,
+            &json!({}),
+        );
         assert_eq!(parse(&v).unwrap().machine, Some(m));
     }
 
@@ -543,7 +630,14 @@ mod tests {
 
     #[test]
     fn a_version_2_area_missing_a_bound_is_refused() {
-        let mut v = to_value("grid", &a4(), &[black()], Some(&machine()), &json!({}));
+        let mut v = to_value(
+            "grid",
+            &a4(),
+            &[black()],
+            Some(&machine()),
+            DEFAULT_PAPER,
+            &json!({}),
+        );
         v["version"] = json!(2);
         v["machine"]["area"] = json!({"x_min": 28, "x_max": 228, "y_min": 42});
         let err = parse(&v).unwrap_err().to_string();
@@ -558,6 +652,7 @@ mod tests {
             &a4(),
             &[pen],
             None,
+            DEFAULT_PAPER,
             &json!({"tone": {"resolution": 500}}),
         )
     }
@@ -630,7 +725,14 @@ mod tests {
     fn a_bad_machine_names_the_field() {
         let mut m = machine();
         m.z_up_mm = 1.0;
-        let v = to_value("grid", &a4(), &[black()], Some(&m), &json!({}));
+        let v = to_value(
+            "grid",
+            &a4(),
+            &[black()],
+            Some(&m),
+            DEFAULT_PAPER,
+            &json!({}),
+        );
         let err = parse(&v).unwrap_err().to_string();
         assert!(
             err.starts_with("machine: ") && err.contains("z_up_mm"),

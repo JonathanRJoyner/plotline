@@ -1,0 +1,1 @@
+- **Plot lint:** the dark and empty fixes no longer offer `truchet` a closer spacing that nests no extra arc, and the overdraw fix no longer raises a spacing that dots wider than it would overlap anyway.

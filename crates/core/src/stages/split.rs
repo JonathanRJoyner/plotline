@@ -48,8 +48,8 @@ use serde_json::Value;
 use crate::preview::rgb;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
-use crate::stages::tone::{crop_to_aspect, resize};
-use crate::types::{Canvas, Fit, Image, Pen, ToneMap};
+use crate::stages::tone::{crop_to_source, resize};
+use crate::types::{Canvas, Image, Pen, ToneMap};
 
 /// How the pens share the drawing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -285,12 +285,7 @@ impl ColourSplit {
         let (w, h) = (image.width as usize, image.height as usize);
         let long_edge = self.tone.width.max(self.tone.height) as usize;
         let plane: Vec<f32> = image.rgb.iter().skip(k).step_by(3).copied().collect();
-        let (plane, cw, ch) = if canvas.fit == Fit::Fill {
-            let [_, _, dw, dh] = canvas.drawing_rect();
-            crop_to_aspect(&plane, w, h, dw / dh)
-        } else {
-            (plane, w, h)
-        };
+        let (plane, cw, ch) = crop_to_source(&plane, w, h, canvas);
         let (plane, cw, ch) = resize(&plane, cw, ch, long_edge);
         if (cw, ch) != (self.tone.width as usize, self.tone.height as usize) {
             return Err(StageError::Failed(format!(
@@ -485,6 +480,7 @@ mod tests {
     use crate::stages::tone::ToneStage;
     use crate::synthetic::{color_bars, flat, gradient, scene};
     use crate::test_util::{a4, black, tone_map};
+    use crate::types::Fit;
     use rand::{Rng, SeedableRng};
     use rand_pcg::Pcg64;
     use serde_json::json;
@@ -778,6 +774,36 @@ mod tests {
             );
             assert_eq!((m.mm_per_px, m.origin_mm), (tone.mm_per_px, tone.origin_mm));
         }
+    }
+
+    #[test]
+    fn by_colour_reads_the_colour_planes_through_the_canvas_crop() {
+        // Red at both ends and blue from column 10 to 64. The crop keeps exactly the blue, so
+        // planes cut anywhere else would put red into the red pen's map.
+        let rgb = (0..40)
+            .flat_map(|_| {
+                (0..100).flat_map(|x| {
+                    if (10..65).contains(&x) {
+                        [0.0, 0.0, 1.0]
+                    } else {
+                        [1.0, 0.0, 0.0]
+                    }
+                })
+            })
+            .collect();
+        let image = Image {
+            width: 100,
+            height: 40,
+            rgb,
+        };
+        let canvas = Canvas::new(100.0, 40.0, 0.0, Fit::Fit)
+            .unwrap()
+            .with_crop([0.1, 0.0, 0.35, 0.0])
+            .unwrap();
+        let (tone, maps) = split_image(image, canvas, pens(&["#ff0000", "#0000ff"]));
+        assert_eq!(maps[0].ink.len(), tone.ink.len());
+        assert!(maps[0].ink.iter().all(|&v| v < 0.01));
+        assert!(maps[1].ink.iter().all(|&v| v > 0.5));
     }
 
     #[test]

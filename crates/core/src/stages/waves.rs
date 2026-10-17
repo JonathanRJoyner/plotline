@@ -28,7 +28,7 @@ use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
 #[serde(default, deny_unknown_fields)]
 pub struct WaveSettings {
     /// Distance between neighbouring lines.
-    #[schemars(range(min = 0.5, max = 10.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.5, max = 10.0), extend("x-density" = "inverse", "x-density-of" = "lines", "x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
     /// Direction of the lines, counter-clockwise from horizontal.
     #[schemars(range(min = 0.0, max = 180.0), extend("x-step" = 1.0, "x-unit" = "deg"))]
@@ -141,6 +141,7 @@ mod tests {
     fn settings_schema() {
         let s = WaveStage.schema();
         assert_eq!(bounds(&s, "spacing_mm"), (0.5, 10.0, 2.0));
+        assert_eq!(s["properties"]["spacing_mm"]["x-density-of"], "lines");
         assert_eq!(bounds(&s, "angle_deg"), (0.0, 180.0, 0.0));
         assert_eq!(bounds(&s, "wavelength_mm"), (0.2, 10.0, 1.0));
         assert_eq!(bounds(&s, "amplitude"), (0.0, 1.0, 0.9));

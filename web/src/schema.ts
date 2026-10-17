@@ -78,9 +78,21 @@ function controlFor(key: string, prop: Json, root: Json): Control {
   return { ...base, kind: "text", default: str(def) };
 }
 
+// A property marked `x-hidden` has no control: the page sets it through its own, as the preview's
+// focus mode does the tone stage's focus points. A root-level `x-order` lists the keys to show
+// first, in that order; the rest follow in the schema's order, and a listed key the schema lacks
+// is skipped.
 export function controlsFor(schema: Record<string, unknown>): Control[] {
   const props = (schema.properties ?? {}) as Record<string, Json>;
-  return Object.entries(props).map(([key, prop]) => controlFor(key, prop, schema));
+  const first = Array.isArray(schema["x-order"]) ? (schema["x-order"] as unknown[]) : [];
+  const rank = (key: string) => {
+    const i = first.indexOf(key);
+    return i < 0 ? first.length : i;
+  };
+  return Object.entries(props)
+    .filter(([, prop]) => prop["x-hidden"] !== true)
+    .sort(([a], [b]) => rank(a) - rank(b)) // stable: unlisted keys keep their schema order
+    .map(([key, prop]) => controlFor(key, prop, schema));
 }
 
 // The stages every style shares, in the order the form shows them after the style's own, each

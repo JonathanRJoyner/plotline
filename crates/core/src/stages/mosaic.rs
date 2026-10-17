@@ -74,7 +74,7 @@ pub struct MosaicSettings {
     #[schemars(range(min = 1.0, max = 40.0), extend("x-step" = 1.0))]
     pub compactness: f64,
     /// Distance between lines over full ink; lighter patches space theirs wider.
-    #[schemars(range(min = 0.2, max = 10.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.2, max = 10.0), extend("x-density" = "inverse", "x-density-of" = "lines", "x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
 }
 
@@ -670,6 +670,7 @@ mod tests {
         assert_eq!(bounds(&s, "spacing_mm"), (0.2, 10.0, 0.6));
         let p = &s["properties"];
         assert_eq!(p["spacing_mm"]["x-density"], "inverse");
+        assert_eq!(p["spacing_mm"]["x-density-of"], "lines");
         assert!(
             p["region_mm"].get("x-density").is_none()
                 && p["compactness"].get("x-density").is_none()

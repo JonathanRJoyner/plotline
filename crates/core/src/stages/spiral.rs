@@ -27,7 +27,7 @@ use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
 #[serde(default, deny_unknown_fields)]
 pub struct SpiralSettings {
     /// Distance between neighbouring turns.
-    #[schemars(range(min = 0.5, max = 10.0), extend("x-density" = "inverse", "x-step" = 0.1, "x-unit" = "mm"))]
+    #[schemars(range(min = 0.5, max = 10.0), extend("x-density" = "inverse", "x-density-of" = "lines", "x-step" = 0.1, "x-unit" = "mm"))]
     pub spacing_mm: f64,
     /// Length of one ripple along the spiral; shorter ripples look darker but take longer to draw.
     #[schemars(range(min = 0.2, max = 10.0), extend("x-step" = 0.1, "x-unit" = "mm"))]
@@ -137,6 +137,7 @@ mod tests {
     fn settings_schema() {
         let s = SpiralStage.schema();
         assert_eq!(bounds(&s, "spacing_mm"), (0.5, 10.0, 2.0));
+        assert_eq!(s["properties"]["spacing_mm"]["x-density-of"], "lines");
         assert_eq!(bounds(&s, "wavelength_mm"), (0.2, 10.0, 1.0));
         assert_eq!(bounds(&s, "amplitude"), (0.0, 1.0, 0.9));
         assert_eq!(

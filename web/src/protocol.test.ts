@@ -54,6 +54,33 @@ test("setImage starts a run", async () => {
   expect(posted.some((m) => m.type === "result" && m.id === 1)).toBe(true);
 });
 
+test("focus points: the engine places a page point in the image and the state says where each is drawn", async () => {
+  const { ok, ended } = setup();
+  expect(ok("imagePoint", 105, 148.5).value).toBeNull(); // no image yet
+  expect(ok("preset").state.focus).toEqual([]);
+  ok("setImage", ...image());
+  await ended(1);
+  // The 64 by 48 image fits the A4 drawing area 190 mm wide and sits centred on the page.
+  expect(ok("imagePoint", 105, 148.5).value).toEqual([0.5, 0.5]);
+  expect(ok("imagePoint", 10, 77.25).value).toEqual([0, 0]);
+  expect(ok("imagePoint", 105, 20).value).toBeNull();
+  const { state } = ok("update", "tone", { focus: [[0.5, 0.5], [0.25, 0.75]] });
+  expect(state.focus).toEqual([[105, 148.5], [57.5, 184.125]]);
+  await ended(2);
+  expect(ok("update", "tone", { focus: [] }).state.focus).toEqual([]);
+});
+
+test("a focus point outside 0 to 1 ends the run with a message naming it", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("update", "tone", { focus: [[0.5, 0.5], [2, 0]] });
+  await ended(2);
+  const end = posted.find((m) => m.type === "end" && m.id === 2) as { state: string; error: string };
+  expect(end.state).toBe("error");
+  expect(end.error).toContain("point 2 is [2.0, 0.0]");
+});
+
 test("bad image bytes are refused", () => {
   const { posted, call, ok } = setup();
   const reply = call("setImageBytes", new Uint8Array([1, 2, 3]));
@@ -171,6 +198,46 @@ test("cancel stops the current run", async () => {
   expect(posted.filter((m) => m.type === "end")).toEqual([expect.objectContaining({ id: 1, state: "cancelled" })]);
 });
 
+test("testchart posts the events of a finished run, and the next run replaces the chart", async () => {
+  const { posted, ok, ended } = setup();
+  const { state } = ok("testchart"); // no image is needed
+  expect(state.run).toEqual({ id: 1, state: "done", error: null });
+  expect(state.stats!.path_count).toBeGreaterThan(0);
+  expect(state.lint.map((f) => f.code)).toContain("overdraw");
+  expect(state.layers).toHaveLength(1);
+  await ended(1);
+  expect(posted.filter((m) => "type" in m).map((m) => m.type)).toEqual(["run", "result", "end"]);
+  expect(posted.find((m) => m.type === "end")).toEqual(expect.objectContaining({ id: 1, state: "done", fit: null }));
+  expect(ok("svg").value as string).toContain("<svg");
+  ok("setImage", ...image());
+  await ended(2);
+  expect(posted.some((m) => m.type === "result" && m.id === 2)).toBe(true);
+});
+
+test("a testchart in the middle of a run cancels it", async () => {
+  let sent = false;
+  const { posted, ok, ended } = setup((m, call) => { if (m.type === "frame" && !sent) { sent = true; expect(call("testchart").ok).toBe(true); } });
+  ok("setImage", ...image());
+  await ended(1);
+  expect(posted.find((m) => m.type === "end" && m.id === 1)).toEqual(expect.objectContaining({ state: "cancelled" }));
+  expect(posted.some((m) => m.type === "result" && m.id === 2)).toBe(true);
+  expect(posted.some((m) => m.type === "result" && m.id === 1)).toBe(false);
+});
+
+test("a test chart that does not fit is refused and the drawing stays", () => {
+  const { posted, call, ok } = setup();
+  ok("testchart");
+  const stats = ok("preset").state.stats;
+  ok("setCanvas", { width_mm: 74, height_mm: 105, margin_mm: 10, fit: "fit" });
+  ok("setPens", [{ name: "Fat", width_mm: 2, color: "#000000" }]);
+  const before = posted.length;
+  const refused = call("testchart");
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toContain("the page is too small for the test chart");
+  expect(posted.length).toBe(before + 1); // the refusal, and no run events
+  expect(ok("preset").state.stats).toEqual(stats);
+});
+
 test("listPens gives the bank", () => {
   const { ok } = setup();
   const pens = ok("listPens").value as Pen[];
@@ -215,6 +282,20 @@ test("gcode needs a drawing, whose layers the state lists", async () => {
   expect(ok("gcode", 0).value as string).toContain("G1 Z4 F1200");
 });
 
+test("hpgl needs a drawing but no machine, and a resolution above 0", async () => {
+  const { call, ok, ended } = setup();
+  ok("setCanvas", { width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" });
+  expect(call("hpgl", 40).ok).toBe(false);
+  ok("update", "tone", { resolution: 64 });
+  ok("setImage", ...image());
+  await ended(1);
+  const text = ok("hpgl", 40).value as string;
+  expect(text.startsWith("IN;\nSP1;\nPU")).toBe(true);
+  expect(text.endsWith("PU;\nSP0;\n")).toBe(true);
+  expect(ok("hpgl", 10).value).not.toBe(text);
+  expect(call("hpgl", 0).ok).toBe(false);
+});
+
 test("the lint findings come with the end event and the state, and their patches apply", async () => {
   const { posted, ok, ended } = setup();
   expect(ok("preset").state.lint).toEqual([]);
@@ -241,6 +322,43 @@ test("suggestions come with the state", () => {
   expect(state.suggestions[0].patch).toEqual({ page: { width_mm: 297, height_mm: 210 } });
 });
 
+// Four saturated stripes, like the colour image of the browser flow.
+const stripes = (): [number, number, Float32Array] => {
+  const [w, h] = [64, 48];
+  const colours = [[0.88, 0, 0], [0, 0.69, 0], [0, 0, 0.88], [0.94, 0.88, 0]];
+  const rgb = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) rgb.set(colours[Math.floor(x / 16)], (y * w + x) * 3);
+  return [w, h, rgb];
+};
+const library: Pen[] = [{ name: "Ink", width_mm: 0.3, color: "#000000" }, { name: "Lemon", width_mm: 0.5, color: "#f5c400" }];
+const kinds = (state: State) => state.suggestions.map((s) => s.kind);
+
+test("setPenLibrary changes the suggestions without a run, and a bad pen is refused", async () => {
+  const { posted, call, ok, ended } = setup();
+  expect(kinds(ok("setImage", ...stripes()).state)).toContain("colour");
+  await ended(1);
+  const { state } = ok("setPenLibrary", library);
+  expect(kinds(state)).toContain("pens_to_add");
+  for (const s of state.suggestions) for (const p of s.patch?.pens ?? []) expect(library).toContainEqual(p);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+  expect(call("setPenLibrary", [{ name: "Bad", width_mm: 0.3, color: "red" }]).ok).toBe(false);
+  expect(kinds(ok("preset").state)).toContain("pens_to_add");
+  expect(kinds(ok("setPenLibrary", []).state)).not.toContain("pens_to_add");
+});
+
+test("a rebuilt session keeps the pen library", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setPenLibrary", library);
+  ok("setImage", ...stripes());
+  await ended(1);
+  ok("setStyle", "_slow");
+  await ended(2);
+  ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+  await ended(3);
+  expect(posted.find((m) => m.type === "end" && m.id === 3)).toMatchObject({ state: "error" });
+  expect(kinds(ok("preset").state)).toContain("pens_to_add");
+});
+
 test("apply runs the patch and redraws once", async () => {
   const { posted, ok, ended } = setup();
   ok("setImage", 400, 200, syntheticGradient(400, 200));
@@ -254,6 +372,19 @@ test("apply runs the patch and redraws once", async () => {
   expect(state.suggestions.map((s) => s.kind)).not.toContain("orientation");
   expect(runs()).toBe(2);
   await ended(2);
+});
+
+test("apply takes a crop into the page, keeps the rest of it, and zeros take it off", async () => {
+  const { call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const { state } = ok("apply", { page: { crop: [0.1, 0, 0.2, 0] } });
+  expect(state.canvas).toMatchObject({ width_mm: 210, height_mm: 297, margin_mm: 10, crop: [0.1, 0, 0.2, 0] });
+  await ended(2);
+  // The engine leaves an all-zero crop out of the page, as it does of a preset.
+  expect(ok("apply", { page: { crop: [0, 0, 0, 0] } }).state.canvas.crop).toBeUndefined();
+  await ended(3);
+  expect(call("apply", { page: { crop: [0.5, 0, 0, 0] } }).ok).toBe(false);
 });
 
 test("apply sets a patch's pens before its settings and redraws once", async () => {
@@ -333,6 +464,25 @@ test("thumbs without an image posts each style's error", async () => {
   expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
 });
 
+test("setPaper only repaints: no run, and a restore brings the old paper back", async () => {
+  const { posted, call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const before = ok("preset").state;
+  expect(before.paper).toBe("#ffffff");
+  const { state } = ok("setPaper", "#f5ecd7");
+  expect(state.paper).toBe("#f5ecd7");
+  expect((ok("preset").value as { paper: string }).paper).toBe("#f5ecd7");
+  expect(state.run.id).toBe(1);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+  expect(call("setPaper", "cream").ok).toBe(false);
+  expect(ok("preset").state.paper).toBe("#f5ecd7");
+  expect(setupOf(state)).not.toBe(setupOf(before));
+  const { style, canvas, paper, pens, machine, settings } = before;
+  expect(ok("restore", { style, canvas, paper, pens, machine, settings }).state.paper).toBe("#ffffff");
+  await ended(2); // a restore redraws, as for any setup
+});
+
 test("restore applies a setup over the preset and redraws", async () => {
   const { posted, ok, ended } = setup();
   ok("setImage", ...image());
@@ -366,6 +516,7 @@ test("undoing a random run of edits through restore returns the start, and undo 
     () => ok("update", "split", { mode: pick(["one_pen", "light_to_dark", "by_colour"]) }),
     () => ok("setCanvas", { width_mm: pick([148, 210, 297]), height_mm: 297, margin_mm: Math.round(rand() * 20), fit: pick(["fit", "fill"]) }),
     () => ok("setPens", [{ name: "P", width_mm: 0.1 + Math.round(rand() * 8) / 10, color: pick(["#000000", "#d0202e"]) }]),
+    () => ok("setPaper", pick(["#ffffff", "#f5ecd7", "#000000"])),
   ];
   for (let i = 0; i < 40; i++) see(pick(edits)().state);
   see(ok("update", "tone", { gamma: 1.3 }).state);

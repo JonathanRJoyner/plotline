@@ -66,6 +66,19 @@ test("splitStages puts the style's own stages first, then order, then tone as Im
   expect(splitStages([st("a")])).toEqual({ own: [st("a")], shared: [], pens: [] });
 });
 
+test("a property marked x-hidden has no control", () => {
+  const schema = { properties: { blur: { type: "number" }, focus: { type: "array", default: [], "x-hidden": true }, gamma: { type: "number" } } };
+  expect(controlsFor(schema).map((c) => c.key)).toEqual(["blur", "gamma"]);
+});
+
+test("x-order puts the listed keys first, in its order, and the rest after in schema order", () => {
+  const props = { a: { type: "number" }, b: { type: "number" }, c: { type: "number" }, d: { type: "number" }, h: { type: "number", "x-hidden": true } };
+  const keys = (schema: Record<string, unknown>) => controlsFor(schema).map((c) => c.key);
+  expect(keys({ properties: props, "x-order": ["d", "gone", "b"] })).toEqual(["d", "b", "a", "c"]);
+  expect(keys({ properties: props, "x-order": ["h", "c"] })).toEqual(["c", "a", "b", "d"]);
+  expect(keys({ properties: props })).toEqual(["a", "b", "c", "d"]);
+});
+
 test("underscores in enum values read as spaces", () => {
   const [c] = controlsFor({ properties: { mode: { enum: ["one_pen", "by_colour"], default: "one_pen" } } });
   expect(c.kind === "select" && c.options.map((o) => o.label)).toEqual(["one pen", "by colour"]);

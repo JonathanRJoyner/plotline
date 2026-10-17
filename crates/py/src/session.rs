@@ -79,12 +79,25 @@ impl Session {
         serde_to_py(py, self.inner.canvas())
     }
 
-    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page.
+    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page, and `"crop"` if there is one.
     fn set_canvas(&mut self, canvas: &Bound<'_, PyAny>) -> PyResult<()> {
         let c: Canvas = from_py(canvas)?;
-        let c = Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit).map_err(value_error)?;
+        let c = Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit)
+            .and_then(|new| new.with_crop(c.crop))
+            .map_err(value_error)?;
         self.inner.set_canvas(c);
         Ok(())
+    }
+
+    /// The colour of the paper the preview shows, written as `#rrggbb`; white until it is set.
+    fn paper(&self) -> String {
+        self.inner.paper().to_string()
+    }
+
+    /// Use `color`, written as `#rrggbb`, as the paper the preview shows. Anything else raises
+    /// `ValueError` and changes nothing.
+    fn set_paper(&mut self, color: &str) -> PyResult<()> {
+        self.inner.set_paper(color).map_err(session_error)
     }
 
     fn pens<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -100,6 +113,19 @@ impl Session {
             .collect::<Result<_, _>>()
             .map_err(value_error)?;
         self.inner.set_pens(pens).map_err(session_error)
+    }
+
+    /// Use a list of `{"name", "width_mm", "color"}` as the user's own pens, which the image
+    /// analysis picks its palette from; an empty list clears it.
+    fn set_pen_library(&mut self, pens: &Bound<'_, PyAny>) -> PyResult<()> {
+        let pens: Vec<Pen> = from_py(pens)?;
+        let pens = pens
+            .iter()
+            .map(|p| Pen::new(&p.name, p.width_mm, &p.color))
+            .collect::<Result<_, _>>()
+            .map_err(value_error)?;
+        self.inner.set_pen_library(pens);
+        Ok(())
     }
 
     fn style_name(&self) -> String {
@@ -165,6 +191,13 @@ impl Session {
         self.inner.gcode(layer).map_err(session_error)
     }
 
+    /// The latest result as one HPGL program with `units_per_mm` plotter units to the millimetre.
+    /// Raises `RuntimeError` without a result and `ValueError` for a resolution that is not above
+    /// 0 and at most 1000.
+    fn hpgl(&self, units_per_mm: f64) -> PyResult<String> {
+        self.inner.hpgl(units_per_mm).map_err(session_error)
+    }
+
     /// Cancel the latest run and start a new one over a snapshot of the session. Raises
     /// `RuntimeError` when no image is set.
     fn start(&mut self) -> PyResult<Run> {
@@ -179,6 +212,12 @@ impl Session {
     fn fit(&mut self, metric: &str, target: f64) -> PyResult<Run> {
         let fit = self.inner.fit(metric, target).map_err(session_error)?;
         Ok(Run::new(Box::new(fit)))
+    }
+
+    /// Cancel the latest run and make the test chart for the page and the first pen the latest
+    /// drawing. Needs no image. Raises `ValueError` when the chart does not fit the page.
+    fn testchart(&mut self) -> PyResult<()> {
+        self.inner.testchart().map_err(session_error)
     }
 
     /// Cancel the latest run and start a search of the style's density setting for the value
@@ -331,8 +370,8 @@ impl Run {
     }
 
     /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}`, or what a
-    /// search found, as `{stage, key, value, error, current, current_error, budget, trials,
-    /// reason, patch}`, once it is done; `None` for a plain run.
+    /// search found, as `{stage, key, value, error, minutes, current, current_error,
+    /// current_minutes, budget, trials, reason, patch}`, once it is done; `None` for a plain run.
     fn result<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         let found = self.peek(None, |run| run.result());
         found.map(|r| value_to_py(py, &r)).transpose()

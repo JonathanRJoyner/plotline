@@ -88,13 +88,39 @@ impl Session {
         Ok(())
     }
 
-    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page.
+    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page, and `"crop"` if there is one.
     #[wasm_bindgen(js_name = setCanvas)]
     pub fn set_canvas(&mut self, json: &str) -> Result<(), JsError> {
         let c: Canvas = serde_json::from_str(json)?;
-        self.inner
-            .set_canvas(Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit)?);
+        let page = Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit)?;
+        self.inner.set_canvas(page.with_crop(c.crop)?);
         Ok(())
+    }
+
+    /// The colour of the paper the preview shows, written as `#rrggbb`; white until it is set.
+    pub fn paper(&self) -> String {
+        self.inner.paper().to_string()
+    }
+
+    /// Use `color`, written as `#rrggbb`, as the paper the preview shows. Anything else is
+    /// refused and changes nothing. No run is touched, so only the next preview differs.
+    #[wasm_bindgen(js_name = setPaper)]
+    pub fn set_paper(&mut self, color: &str) -> Result<(), JsError> {
+        Ok(self.inner.set_paper(color)?)
+    }
+
+    /// The share `[x, y]` of the source image under the page point (`x`, `y`) in mm, as a pair of
+    /// numbers, or `undefined` without an image or where the page shows none of it.
+    #[wasm_bindgen(js_name = imagePoint)]
+    pub fn image_point(&self, x: f64, y: f64) -> Option<Vec<f64>> {
+        self.inner.image_point([x, y]).map(|p| p.to_vec())
+    }
+
+    /// The page point `[x, y]` in mm where the share (`x`, `y`) of the source image is drawn, as a
+    /// pair of numbers, or `undefined` without an image.
+    #[wasm_bindgen(js_name = pagePoint)]
+    pub fn page_point(&self, x: f64, y: f64) -> Option<Vec<f64>> {
+        self.inner.page_point([x, y]).map(|p| p.to_vec())
     }
 
     /// Use a list of `{"name", "width_mm", "color"}` as the pens, in drawing order.
@@ -106,6 +132,19 @@ impl Session {
             .map(|p| Pen::new(&p.name, p.width_mm, &p.color))
             .collect::<Result<_, _>>()?;
         Ok(self.inner.set_pens(pens)?)
+    }
+
+    /// Use a list of `{"name", "width_mm", "color"}` as the user's own pens, which the image
+    /// analysis picks its palette from; `[]` clears it.
+    #[wasm_bindgen(js_name = setPenLibrary)]
+    pub fn set_pen_library(&mut self, json: &str) -> Result<(), JsError> {
+        let pens: Vec<Pen> = serde_json::from_str(json)?;
+        let pens = pens
+            .iter()
+            .map(|p| Pen::new(&p.name, p.width_mm, &p.color))
+            .collect::<Result<_, _>>()?;
+        self.inner.set_pen_library(pens);
+        Ok(())
     }
 
     /// Use the machine in `json` for G-code export, or `null` for none. A machine also sets the
@@ -124,6 +163,12 @@ impl Session {
     /// Layer `layer` of the last finished drawing as G-code for the machine.
     pub fn gcode(&self, layer: usize) -> Result<String, JsError> {
         Ok(self.inner.gcode(layer)?)
+    }
+
+    /// The last finished drawing as one HPGL program with `unitsPerMm` plotter units to the
+    /// millimetre, above 0 and at most 1000.
+    pub fn hpgl(&self, units_per_mm: f64) -> Result<String, JsError> {
+        Ok(self.inner.hpgl(units_per_mm)?)
     }
 
     /// Switch to the built-in style `name`; a stage the old style also has keeps the values the
@@ -191,6 +236,12 @@ impl Session {
         })
     }
 
+    /// Cancel the latest run and make the test chart for the page and the first pen the latest
+    /// drawing, finished. Needs no image. Fails when the chart does not fit the page.
+    pub fn testchart(&mut self) -> Result<(), JsError> {
+        Ok(self.inner.testchart()?)
+    }
+
     /// Cancel the latest run and start a search of the style's density setting for the value
     /// whose drawing follows the tone map most closely, every trial within `target` of `metric`
     /// when both are given. The settings are left as they are; once the run is done, `result()`
@@ -211,11 +262,12 @@ impl Session {
     }
 
     /// A run of the style `name` at the settings a switch to it would give, which shares the
-    /// cache but leaves the session's style, settings, latest run and drawing alone. Fails for an
-    /// unknown style or when no image is set.
+    /// cache but leaves the session's style, settings, latest run and drawing alone. Its preview
+    /// is on the session's paper as it is now. Fails for an unknown style or when no image is set.
     pub fn trial(&mut self, name: &str) -> Result<Trial, JsError> {
         let (run, slot) = self.inner.trial(name)?;
-        Ok(Trial { run, slot })
+        let paper = self.inner.paper().to_string();
+        Ok(Trial { run, slot, paper })
     }
 
     /// `idle`, `running`, `done`, `cancelled` or `error`, for the latest run.
@@ -262,8 +314,8 @@ impl Session {
         self.inner.analysis().map(|a| json!(a).to_string())
     }
 
-    /// The last finished drawing as PNG bytes `width` pixels wide, with the travel moves and the
-    /// source image when asked.
+    /// The last finished drawing as PNG bytes `width` pixels wide on the session's paper, with the
+    /// travel moves and the source image when asked.
     #[wasm_bindgen(js_name = previewPng)]
     pub fn preview_png(
         &self,
@@ -277,7 +329,7 @@ impl Session {
             .transpose()?)
     }
 
-    /// The style, canvas, pens and settings as a JSON preset.
+    /// The style, canvas, pens, machine, paper and settings as a JSON preset.
     pub fn preset(&self) -> String {
         self.inner.preset().to_string()
     }
@@ -330,8 +382,9 @@ impl Run {
     }
 
     /// What a fit chose, as `{stage, key, metric, target, value, achieved, samples}` JSON, or what
-    /// a search found, as `{stage, key, value, error, current, current_error, budget, trials,
-    /// reason, patch}` JSON, once it is done; `undefined` for a plain run.
+    /// a search found, as `{stage, key, value, error, minutes, current, current_error,
+    /// current_minutes, budget, trials, reason, patch}` JSON, once it is done; `undefined` for a
+    /// plain run.
     pub fn result(&self) -> Option<String> {
         self.inner.result().map(|r| r.to_string())
     }
@@ -342,6 +395,8 @@ impl Run {
 pub struct Trial {
     run: plotline_core::Run,
     slot: Arc<Mutex<Shared>>,
+    /// The session's paper when the trial was made.
+    paper: String,
 }
 
 #[wasm_bindgen]
@@ -357,12 +412,14 @@ impl Trial {
         self.run.error()
     }
 
-    /// The drawing as PNG bytes `width` pixels wide, once the run is done.
+    /// The drawing as PNG bytes `width` pixels wide on the paper the session had when the trial
+    /// was made, once the run is done, for showing `shrink` times smaller: every mark is at least
+    /// `shrink` pixels wide; see [`preview::render_png_shrunk`].
     #[wasm_bindgen(js_name = previewPng)]
-    pub fn preview_png(&self, width: u32) -> Result<Option<Vec<u8>>, JsError> {
+    pub fn preview_png(&self, width: u32, shrink: f64) -> Result<Option<Vec<u8>>, JsError> {
         let drawing = self.slot.lock().unwrap().drawing.clone();
         Ok(drawing
-            .map(|d| preview::render_png(&d, width, false, false, None))
+            .map(|d| preview::render_png_shrunk(&d, width, &self.paper, shrink))
             .transpose()?)
     }
 }

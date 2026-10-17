@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 from looks import off_look, style_with_looks
 from machines import MACHINE
-from pngs import write_png
+from pngs import decode_png, write_png
 
 from plotline import Pen, _core, get_style, inks, list_styles
 from plotline.cli.main import main, parse_pen, parse_set
@@ -137,6 +137,63 @@ def test_run_writes_all_outputs(tmp_path, image):
     assert "paths:" in r.output and "tone:" in r.stderr
 
 
+def test_paper_reaches_the_preview_and_the_preset_and_may_be_an_ink_name(tmp_path, image):
+    png, saved = tmp_path / "o.png", tmp_path / "p.json"
+    base = ["run", "grid", image, "--out", str(tmp_path / "o.svg"), "--margin", "10"]
+    base += ["--set", "tone.resolution=64", "--preview", str(png), "--save-preset", str(saved)]
+
+    def paper_of(*options):
+        r = run(*base, *options)
+        assert r.exit_code == 0, r.output
+        corner = decode_png(png.read_bytes())[0, 0].tolist()
+        return corner, json.loads(saved.read_text())["paper"]
+
+    assert paper_of() == ([255, 255, 255], "#ffffff")
+    assert paper_of("--paper", "#f5f0e1") == ([245, 240, 225], "#f5f0e1")
+    assert paper_of("--paper", "Blue") == ([0x1D, 0x4F, 0xB8], inks()["blue"])
+    # The preset keeps the paper, and a run from it keeps it too.
+    assert paper_of("--preset", str(saved)) == ([0x1D, 0x4F, 0xB8], inks()["blue"])
+
+
+def test_a_bad_paper_exits_1(tmp_path, image):
+    out = str(tmp_path / "o.svg")
+    for args in (
+        ("run", "grid", image, "--out", out),
+        ("analyse", image),
+        ("testchart", "--out", out),
+    ):
+        r = run(*args, "--paper", "cream")
+        assert r.exit_code == 1 and "paper" in r.stderr, r.output
+
+
+def test_testchart_writes_the_chart_for_a_pen_and_a_page(tmp_path):
+    out, js, png = tmp_path / "c.svg", tmp_path / "c.json", tmp_path / "c.png"
+    r = run(
+        "testchart", "--out", str(out), "--json", str(js), "--preview", str(png),
+        "--pen", "Fine:0.5:blue", "--width", "148", "--height", "210",
+    )  # fmt: skip
+    assert r.exit_code == 0, r.output
+    assert r.output.startswith("paths: ") and "estimated: " in r.output
+    root = ET.parse(out).getroot()
+    assert root.get("width") == "148mm" and root[0].get("stroke") == inks()["blue"]
+    assert json.loads(js.read_text())["layers"][0]["pen"]["width_mm"] == 0.5
+    assert png.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_testchart_takes_a_machine_and_refuses_a_small_page(tmp_path):
+    machine, out = tmp_path / "m.json", tmp_path / "c.svg"
+    machine.write_text(json.dumps(MACHINE))
+    r = run("testchart", "--out", str(out), "--machine", str(machine))
+    assert r.exit_code == 0, r.output
+    assert ET.parse(out).getroot().get("width") == "200mm"
+    out.unlink()
+    r = run(
+        "testchart", "--out", str(out), "--pen", "Fat:2:black", "--width", "74", "--height", "105"
+    )
+    assert r.exit_code == 1 and "the page is too small for the test chart" in r.stderr
+    assert not out.exists()
+
+
 def test_preset_is_applied_and_style_kept(tmp_path, image):
     run(
         "run",
@@ -188,6 +245,14 @@ def test_a_preset_of_another_style_carries_its_changes(tmp_path, image):
     assert saved["settings"]["tone"]["gamma"] == 1.9
 
 
+def test_focus_points_reach_the_session_as_a_list(tmp_path, image):
+    base = ["--out", str(tmp_path / "o.svg"), "--quiet", "--set", "tone.resolution=64"]
+    p = tmp_path / "p.json"
+    r = run("run", "grid", image, *base, "--set", "tone.focus=[[0.5,0.5]]", "--save-preset", str(p))
+    assert r.exit_code == 0, r.output
+    assert json.loads(p.read_text())["settings"]["tone"]["focus"] == [[0.5, 0.5]]
+
+
 def test_two_pens_in_one_pen_mode_get_a_note(tmp_path, image):
     note = "Pen use is set to one pen, so only the first pen draws."
     args = ["run", "grid", image, "--out", str(tmp_path / "o.svg"), "--quiet"]
@@ -221,7 +286,7 @@ def test_run_prints_the_tone_match_and_an_optimize_suggestion(tmp_path, image):
     r = run(*args, "--optimize")
     assert r.exit_code == 0, r.output
     line = next(x for x in r.stdout.splitlines() if x.startswith("optimize: "))
-    assert "spacing_mm" in line
+    assert "spacing_mm" in line and " min" in line
     lines = r.stdout.splitlines()
     apply = [x for x in lines if x.startswith("  apply: --set hatch.spacing_mm=")]
     assert len(apply) == ("already follows" not in line)
@@ -287,6 +352,89 @@ def test_analyse_turns_the_page(tmp_path):
     assert "orientation" not in kinds(tmp_path / "wide.png", "--width", "297", "--height", "210")
 
 
+def _bars(path):
+    img = np.ones((48, 64, 3))
+    for i, rgb in enumerate([[1.0, 0.0, 0.0], [0.0, 0.7, 0.0], [0.0, 0.0, 1.0], [1.0, 0.9, 0.0]]):
+        img[:, i * 16 : (i + 1) * 16] = rgb
+    write_png(path, img)
+
+
+def test_analyse_reads_a_library(tmp_path):
+    _bars(tmp_path / "bars.png")
+    pens = [
+        {"name": "Ink", "width_mm": 0.3, "color": "#000000"},
+        {"name": "Lemon", "width_mm": 0.5, "color": "#f5c400"},
+    ]
+    library = {"format": "plotline-pens", "version": 1, "pens": pens}
+    (tmp_path / "pens.json").write_text(json.dumps(library))
+    r = run("analyse", str(tmp_path / "bars.png"), "--library", str(tmp_path / "pens.json"))
+    assert r.exit_code == 0, r.output
+    stats = json.loads(r.stdout)["stats"]
+    assert {ink["name"] for ink in stats["palette"]} <= {"Ink", "Lemon"}
+    assert stats["palette_additions"]
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("{oops", "pens.json is not a pen library: it is not valid JSON."),
+        ('{"format": "x"}', "pens.json: not a pen library: its format must be 'plotline-pens'."),
+        (
+            '{"format": "plotline-pens", "version": 2, "pens": []}',
+            "unsupported pen library version 2",
+        ),
+        ('{"format": "plotline-pens", "version": 1}', "it has no list of pens"),
+        ('{"format": "plotline-pens", "version": 1, "pens": [{"name": "A"}]}', "every pen needs"),
+        (
+            '{"format": "plotline-pens", "version": 1, "pens": '
+            '[{"name": "A", "width_mm": 0.3, "color": "red"}]}',
+            "#rrggbb",
+        ),
+    ],
+)
+def test_analyse_refuses_a_bad_library(tmp_path, content, message):
+    _bars(tmp_path / "bars.png")
+    (tmp_path / "pens.json").write_text(content)
+    r = run("analyse", str(tmp_path / "bars.png"), "--library", str(tmp_path / "pens.json"))
+    assert r.exit_code == 1 and r.stderr.startswith("Error: "), r.output
+    assert message in r.stderr and "Traceback" not in r.output
+
+
+def write_disc(path, cx, cy, radius):
+    """A dark disc on a light 256 x 256 field; the centre and radius are shares of the side."""
+    y, x = np.mgrid[0:256, 0:256] / 256
+    inside = (x - cx) ** 2 + (y - cy) ** 2 <= radius**2
+    write_png(path, np.repeat(np.where(inside, 0.1, 0.95)[..., None], 3, axis=2))
+
+
+def test_analyse_suggests_a_crop_to_the_subject_and_the_crop_option_applies_it(tmp_path):
+    write_disc(tmp_path / "disc.png", 0.7, 0.3, 0.05)
+    r = run("analyse", str(tmp_path / "disc.png"))
+    assert r.exit_code == 0, r.output
+    framing = next(s for s in json.loads(r.stdout)["suggestions"] if s["kind"] == "framing")
+    crop = framing["patch"]["page"]["crop"]
+    assert len(crop) == 4 and all(0 <= share <= 0.45 for share in crop) and any(crop)
+    # With the crop on the page, the suggestion is in effect and goes away.
+    given = ",".join(str(share) for share in crop)
+    assert "framing" in kinds(tmp_path / "disc.png")
+    assert "framing" not in kinds(tmp_path / "disc.png", "--crop", given)
+    # The crop reaches the preset that a run saves; 0,0,0,0 leaves it out.
+    saved = tmp_path / "p.json"
+    base = ["run", "grid", str(tmp_path / "disc.png"), "--out", str(tmp_path / "o.svg"), "--quiet"]
+    assert run(*base, "--crop", given, "--save-preset", str(saved)).exit_code == 0
+    assert json.loads(saved.read_text())["canvas"]["crop"] == crop
+    assert run(*base, "--crop", "0,0,0,0", "--save-preset", str(saved)).exit_code == 0
+    assert "crop" not in json.loads(saved.read_text())["canvas"]
+
+
+def test_crop_wants_four_numbers_the_engine_accepts(tmp_path, image):
+    for bad in ["1,2,3", "a,b,c,d", "0.1,0.1,0.1,0.1,0.1"]:
+        r = run("analyse", image, "--crop", bad)
+        assert r.exit_code == 2 and "must look like LEFT,TOP,RIGHT,BOTTOM" in r.stderr, r.output
+    r = run("analyse", image, "--crop", "0.5,0,0,0")
+    assert r.exit_code == 1 and "crop left must be from 0 to 0.45" in r.stderr, r.output
+
+
 def test_analyse_refuses_a_non_image(tmp_path):
     (tmp_path / "t.txt").write_text("not an image")
     r = run("analyse", str(tmp_path / "t.txt"))
@@ -333,6 +481,11 @@ def test_parsers():
     values = [parse_set(f"a.b={text}")[2] for text in ("true", "false", "64", "1e3", "abc", "")]
     assert values == [True, False, 64, 1000.0, "abc", ""]
     assert [type(v) for v in values[:4]] == [bool, bool, int, float]
+    # Text that starts with [ or { is JSON, such as the tone stage's list of focus points.
+    assert parse_set("tone.focus=[[0.5,0.3]]") == ("tone", "focus", [[0.5, 0.3]])
+    assert parse_set('a.b={"c":1}')[2] == {"c": 1}
+    with pytest.raises(click.BadParameter, match="Expecting"):
+        parse_set("tone.focus=[[0.5,")
     # Only the last two colons split, so the name may hold colons and the colour keeps its '#'.
     assert parse_pen("Fine: red:0.5:#ff0000") == Pen("Fine: red", 0.5, "#ff0000")
     # An ink name in any case stands for its colour.
@@ -407,6 +560,23 @@ def test_a_preset_file_gives_its_machine_and_two_pens_give_two_files(tmp_path, i
     r = coarse(tmp_path, image, "--preset", str(saved), "--gcode", str(out / "two"), *pens)
     assert r.exit_code == 0 and f"gcode: 2 files in {out / 'two'}" in r.stdout, r.output
     assert sorted(f.name for f in (out / "two").iterdir()) == ["plot_1_A.gcode", "plot_2_B.gcode"]
+
+
+def test_hpgl_is_written_with_the_given_resolution(tmp_path, image):
+    out = tmp_path / "o.hpgl"
+    assert coarse(tmp_path, image, "--hpgl", str(out)).exit_code == 0
+    text = out.read_text(encoding="ascii")
+    assert text.startswith("IN;\nSP1;\nPU") and text.endswith("PU;\nSP0;\n")
+    first = [int(v) for v in text.splitlines()[2][2:-1].split(",")]
+    assert coarse(tmp_path, image, "--hpgl", str(out), "--hpgl-units", "10").exit_code == 0
+    coarser = [int(v) for v in out.read_text(encoding="ascii").splitlines()[2][2:-1].split(",")]
+    # A quarter of the units to the mm, so the first point is a quarter as far from the corner.
+    assert all(abs(a - 4 * b) <= 2 for a, b in zip(first, coarser, strict=True))
+    out.unlink()
+    for bad in ("0", "-5", "1000.5"):
+        r = coarse(tmp_path, image, "--hpgl", str(out), "--hpgl-units", bad)
+        assert r.exit_code == 2 and "--hpgl-units" in r.output
+    assert not out.exists()
 
 
 def test_a_gcode_run_needs_a_machine_that_works(tmp_path, image):

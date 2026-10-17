@@ -502,6 +502,29 @@ mod tests {
         }
     }
     #[test]
+    fn a_density_mark_says_what_the_setting_drives() {
+        // x-density-of names the measure that a denser setting must not lower; see tests/laws.rs.
+        let mut marked = 0;
+        for style in list_styles() {
+            for stage in &style.stages {
+                let schema = stage.schema();
+                for (key, p) in schema["properties"].as_object().into_iter().flatten() {
+                    let Some(of) = p.get("x-density-of") else {
+                        continue;
+                    };
+                    let who = format!("{}.{}.{key}", style.name, stage.name());
+                    assert!(p.get("x-density").is_some(), "{who} marks no density");
+                    assert!(
+                        matches!(of.as_str(), Some("points" | "lines" | "length")),
+                        "{who}: {of}"
+                    );
+                    marked += 1;
+                }
+            }
+        }
+        assert!(marked > 0);
+    }
+    #[test]
     fn descriptions_have_no_runs_of_spaces() {
         // A string continued onto the next line without a backslash keeps the indent.
         for style in list_styles() {

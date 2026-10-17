@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { fitView, toMm, zoomAt, zoomPercent } from "./view";
+import { fitView, onPaper, toMm, zoomAt, zoomPercent } from "./view";
 
 test("zoomPercent compares the scale with true size", () => {
   expect(zoomPercent(96 / 25.4)).toBe(100);
@@ -25,4 +25,11 @@ test("zoomAt keeps the point under the cursor fixed", () => {
   const [bx, by] = toMm(z, 100, 60);
   expect(Math.abs(ax - bx)).toBeLessThan(1e-9);
   expect(Math.abs(ay - by)).toBeLessThan(1e-9);
+});
+
+test("onPaper picks the grey that reads on the paper", () => {
+  expect(onPaper("#ffffff")).toBe("#6b7280");
+  expect(onPaper("#f5ecd7")).toBe("#6b7280");
+  expect(onPaper("#000000")).toBe("#c4c8d0");
+  expect(onPaper("#202830")).toBe("#c4c8d0");
 });
