@@ -24,7 +24,11 @@ async function open(page: Page, { tour = false } = {}) {
 }
 
 const status = (page: Page) => page.locator(".status > span").first();
-const styleSelect = (page: Page) => page.getByRole("combobox", { name: "Style", exact: true });
+// The Style button shows the current style, by name in its value, and opens the style picker.
+const styleButton = (page: Page) => page.getByRole("button", { name: /^Style: / });
+const currentStyle = async (page: Page) => (await styleButton(page).getAttribute("value"))!;
+const picker = (page: Page) => page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Styles", exact: true }) });
+const card = (page: Page, style: string) => picker(page).locator(`.picker button[value="${style}"]`);
 
 // Waits for a run newer than `after` to end, expects it done, and returns its id.
 async function ran(page: Page, after: number): Promise<number> {
@@ -46,7 +50,9 @@ async function sample(page: Page): Promise<number> {
 }
 
 async function pick(page: Page, style: string, after: number): Promise<number> {
-  await styleSelect(page).selectOption(style);
+  await styleButton(page).click();
+  await card(page, style).click();
+  await expect(picker(page)).toBeHidden();
   return ran(page, after);
 }
 
@@ -54,7 +60,14 @@ async function pick(page: Page, style: string, after: number): Promise<number> {
 const fitPanel = (page: Page) => page.locator("details.fit-panel");
 const fitSummary = (page: Page) => page.locator("details.fit-panel > summary");
 
-const styleNames = (page: Page) => styleSelect(page).locator("option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+// The styles in the picker's order, read with the picker open, which it then closes.
+async function styleNames(page: Page): Promise<string[]> {
+  await styleButton(page).click();
+  const names = await picker(page).locator(".picker button[value]").evaluateAll((bs) => bs.map((b) => (b as HTMLButtonElement).value));
+  await page.keyboard.press("Escape");
+  await expect(picker(page)).toBeHidden();
+  return names;
+}
 
 test("the empty preview offers the sample image and opening one", async ({ page }) => {
   await open(page);
@@ -84,7 +97,7 @@ test("the sample image draws in every style", async ({ page }) => {
   let id = await sample(page);
   const styles = await styleNames(page);
   expect(styles.length).toBeGreaterThan(10);
-  const first = await styleSelect(page).inputValue();
+  const first = await currentStyle(page);
   for (const style of styles.filter((s) => s !== first)) {
     id = await pick(page, style, id);
     await expect(page.locator(".stats"), style).toContainText(/paths?/);
@@ -122,7 +135,7 @@ test("an exported SVG loads back as a preset", async ({ page }) => {
   id = await pick(page, "line", id);
   await page.getByLabel("Load preset").setInputFiles({ name: download.suggestedFilename(), mimeType: "image/svg+xml", buffer: svg });
   await ran(page, id);
-  await expect(styleSelect(page)).toHaveValue("stipple");
+  await expect(styleButton(page)).toHaveAttribute("value", "stipple");
   await expect(count).toHaveValue(changed);
 });
 
@@ -515,18 +528,20 @@ test("a dot style's marks show at the fit zoom, where the pen is under a pixel",
   expect(dots).toBeGreaterThan(1000);
 });
 
-test("the thumbnail grid picks a style", async ({ page }) => {
+test("the style picker groups the styles and picks one", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);
-  const styles = await styleNames(page);
-  const first = await styleSelect(page).inputValue();
-  const i = styles.findIndex((s) => s !== first);
-  await page.getByRole("button", { name: "Try all styles" }).click();
-  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "All styles" }) });
+  const first = await currentStyle(page);
+  await styleButton(page).click();
+  const dialog = picker(page);
   await expect(dialog).toBeVisible();
-  const choice = dialog.locator("ul.thumbs li").nth(i).getByRole("button");
+  await expect(dialog.locator(".picker h3")).toHaveText(["Lines", "The Voronoi point family", "Sketch lines", "Other placers", "Tone only"]);
+  await expect(card(page, first)).toHaveAttribute("aria-current", "true");
+  const choice = dialog.locator(`.picker button[value]:not([value="${first}"])`).first();
+  const style = (await choice.getAttribute("value"))!;
+  await expect(choice.locator(".description")).toHaveText((await choice.getAttribute("title"))!);
   await expect(choice.locator("img")).toBeVisible({ timeout: 100_000 });
-  // Pointing at the cell shows its picture over twice as wide, and the click still reaches the cell.
+  // Pointing at the card shows its picture over twice as wide, and the click still reaches the card.
   await choice.hover();
   const zoom = dialog.locator(".zoom img");
   await expect(zoom).toBeVisible();
@@ -534,45 +549,106 @@ test("the thumbnail grid picks a style", async ({ page }) => {
   expect(large!.width).toBeGreaterThan(2 * small!.width);
   await choice.click();
   await expect(dialog).toBeHidden();
-  await expect(styleSelect(page)).toHaveValue(styles[i]);
+  await expect(styleButton(page)).toHaveAttribute("value", style);
   await ran(page, id);
 });
 
-test("the thumbnail grid survives reopening and a run in progress", async ({ page }) => {
+test("the style picker works from the keyboard", async ({ page }) => {
+  const id = await sample(page);
+  const first = await currentStyle(page);
+  await styleButton(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(card(page, first)).toBeFocused();
+  await page.keyboard.press("Tab");
+  const next = await page.evaluate(() => (document.activeElement as HTMLButtonElement).value);
+  expect(next).not.toBe(first);
+  await page.keyboard.press("Enter");
+  await expect(picker(page)).toBeHidden();
+  await expect(styleButton(page)).toHaveAttribute("value", next);
+  await ran(page, id);
+  // Opened again, the picker starts on the new style.
+  await styleButton(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(card(page, next)).toBeFocused();
+  await expect(card(page, next)).toHaveAttribute("aria-current", "true");
+  await page.keyboard.press("Escape");
+  await expect(picker(page)).toBeHidden();
+});
+
+test("the style picker works before an image", async ({ page }) => {
+  await open(page);
+  await styleButton(page).click();
+  await expect(picker(page)).toContainText("Open an image to see each style drawn on it");
+  await expect(picker(page).locator(".picker img")).toHaveCount(0);
+  await card(page, "hatch").click();
+  await expect(picker(page)).toBeHidden();
+  await expect(styleButton(page)).toHaveAttribute("value", "hatch");
+});
+
+test("an image pasted with the style picker open draws its pictures", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  await styleButton(page).click();
+  await expect(picker(page).locator(".picker img")).toHaveCount(0);
+  await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    [canvas.width, canvas.height] = [60, 80];
+    const g = canvas.getContext("2d")!;
+    g.fillRect(10, 10, 40, 60);
+    const blob = await new Promise<Blob>((done) => canvas.toBlob((b) => done(b!), "image/png"));
+    const data = new DataTransfer();
+    data.items.add(new File([blob], "pasted.png", { type: "image/png" }));
+    document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data }));
+  });
+  await expect(picker(page)).not.toContainText("Open an image to see each style drawn on it");
+  await expect(picker(page).locator(".picker img").first()).toBeVisible({ timeout: 100_000 });
+});
+
+test("picking the current style again leaves the drawing alone", async ({ page }) => {
+  const id = await sample(page);
+  await styleButton(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(card(page, await currentStyle(page))).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(picker(page)).toBeHidden();
+  await page.waitForTimeout(500); // time for a run to start by mistake
+  await expect(status(page)).toHaveText(`Run ${id}: done`);
+});
+
+test("the style picker survives reopening and a run in progress", async ({ page }) => {
   test.setTimeout(180_000);
   const id = await sample(page);
   const styles = await styleNames(page);
-  const tryAll = page.getByRole("button", { name: "Try all styles" });
-  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "All styles" }) });
+  const dialog = picker(page);
   // Opened while a run draws, then closed and reopened before its pictures finish.
   await page.getByRole("button", { name: "Run" }).click();
   for (let i = 0; i < 3; i++) {
-    await tryAll.click();
+    await styleButton(page).click();
     await expect(dialog).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
   }
-  await tryAll.click();
-  await expect(dialog.locator("ul.thumbs img")).toHaveCount(styles.length, { timeout: 150_000 });
-  await expect(dialog.locator("ul.thumbs .paper > span")).toHaveCount(0); // no cell left drawing or failed
+  await styleButton(page).click();
+  await expect(dialog.locator(".picker img")).toHaveCount(styles.length, { timeout: 150_000 });
+  await expect(dialog.locator(".picker .paper > span")).toHaveCount(0); // no card left drawing or failed
   await page.keyboard.press("Escape");
   await ran(page, id);
 });
 
 test("Undo and Redo step through style changes", async ({ page }) => {
   let id = await sample(page);
-  const first = await styleSelect(page).inputValue();
+  const first = await currentStyle(page);
   const next = (await styleNames(page)).find((s) => s !== first)!;
   id = await pick(page, next, id);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await expect(styleSelect(page)).toHaveValue(first);
+  await expect(styleButton(page)).toHaveAttribute("value", first);
   id = await ran(page, id);
   await page.getByRole("button", { name: "Redo", exact: true }).click();
-  await expect(styleSelect(page)).toHaveValue(next);
+  await expect(styleButton(page)).toHaveAttribute("value", next);
   id = await ran(page, id);
   await page.locator("main").click();
   await page.keyboard.press("Control+z");
-  await expect(styleSelect(page)).toHaveValue(first);
+  await expect(styleButton(page)).toHaveAttribute("value", first);
   await ran(page, id);
 });
 
@@ -736,16 +812,23 @@ test("Tab reaches the toolbar first, and the skip link jumps to the style settin
   await page.keyboard.press("Enter");
   await expect(page.locator("#style-settings")).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(styleSelect(page)).toBeFocused();
+  await expect(styleButton(page)).toBeFocused();
 });
 
 test("on a phone the style menu shows without scrolling", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await sample(page);
   await expect(fitPanel(page)).not.toHaveAttribute("open", "");
-  const menu = (await styleSelect(page).boundingBox())!;
+  const menu = (await styleButton(page).boundingBox())!;
   expect(menu.y + menu.height, "bottom of the Style menu").toBeLessThanOrEqual(812);
   expect(await page.evaluate(() => scrollY)).toBe(0);
+  // The picker fits the phone: two cards a row and no sideways scroll.
+  await styleButton(page).click();
+  const cards = picker(page).locator(".picker button[value]");
+  const [a, b, c] = await Promise.all([0, 1, 2].map((i) => cards.nth(i).boundingBox()));
+  expect(b!.y).toBe(a!.y);
+  expect(c!.y).toBeGreaterThan(a!.y);
+  expect(await picker(page).evaluate((d) => d.scrollWidth <= d.clientWidth)).toBe(true);
 });
 
 test("two pen edits made before the first reply both land", async ({ page }) => {
@@ -947,7 +1030,7 @@ test("the tour gives focus back when it closes", async ({ page }) => {
   await expect(card).toBeHidden();
   await expect(tour).toBeFocused();
   // Opened with another element focused, the X and Done go back to it. dispatchEvent leaves the focus where it was.
-  const style = styleSelect(page);
+  const style = styleButton(page);
   for (const by of ["X", "Done"]) {
     await style.focus();
     await tour.dispatchEvent("click");

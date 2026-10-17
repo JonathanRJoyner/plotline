@@ -232,6 +232,10 @@ label { display: flex; align-items: center; gap: 8px; margin: 6px 0; color: var(
 label > input:not([type="checkbox"], [type="range"]), label > select { margin-left: auto; }
 label > input[type="text"] { flex: 1; min-width: 0; }
 label > select { min-width: 0; max-width: 65%; }
+/* The Style row's button, which opens the style picker: a field's height, as the menu it replaced, so the
+   phone layout keeps it on the first screen. A long label ends in an ellipsis. */
+label > button.pick { height: 28px; margin-left: auto; min-width: 0; max-width: 65%; }
+label > button.pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 label:has(> textarea), label:has(> .wide) { flex-wrap: wrap; }
 label > textarea, label > .wide { flex-basis: 100%; max-width: none; margin-left: 0; }
 /* A slider: label and number on one line, the slider under them. */
@@ -374,14 +378,23 @@ dialog.modal nav .help { margin: 8px 4px 0; }
 ol.pens { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 ol.pens button { width: 100%; gap: 8px; font-variant-numeric: tabular-nums; }
 dialog.modal .actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
-/* The styles dialog: one cell per style across the whole body, its picture on white paper over its name. */
-dialog.modal .thumbs { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); align-content: start; gap: 10px; margin: 0; padding: 12px 16px 16px; overflow-y: auto; list-style: none; }
-dialog.modal .thumbs button { flex-direction: column; align-items: stretch; width: 100%; height: auto; padding: 6px; }
-dialog.modal .thumbs button[aria-current] { color: var(--accent); border-color: var(--accent); }
+/* The style picker: one scrolling panel across the body (beside the tabs once there are two), a
+   heading per family, and a card per style: its picture on paper, its name, then its description. */
+dialog.modal .picker { grid-column: 1 / -1; grid-row: 1 / -1; overflow-y: auto; padding: 0 16px 16px; }
+dialog.modal nav + .picker { grid-column: auto; grid-row: auto; }
+dialog.modal .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+dialog.modal .thumbs button { flex-direction: column; align-items: stretch; gap: 4px; width: 100%; height: 100%; padding: 6px; text-align: left; }
+dialog.modal .thumbs button[aria-current] { border-color: var(--accent); }
 dialog.modal .thumbs .paper { display: grid; place-items: center; overflow: hidden; color: #6b7280; font-size: 12px; font-weight: 400; background: #fff; border-radius: 4px; }
 dialog.modal .thumbs img { display: block; width: 100%; height: 100%; }
-/* The enlarged picture of the cell pointed at: fixed, so the grid does not move, and deaf to the
-   pointer, so the cell under it still takes the click. */
+dialog.modal .thumbs .name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+dialog.modal .thumbs button[aria-current] .name { color: var(--accent); }
+dialog.modal .thumbs .name svg { width: 14px; height: 14px; }
+dialog.modal .thumbs .note { padding: 0 6px; font-size: 11px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; }
+/* Cut to three lines on screen; the whole sentence stays in the text and the tooltip. */
+dialog.modal .thumbs .description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; font-size: 12px; font-weight: 400; color: var(--muted); }
+/* The enlarged picture of the card pointed at: fixed, so the grid does not move, and deaf to the
+   pointer, so the card under it still takes the click. */
 dialog.modal .zoom { position: fixed; z-index: 1; margin: 0; padding: 6px; pointer-events: none; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 dialog.modal .zoom img { display: block; width: 100%; background: #fff; border-radius: 4px; }
 dialog.modal .zoom figcaption { height: 18px; margin-top: 4px; font-size: 13px; font-weight: 500; text-align: center; }

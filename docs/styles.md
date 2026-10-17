@@ -11,6 +11,8 @@ Each picture is the code-rendered still life from the README, drawn on A4 with a
 - [Other placers](#other-placers): [`halftone`](#halftone), [`dither`](#dither), [`circles`](#circles)
 - [Tone only](#tone-only): [`contours`](#contours), [`flow`](#flow), [`hilbert`](#hilbert), [`mosaic`](#mosaic)
 
+The GUI's style picker groups the styles under these same headings, and a test keeps the two equal, so a new style gets a section here and a family there.
+
 ## Settings every style shares
 
 **Image** (the `tone` stage) turns the picture into the map of ink the style draws from. `resolution` is the map's longer side in pixels; more follows the image more closely and runs slower. `black` and `white` clip the ends of the tone range, or `levels` set to `auto` picks them from the image itself. `gamma` above 1 darkens the midtones: `waves`, `spiral` and `mosaic` start at 1.9, because they ink in proportion to the tone and would draw the midtones too light at 1. `contrast` pushes tones away from mid-grey, `blur_mm` smooths away noise and fine texture, and `invert` swaps light and dark. `focus` is a list of points, `[x, y]` as shares of the image from its top-left corner and set in the GUI by turning on Focus and clicking the preview: the map keeps its detail within `focus_mm` of the nearest point and blurs more the further out it goes, up to `focus_blur_mm` from three radii out, so a style's marks spend their detail near the points. Without points nothing changes.

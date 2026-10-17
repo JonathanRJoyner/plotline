@@ -464,6 +464,18 @@ test("thumbs without an image posts each style's error", async () => {
   expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
 });
 
+test("thumbs with names draws those styles in that order, and an unknown name fails alone", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("thumbs", 120, 1, ["truchet", "nope", "grid"]);
+  for (let i = 0; i < 5000 && posted.filter((m) => m.type === "thumb").length < 3; i++) await macrotask();
+  const events = posted.filter((m) => m.type === "thumb");
+  expect(events.map((m) => m.style)).toEqual(["truchet", "nope", "grid"]);
+  expect(events.map((m) => m.png === null)).toEqual([false, true, false]);
+  expect(events[1].error).toMatch(/nope/);
+});
+
 test("setPaper only repaints: no run, and a restore brings the old paper back", async () => {
   const { posted, call, ok, ended } = setup();
   ok("setImage", ...image());

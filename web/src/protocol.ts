@@ -118,10 +118,10 @@ export class Protocol {
       loadPresetText: (text: string) => s().loadPreset(presetFromText(text)),
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
       restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
-      // Draws every style after the reply, which carries the id its `thumb` events will have.
-      thumbs: (width: number, shrink = 1) => {
+      // Draws `names`, or every style, after the reply, which carries the id its `thumb` events will have.
+      thumbs: (width: number, shrink = 1, names?: string[]) => {
         const id = ++this.thumbsId;
-        this.go = () => void this.thumbs(id, width, shrink);
+        this.go = () => void this.thumbs(id, width, shrink, names);
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
@@ -202,12 +202,12 @@ export class Protocol {
     };
   }
 
-  // Draws every listed style in turn as a trial, which leaves the session's own run, drawing and
-  // settings alone, and posts each as a `thumb` event. It yields as `drive` does, so commands get
-  // their turn, and a newer `thumbs` or a `cancelThumbs` ends it.
-  private async thumbs(id: number, width: number, shrink: number): Promise<void> {
+  // Draws the given styles, or every listed one, in turn as a trial, which leaves the session's own
+  // run, drawing and settings alone, and posts each as a `thumb` event. It yields as `drive` does,
+  // so commands get their turn, and a newer `thumbs` or a `cancelThumbs` ends it.
+  private async thumbs(id: number, width: number, shrink: number, names?: string[]): Promise<void> {
     let lastYield = performance.now();
-    for (const { name } of JSON.parse(listStyles()) as Array<{ name: string }>) {
+    for (const name of names ?? (JSON.parse(listStyles()) as Array<{ name: string }>).map((s) => s.name)) {
       if (id !== this.thumbsId) return;
       let png: Uint8Array | null = null;
       let error: string | null = null;
