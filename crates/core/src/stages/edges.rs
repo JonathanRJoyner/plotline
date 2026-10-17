@@ -48,6 +48,21 @@ impl Default for DelaunaySettings {
     }
 }
 
+/// Settings for the Voronoi cells renderer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct CellsSettings {
+    /// Leave out the wall between two points farther apart than this, such as the walls of the cells that reach across white paper.
+    #[schemars(range(min = 0.5, max = 50.0), extend("x-step" = 0.5, "x-unit" = "mm"))]
+    pub max_edge_mm: f64,
+}
+
+impl Default for CellsSettings {
+    fn default() -> Self {
+        CellsSettings { max_edge_mm: 16.0 }
+    }
+}
+
 /// The length of the segment from point `a` to point `b`.
 fn length(points: &[[f64; 2]], (a, b): (usize, usize)) -> f64 {
     math::hypot(points[b][0] - points[a][0], points[b][1] - points[a][1])
@@ -97,8 +112,8 @@ fn circumcentre(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> [f64; 2] {
 /// The Voronoi edges of `points` that have two ends, as paths clipped to `rect`: one per Delaunay
 /// edge shared by two triangles, joining their circumcentres. Edges on the hull are left out,
 /// since their Voronoi edges run off to infinity, and so is any edge with an end that is not finite
-/// (a sliver of collinear points).
-fn voronoi_paths(points: &[[f64; 2]], rect: [f64; 4]) -> Paths {
+/// (a sliver of collinear points), and any whose Delaunay edge is longer than `max_edge`.
+fn voronoi_paths(points: &[[f64; 2]], rect: [f64; 4], max_edge: f64) -> Paths {
     let tri = triangulate(points);
     let (corners, _) = tri.triangles.as_chunks::<3>();
     let centres: Vec<[f64; 2]> = corners
@@ -110,6 +125,10 @@ fn voronoi_paths(points: &[[f64; 2]], rect: [f64; 4]) -> Paths {
         .iter()
         .enumerate()
         .filter(|&(e, &h)| h != EMPTY && e < h)
+        .filter(|&(e, _)| {
+            let next = if e % 3 == 2 { e - 2 } else { e + 1 };
+            length(points, (tri.triangles[e], tri.triangles[next])) <= max_edge
+        })
         .map(|(e, &h)| (e / 3, h / 3))
         .filter(|&(s, t)| centres[s].iter().chain(&centres[t]).all(|v| v.is_finite()))
         .collect();
@@ -288,10 +307,10 @@ impl Stage for CellsRenderer {
         Kind::Paths
     }
     fn schema(&self) -> Value {
-        schema_for::<NoSettings>()
+        schema_for::<CellsSettings>()
     }
     fn defaults(&self) -> Value {
-        defaults_for::<NoSettings>()
+        defaults_for::<CellsSettings>()
     }
     fn start(
         &self,
@@ -299,11 +318,11 @@ impl Stage for CellsRenderer {
         settings: &Value,
         _ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
-        validate::<NoSettings>(self.name(), &self.schema(), settings)?;
+        let s = validate::<CellsSettings>(self.name(), &self.schema(), settings)?;
         let points = inputs.points().clone();
         let rect = inputs.tone().rect_mm();
         Ok(start_run(self.name(), move || {
-            voronoi_paths(&points.0, rect)
+            voronoi_paths(&points.0, rect, s.max_edge_mm)
         }))
     }
 }
@@ -376,7 +395,7 @@ mod tests {
         assert_eq!(DelaunayRenderer.requires(), &[Kind::Points]);
         assert_eq!(CellsRenderer.requires(), &[Kind::Points, Kind::Tone]);
         assert!(MstRenderer.schema()["properties"].is_null());
-        assert!(CellsRenderer.schema()["properties"].is_null());
+        assert!(CellsRenderer.schema()["properties"]["max_edge_mm"].is_object());
     }
 
     #[test]
@@ -483,7 +502,7 @@ mod tests {
         // The flat triangle (10, 10), (50, 10), (30, 11) has its circumcentre at y = -189.5, far
         // above the rect on the page, so the two Voronoi edges that reach it are cut at y = 10.
         let points = vec![[10.0, 10.0], [50.0, 10.0], [30.0, 11.0], [30.0, 49.0]];
-        let paths = run(&CellsRenderer, points, json!({}));
+        let paths = run(&CellsRenderer, points, json!({"max_edge_mm": 50.0}));
         assert_inside(&paths, RECT);
         let cut = paths.coords().iter().filter(|p| (p[1] - 10.0).abs() < 1e-9);
         assert_eq!(cut.count(), 2);

@@ -1,6 +1,6 @@
 //! Measures the looks (see `docs/decisions/2026-10-16-looks.md`): for every listed style with a
 //! density setting, the values of its Faithful, Quick and Fine looks, from drawings of the
-//! regression gallery's three test images on A4 with the default 10 mm margin, the default
+//! regression gallery's three test images and six more on A4 with the default 10 mm margin, the default
 //! 0.3 mm pen and the default speeds.
 //!
 //! Run it with `cargo run --release -p plotline-core --example looks [-- style ...]`. It prints a
@@ -12,12 +12,15 @@
 //! or error) on any image, or plot for longer than twice Balanced's time on the same image or an
 //! hour, whichever is longer.
 //!
-//! - **Faithful:** the lowest mean tone error, `auto` only where it beats `off` by 5 %, offered
+//! Each drawing is scored by `ToneMatch::score`, the tone error over blank paper's divided by a
+//! power of the contrast, and a trial by its median score over the images.
+//!
+//! - **Faithful:** the lowest median score, `auto` only where it beats `off` by 5 %, offered
 //!   when it beats Balanced by 10 %.
 //! - **Quick:** where Balanced's median plot time is over 40 minutes, the median of what the
-//!   budget fit finds for 30 minutes, offered when its mean tone error is at most twice
+//!   budget fit finds for 30 minutes, offered when its median score is at most twice
 //!   Balanced's.
-//! - **Fine:** the densest value whose mean tone error stays within a quarter of Balanced's, with
+//! - **Fine:** the densest value whose median score stays within a quarter of Balanced's, with
 //!   every value between it and the default passing too, unless it lies within a step of
 //!   Faithful's.
 
@@ -29,7 +32,11 @@ use plotline_core::fit::Density;
 use plotline_core::lint::Severity;
 use plotline_core::registry::list_styles;
 use plotline_core::settings::merge;
-use plotline_core::synthetic::{gradient, scene, still_life};
+use plotline_core::style::SPARSEST_LOOK;
+use plotline_core::synthetic::{
+    checkerboard, color_bars, gradient, lit_strokes, scene, still_life,
+};
+use plotline_core::tone_match::ToneMatch;
 use plotline_core::{Image, Job, RunState, Session};
 use serde_json::{json, Map, Value};
 
@@ -43,7 +50,7 @@ const LONGEST: f64 = 60.0;
 const REACH: f64 = 4.0;
 /// The ratio between neighbouring values on the scan's grid.
 const STEP: f64 = 1.19;
-/// How much lower a mean tone error must be to count as better, for a look over Balanced and for
+/// How much lower a median score must be to count as better, for a look over Balanced and for
 /// `auto` over `off`; and how much higher Fine's may be than Balanced's.
 const BETTER: f64 = 0.9;
 const AUTO_BETTER: f64 = 0.95;
@@ -52,16 +59,68 @@ const FINE_WORSE: f64 = 1.25;
 /// alone takes most of half an hour reaches it only by a spacing that loses the picture.
 const QUICK_WORSE: f64 = 2.0;
 
-/// The images, the shape of the default A4 drawing area, as in the gallery.
-fn images() -> Vec<Image> {
-    vec![still_life(600, 875), scene(600, 875), gradient(600, 875)]
+/// `img` with every channel passed through `f`.
+fn shade(mut img: Image, f: impl Fn(f32) -> f32) -> Image {
+    img.rgb.iter_mut().for_each(|v| *v = f(*v));
+    img
 }
+
+/// Three dark discs on white paper, like a poster of flat shapes.
+fn poster(w: u32, h: u32) -> Image {
+    let discs = [(0.3, 0.36, 0.12), (0.7, 0.73, 0.08), (0.4, 1.09, 0.15)];
+    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let (u, v) = (f64::from(x) / f64::from(w), f64::from(y) / f64::from(w));
+            let ink = (discs.iter())
+                .any(|&(cx, cy, r)| (u - cx) * (u - cx) + (v - cy) * (v - cy) < r * r);
+            let g = if ink { 0.1 } else { 1.0 };
+            rgb.extend([g, g, g]);
+        }
+    }
+    Image {
+        width: w,
+        height: h,
+        rgb,
+    }
+}
+
+/// The images, the shape of the default A4 drawing area: the gallery's three, then flat shapes
+/// on white, a checkerboard, colour bars, line art lit from one side, and the scene made dark and
+/// made pale (the colour and styles audit's F13). Pictures whose blurred tone barely varies, such
+/// as plain noise or evenly lit line art, are left out: blank paper beats every drawing of them.
+fn images() -> Vec<Image> {
+    vec![
+        still_life(600, 875),
+        scene(600, 875),
+        gradient(600, 875),
+        poster(600, 875),
+        checkerboard(600, 875, 6),
+        color_bars(600, 875),
+        lit_strokes(600, 875, 0.3),
+        shade(scene(600, 875), |v| v.powf(2.5)),
+        shade(scene(600, 875), |v| 1.0 - (1.0 - v) * 0.35),
+    ]
+}
+
+/// The images' names, in the order of [`images`].
+const NAMES: [&str; 9] = [
+    "still life",
+    "scene",
+    "gradient",
+    "poster",
+    "checker",
+    "bars",
+    "lines",
+    "dark",
+    "pale",
+];
 
 /// One drawing's measurements.
 #[derive(Clone)]
 struct Eval {
     minutes: f64,
-    error: Option<f64>,
+    score: Option<f64>,
     warnings: Vec<&'static str>,
 }
 
@@ -73,9 +132,14 @@ struct Trial {
 }
 
 impl Trial {
-    fn mean_error(&self) -> f64 {
-        let sum: f64 = self.evals.iter().map(|e| e.error.unwrap_or(1.0)).sum();
-        sum / self.evals.len() as f64
+    /// The median score over the images; a drawing without one counts as infinite.
+    fn score(&self) -> f64 {
+        median(
+            self.evals
+                .iter()
+                .map(|e| e.score.unwrap_or(f64::INFINITY))
+                .collect(),
+        )
     }
 
     fn median_minutes(&self) -> f64 {
@@ -103,7 +167,7 @@ impl Trial {
                 };
                 format!(
                     "{:.4} {:.1} min {warns}",
-                    e.error.unwrap_or(f64::NAN),
+                    e.score.unwrap_or(f64::NAN),
                     e.minutes
                 )
             })
@@ -112,7 +176,7 @@ impl Trial {
             "| {name} | `{}` | {} | {:.4} |\n",
             self.patch,
             cells.join(" | "),
-            self.mean_error()
+            self.score()
         )
     }
 }
@@ -180,7 +244,7 @@ impl Bench {
                     eprintln!("{style} {patch}: {e}");
                     return Eval {
                         minutes: f64::INFINITY,
-                        error: None,
+                        score: None,
                         warnings: vec!["failed"],
                     };
                 }
@@ -191,7 +255,7 @@ impl Bench {
                 warnings.dedup();
                 Eval {
                     minutes: s.stats().unwrap().estimated_seconds / 60.0,
-                    error: s.tone_match().map(|t| t.error),
+                    score: s.tone_match().map(|t| ToneMatch::score(&t)),
                     warnings,
                 }
             })
@@ -234,11 +298,14 @@ fn with(patch: &Value, d: &Density, v: f64) -> Value {
     merge(patch, &json!({ d.stage.clone(): { d.key.clone(): value } }))
 }
 
-/// The scan's values from [`REACH`] times sparser than `base` to as many times denser, sparsest
+/// The scan's values from [`SPARSEST_LOOK`] times sparser than `base` to [`REACH`] times denser, sparsest
 /// first, with `base` among them.
 fn grid(d: &Density, base: f64) -> Vec<f64> {
     let n = (REACH.ln() / STEP.ln()).round() as i32;
-    let mut values: Vec<f64> = (-n..=n).map(|k| tidy(d, base * STEP.powi(k))).collect();
+    // The sparse side stops where a look would swamp the picture's features.
+    let m = (SPARSEST_LOOK.ln() / STEP.ln()).floor() as i32;
+    let ks = if d.direct { -m..=n } else { -n..=m };
+    let mut values: Vec<f64> = ks.map(|k| tidy(d, base * STEP.powi(k))).collect();
     values.push(base);
     values.sort_by(|a, b| a.total_cmp(b));
     values.dedup();
@@ -256,7 +323,9 @@ struct Found {
 
 fn measure(style: &str) -> Found {
     let mut table = format!(
-        "\n### {style}\n\n| look | settings | still life | scene | gradient | mean error |\n|---|---|---|---|---|---|\n"
+        "\n### {style}\n\n| look | settings | {} | median score |\n|---|---|{}---|\n",
+        NAMES.join(" | "),
+        "---|".repeat(NAMES.len())
     );
     let mut looks = Map::new();
     let mut bench = Bench::new(style);
@@ -282,19 +351,19 @@ fn measure(style: &str) -> Found {
         })
         .collect();
 
-    // Faithful: the lowest mean tone error of each variant, `auto` only when it is clearly lower.
+    // Faithful: the lowest median score of each variant, `auto` only when it is clearly lower.
     let best = |scan: &Vec<Trial>| {
         (scan.iter())
             .filter(|t| t.allowed(&balanced))
-            .min_by(|a, b| a.mean_error().total_cmp(&b.mean_error()))
+            .min_by(|a, b| a.score().total_cmp(&b.score()))
             .cloned()
     };
     let faithful = match (best(&scans[0]), best(&scans[1])) {
-        (Some(off), Some(auto)) if auto.mean_error() < AUTO_BETTER * off.mean_error() => Some(auto),
+        (Some(off), Some(auto)) if auto.score() < AUTO_BETTER * off.score() => Some(auto),
         (Some(off), _) => Some(off),
         (None, auto) => auto,
     };
-    let faithful = faithful.filter(|t| t.mean_error() < BETTER * balanced.mean_error());
+    let faithful = faithful.filter(|t| t.score() < BETTER * balanced.score());
 
     // Quick.
     let mut quick = None;
@@ -302,10 +371,16 @@ fn measure(style: &str) -> Found {
         let found = bench.quick();
         let v = tidy(&d, median(found.clone()));
         let v = if v.is_nan() { base } else { v };
+        // Never sparser than a look may be: coarser, the marks swamp the picture.
+        let v = if d.direct {
+            v.max(tidy(&d, base / SPARSEST_LOOK))
+        } else {
+            v.min(tidy(&d, base * SPARSEST_LOOK))
+        };
         let sparser = if d.direct { v < base } else { v > base };
         let trial = bench.trial(&with(&json!({}), &d, v));
         table += &trial.row(&format!("quick, the fit found {found:?}"));
-        if sparser && trial.clean() && trial.mean_error() <= QUICK_WORSE * balanced.mean_error() {
+        if sparser && trial.clean() && trial.score() <= QUICK_WORSE * balanced.score() {
             quick = Some(trial);
         }
     }
@@ -313,9 +388,7 @@ fn measure(style: &str) -> Found {
     // Fine: the plain scan, denser than the default, while every value passes.
     let at = values.iter().position(|&v| v == base).unwrap();
     let fine = (scans[0][at + 1..].iter())
-        .take_while(|t| {
-            t.allowed(&balanced) && t.mean_error() <= FINE_WORSE * balanced.mean_error()
-        })
+        .take_while(|t| t.allowed(&balanced) && t.score() <= FINE_WORSE * balanced.score())
         .last()
         .cloned();
     // Fine within a step of Faithful draws as densely, with tones no closer: Faithful stays.

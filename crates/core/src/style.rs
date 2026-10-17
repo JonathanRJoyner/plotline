@@ -18,6 +18,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::fit::Density;
 use crate::settings::{merge, validate};
 use crate::stage::{Kind, Stage};
 
@@ -74,6 +75,11 @@ pub enum StyleError {
     )]
     LayersAfterSplit { style: String, name: String },
 }
+
+/// No look draws its marks more than this many times sparser than the style's default along its
+/// density setting: coarser marks swamp the picture's features whatever their tone error says
+/// (see docs/decisions/2026-10-17-looks-on-more-pictures.md).
+pub const SPARSEST_LOOK: f64 = 2.0;
 
 /// The looks a style may have, in the order they are listed: name, label, description.
 pub const LOOKS: [(&str, &str, &str); 4] = [
@@ -282,6 +288,15 @@ impl Style {
             let merged = merge(&defaults[stage], values);
             validate::<Value>(stage, &self.stages[i].schema(), &merged)
                 .unwrap_or_else(|e| panic!("style {style:?}: look {name:?}: {e}"));
+        }
+        if let Some(d) = Density::of(&self) {
+            let base = defaults[&d.stage][&d.key].as_f64();
+            if let (Some(v), Some(base)) = (patch[&d.stage][&d.key].as_f64(), base) {
+                let sparser = if d.direct { base / v } else { v / base };
+                if sparser > SPARSEST_LOOK * (1.0 + 1e-9) {
+                    panic!("style {style:?}: look {name:?} is {sparser:.2} times sparser than the default, over {SPARSEST_LOOK}");
+                }
+            }
         }
         self.looks.push((name.to_string(), patch));
         let looks = self.looks();
@@ -628,6 +643,14 @@ mod tests {
         assert!(!same(&json!({"p": 1}), &json!({"q": 1})));
     }
 
+    #[test]
+    #[should_panic(expected = "2.25 times sparser")]
+    fn a_look_is_at_most_twice_as_sparse_as_the_default() {
+        use crate::registry::halftone_style;
+        // Halftone's spacing defaults to 2 mm: 4 mm passes, 4.5 mm is too coarse.
+        halftone_style().with_look("quick", json!({"points": {"spacing_mm": 4.0}}));
+        halftone_style().with_look("quick", json!({"points": {"spacing_mm": 4.5}}));
+    }
     #[test]
     #[should_panic(expected = "\"sparkly\" is not a look")]
     fn a_look_name_must_be_listed() {

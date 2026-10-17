@@ -1000,7 +1000,7 @@ mod tests {
         assert!(s.changed.contains(&mark("waves", "spacing_mm")));
         s.apply_look("faithful").unwrap();
         assert_eq!(s.look().as_deref(), Some("faithful"));
-        assert_eq!(s.settings()["waves"]["spacing_mm"], 2.8);
+        assert_eq!(s.settings()["waves"]["spacing_mm"], 1.7);
         // Balanced is the defaults, so its keys stop counting as the user's changes.
         s.apply_look("balanced").unwrap();
         assert_eq!(s.look().as_deref(), Some("balanced"));
@@ -1051,13 +1051,13 @@ mod tests {
     #[test]
     fn an_unknown_look_fails_and_changes_nothing() {
         let mut s = Session::new(1 << 20);
-        s.set_style("waves").unwrap();
+        s.set_style("spiral").unwrap();
         s.apply_look("fine").unwrap();
         let (settings, changed) = (s.settings().clone(), s.changed.clone());
         let message = |e: SessionError| e.to_string();
         assert_eq!(
             message(s.apply_look("nope").unwrap_err()),
-            r#"style "waves" has no look "nope"; its looks are balanced, faithful, fine"#
+            r#"style "spiral" has no look "nope"; its looks are balanced, faithful, fine"#
         );
         // A look in the list that this style does not declare is unknown to it too.
         assert!(matches!(
@@ -1087,7 +1087,7 @@ mod tests {
         assert_eq!(s.look().as_deref(), Some("faithful"));
         assert_eq!(s.settings()["split"], before["split"]);
         assert_eq!(s.settings()["tone"]["invert"], true);
-        assert_eq!(s.settings()["tone"]["response"], "auto");
+        assert_eq!(s.settings()["tone"]["response"], before["tone"]["response"]);
         assert_eq!(s.settings()["voronoi"]["count"], 20000);
         assert_eq!(
             s.settings()["voronoi"]["iterations"],
@@ -1102,13 +1102,13 @@ mod tests {
     fn a_look_survives_a_switch_to_a_style_sharing_its_stages_and_back() {
         let mut s = Session::new(1 << 20);
         s.set_style("stipple").unwrap();
-        s.apply_look("fine").unwrap();
-        s.set_style("line").unwrap();
-        // The point count is kept, so the points are reused; line's looks are not this one.
-        assert_eq!(s.settings()["voronoi"]["count"], 12000);
+        s.apply_look("faithful").unwrap();
+        s.set_style("dashes").unwrap();
+        // The point count is kept, so the points are reused; dashes' looks are not this one.
+        assert_eq!(s.settings()["voronoi"]["count"], 10000);
         assert_eq!(s.look(), None);
         s.set_style("stipple").unwrap();
-        assert_eq!(s.look().as_deref(), Some("fine"));
+        assert_eq!(s.look().as_deref(), Some("faithful"));
     }
     #[test]
     #[allow(clippy::len_zero)] // the brief's assertion, kept as written

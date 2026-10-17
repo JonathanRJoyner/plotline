@@ -1,0 +1,3 @@
+Section: Pens
+
+- **Palette picks that count accents and owned pens:** the colour suggestion no longer tells you to buy an ink you already have. A pen within a colour difference of 5 (CIE76 ΔE*ab) of a built-in ink counts as that ink, so a blue picked by eye or taken from a maker's swatch is not offered a second blue. The pens are also picked on the inked pixels only, with white paper left out, so a small vivid area, such as a red patch on 3 % of a white picture, now earns its pen. The analysis's `palette_error` is now the mean over the inked pixels, so it reads higher on a picture with much white paper.
