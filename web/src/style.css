@@ -232,8 +232,9 @@ label { display: flex; align-items: center; gap: 8px; margin: 6px 0; color: var(
 label > input:not([type="checkbox"], [type="range"]), label > select { margin-left: auto; }
 label > input[type="text"] { flex: 1; min-width: 0; }
 label > select { min-width: 0; max-width: 65%; }
-/* The Style row's button, which opens the style picker; a long label ends in an ellipsis. */
-label > button.pick { margin-left: auto; min-width: 0; max-width: 65%; }
+/* The Style row's button, which opens the style picker: a field's height, as the menu it replaced, so the
+   phone layout keeps it on the first screen. A long label ends in an ellipsis. */
+label > button.pick { height: 28px; margin-left: auto; min-width: 0; max-width: 65%; }
 label > button.pick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 label:has(> textarea), label:has(> .wide) { flex-wrap: wrap; }
 label > textarea, label > .wide { flex-basis: 100%; max-width: none; margin-left: 0; }
