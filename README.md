@@ -46,7 +46,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 ## Features
 
-- **Twenty-one styles,** from dots on a grid to one continuous spiral. The table below describes each one, and the [style guide](docs/styles.md) shows each on the same picture with its settings and pen tips.
+- **Twenty-one styles,** from dots on a grid to one continuous spiral. The table below describes each one, and the [style guide](docs/styles.md) shows each on the same picture with its settings and pen tips. The [first plot guide](docs/guide.md) takes you from a picture to paper and says what to change when a plot is not what you expected.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Suggestions.** The engine measures a new image and suggests changes: line art, levels, uneven paper, invert, noise, page orientation, framing, which crops the image to its subject when that fills only part of it, and colour, for which it picks two to four ink pens that draw the image's colours best. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
 - **Focus points.** Click the preview, or have an assistant set `tone.focus`, to mark where the picture matters: every style keeps its detail near those points and smooths it further away, so a drawing's detail sits where you want it.
