@@ -11,6 +11,7 @@ Only Python's standard library is used.
 import hashlib
 import json
 import os
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -73,9 +74,20 @@ def accept(entry: dict[str, Any]) -> None:
     )
 
 
+def _check_id(id: str) -> None:
+    """Refuse an id that is not a plain file name stem, so it cannot name a path outside the
+    cache folder."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", id):
+        raise ValueError(
+            f"{id!r} is not a model id: use letters, digits, dots, dashes and underscores"
+        )
+
+
 def _keep(id: str, data: bytes) -> Path:
     """Write ``<id>.onnx`` whole or not at all: the bytes go to a side file that is renamed over
-    the real name, and a side file left by a failure is removed."""
+    the real name, and a side file left by a failure is removed. Raises ``ValueError`` for an id
+    that is not a plain file name stem."""
+    _check_id(id)
     folder = cache_dir()
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{id}.onnx"
@@ -93,9 +105,11 @@ def download(entry: dict[str, Any]) -> Path:
 
     The caller has shown the licence and had it accepted. Nothing past ``entry["bytes"]`` is
     read, and the file is written only when its size and SHA-256 both match the entry. Raises
-    ``ValueError`` for a file of the wrong size or hash and ``OSError`` (``URLError`` is one) when
+    ``ValueError`` for an id that is not a plain file name stem (before anything is fetched) and for
+    a file of the wrong size or hash, and ``OSError`` (``URLError`` is one) when
     the fetch fails; either way nothing is kept.
     """
+    _check_id(entry["id"])
     expected = int(entry["bytes"])
     with urllib.request.urlopen(entry["url"], timeout=_TIMEOUT) as response:
         data = response.read(expected + 1)

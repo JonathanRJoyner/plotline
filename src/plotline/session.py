@@ -176,7 +176,12 @@ class Session:
         # A kept file whose id the catalogue no longer lists is a file of the person's own now.
         # One that fails to load is skipped, so a damaged file cannot stop every session.
         listed = {entry["id"] for entry in _core.catalogue()}
-        for model_id, path in kept():
+        try:
+            files = kept()
+        except (OSError, RuntimeError) as e:  # no home folder, or an unreadable cache folder
+            warnings.warn(f"the model cache could not be read: {e}", UserWarning, stacklevel=3)
+            return
+        for model_id, path in files:
             try:
                 self._core.add_model(model_id if model_id in listed else None, path.read_bytes())
             except (OSError, ValueError) as e:

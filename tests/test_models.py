@@ -61,6 +61,25 @@ def test_a_damaged_kept_file_is_skipped_with_a_warning():
     assert s.models() == []
 
 
+def test_a_cache_folder_that_cannot_be_found_does_not_stop_a_session(monkeypatch):
+    def no_home():
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(models, "cache_dir", no_home)
+    with pytest.warns(UserWarning, match="cache"):
+        s = Session()
+    assert s.models() == []
+
+
+@pytest.mark.parametrize("bad", ["../x", "..\\x", "a/b", "", "x.onnx/../y", "a b"])
+def test_download_refuses_an_id_that_is_not_a_file_name(monkeypatch, bad):
+    data = FIXTURE.read_bytes()
+    serve(monkeypatch, data)
+    with pytest.raises(ValueError, match="model id"):
+        models.download(entry_for(data, id=bad))
+    assert not models.cache_dir().exists() and not (models.cache_dir().parent / "x.onnx").exists()
+
+
 def test_download_refuses_a_wrong_hash(monkeypatch):
     data = FIXTURE.read_bytes()
     serve(monkeypatch, data[::-1])
