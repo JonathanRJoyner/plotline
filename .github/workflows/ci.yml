@@ -68,11 +68,17 @@ jobs:
         working-directory: crates/wasm
       - run: wasm-pack build --release --target web --out-dir ../../web/pkg
         working-directory: crates/wasm
-      - name: Check the .wasm size
+      # The model module, with SIMD from crates/models/.cargo/config.toml.
+      - run: wasm-pack build --release --target web --out-dir ../../web/pkg-models --features web
+        working-directory: crates/models
+      - name: Check the .wasm sizes
         run: |
           size=$(stat -c %s web/pkg/plotline_wasm_bg.wasm)
           echo "plotline_wasm_bg.wasm is $size bytes"
           test "$size" -le 2300000
+          size=$(stat -c %s web/pkg-models/plotline_models_bg.wasm)
+          echo "plotline_models_bg.wasm is $size bytes"
+          test "$size" -le 9000000
 
   web:
     runs-on: ubuntu-latest

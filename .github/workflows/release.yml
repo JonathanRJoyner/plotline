@@ -36,6 +36,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # The engine module and the model module.
       - run: npm run wasm
         working-directory: web
       - run: npm ci

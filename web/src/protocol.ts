@@ -1,7 +1,7 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
-import { describe, listInks, listPens, listStyles, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
+import { catalogue, describe, listInks, listPens, listStyles, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
 import { drive, macrotask } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
@@ -9,6 +9,13 @@ import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch
 export type Patch = { style?: string; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
+/** A hosted model, in the shape of the core's `CatalogueEntry`. */
+export type CatalogueEntry = {
+  id: string; label: string; description: string; url: string; sha256: string; licence: string; attribution: string;
+  source: string; paper: string; training: string; bytes: number; overlap: number;
+};
+/** A model the session holds; `entry` is null for a file of the user's own. */
+export type ModelInfo = { id: string; label: string; overlap: number; entry: CatalogueEntry | null };
 export type State = {
   image: boolean; style: string; canvas: Canvas; pens: Pen[]; machine: Machine | null;
   settings: Record<string, Record<string, unknown>>; speeds: Speeds;
@@ -21,6 +28,8 @@ export type State = {
   lint: Finding[];
   /** How the last drawing's tones follow its tone map; null without one or with nothing to compare. */
   tone: ToneMatch | null;
+  /** The models the session holds, in id order. */
+  models: ModelInfo[];
 };
 export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
@@ -83,6 +92,11 @@ export class Protocol {
       cancelThumbs: () => { this.thumbsId++; },
       svg: () => s.svg(),
       json: () => s.json(),
+      // The worker loads the model module before it hands this command over.
+      addModel: (id: string | null, bytes: Uint8Array) => JSON.parse(s.addModel(id, bytes)),
+      removeModel: (id: string) => s.removeModel(id),
+      models: () => JSON.parse(s.models()),
+      catalogue: () => JSON.parse(catalogue()),
     };
   }
 
@@ -168,6 +182,7 @@ export class Protocol {
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
       tone: tone ? JSON.parse(tone) : null,
+      models: JSON.parse(s.models()),
       run: { id: this.counter, state: s.state(), error: s.error() ?? null },
       stats: stats ? JSON.parse(stats) : null,
     };

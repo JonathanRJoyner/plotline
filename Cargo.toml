@@ -40,3 +40,33 @@ opt-level = "s"
 opt-level = "s"
 [profile.release.package.schemars]
 opt-level = "s"
+
+# The model module (crates/models, its `web` feature) is built for size from the crates only it
+# uses: 13.2 MB at opt-level 3, 8.3 MB like this, and as fast, since the time goes to the
+# tract-linalg kernels, which stay at 3 (spec 2026-10-16-learned-line-models, "Measurements").
+# Every other crate of that module adds under 30 KB together, so they are left alone. None of
+# these crates is in the engine module.
+[profile.release.package.plotline-models]
+opt-level = "s"
+[profile.release.package.tract-core]
+opt-level = "s"
+[profile.release.package.tract-data]
+opt-level = "s"
+[profile.release.package.tract-extra]
+opt-level = "s"
+[profile.release.package.tract-hir]
+opt-level = "s"
+[profile.release.package.tract-nnef]
+opt-level = "s"
+[profile.release.package.tract-onnx]
+opt-level = "s"
+[profile.release.package.tract-onnx-opl]
+opt-level = "s"
+[profile.release.package.ndarray]
+opt-level = "s"
+[profile.release.package.rustfft]
+opt-level = "s"
+[profile.release.package.prost]
+opt-level = "s"
+[profile.release.package.nom]
+opt-level = "s"

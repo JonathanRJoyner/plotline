@@ -37,6 +37,8 @@ wasm-pack test --node
 wasm-pack build --release --target web --out-dir ../../web/pkg
 ```
 
+The model module, `crates/models` with its `web` feature, is a second WebAssembly module that runs learned line models. `npm run wasm:models` in `web` builds it, with SIMD from `crates/models/.cargo/config.toml`, and `web/pkg-models/plotline_models_bg.wasm` must stay at or under 9,000,000 bytes. `npm run wasm` builds both modules.
+
 GUI, in `web` (`npm run check` runs the type check and vitest):
 
 ```sh

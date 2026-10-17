@@ -324,3 +324,31 @@ test("undoing a random run of edits through restore returns the start, and undo 
   while (history.future.length) now = step(history.redo());
   expect(now).toBe(end);
 });
+
+test("addModel runs a model in the model module through the engine's bridge", async () => {
+  // What loadModelsModule does in the browser, with the bytes read from disk.
+  const models = await import("../pkg-models/plotline_models.js");
+  await models.default({ module_or_path: readFileSync(new URL("../pkg-models/plotline_models_bg.wasm", import.meta.url)) });
+  globalThis.plotlineModels = models;
+  try {
+    const { posted, ok, ended } = setup();
+    const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
+    const { state, value } = ok("addModel", null, onnx);
+    const id = (value as { id: string }).id;
+    expect(id).toMatch(/^file-[0-9a-f]{12}$/);
+    expect(state.models.map((m) => m.id)).toEqual([id]);
+    expect(ok("models").value).toEqual(state.models);
+    ok("setImage", ...image());
+    await ended(1);
+    ok("apply", { style: "learned", settings: { model: { model: id, resolution: 256 } } });
+    await ended(2);
+    expect(posted.find((m) => m.type === "end" && m.id === 2)).toMatchObject({ state: "done" });
+    expect(ok("removeModel", id).state.models).toEqual([]);
+  } finally {
+    delete globalThis.plotlineModels;
+  }
+});
+
+test("catalogue lists the hosted models", () => {
+  expect(Array.isArray(setup().ok("catalogue").value)).toBe(true);
+});

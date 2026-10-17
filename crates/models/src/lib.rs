@@ -91,6 +91,47 @@ impl ModelRuntime for TractRuntime {
     }
 }
 
+/// The model module's entry points, which the engine module's bridge
+/// (`crates/wasm/js/models_bridge.js`) calls with a tile copied out of the engine's memory.
+#[cfg(feature = "web")]
+mod web {
+    use std::sync::LazyLock;
+
+    use plotline_core::models::{ModelError, ModelRuntime};
+    use wasm_bindgen::prelude::*;
+
+    use crate::TractRuntime;
+
+    /// The one runtime of the worker's model module.
+    static RUNTIME: LazyLock<TractRuntime> = LazyLock::new(TractRuntime::default);
+
+    /// The error's own text: the bridge wraps it in its kind again, which would say it twice.
+    fn thrown(e: ModelError) -> JsError {
+        JsError::new(&match e {
+            ModelError::Invalid(text) | ModelError::Run(text) => text,
+            e => e.to_string(),
+        })
+    }
+
+    /// Parse `bytes` as a model for square tiles of `side` pixels and keep it under `id`.
+    #[wasm_bindgen]
+    pub fn load(id: &str, bytes: &[u8], side: usize) -> Result<(), JsError> {
+        RUNTIME.load(id, bytes, side).map_err(thrown)
+    }
+
+    /// Run the model `id` on one tile of `3 * side * side` channel-major floats.
+    #[wasm_bindgen]
+    pub fn infer(id: &str, rgb: &[f32]) -> Result<Vec<f32>, JsError> {
+        RUNTIME.infer(id, rgb).map_err(thrown)
+    }
+
+    /// Drop the model `id`.
+    #[wasm_bindgen]
+    pub fn unload(id: &str) {
+        RUNTIME.unload(id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use plotline_core::models::{ModelError, ModelRuntime, TILE};

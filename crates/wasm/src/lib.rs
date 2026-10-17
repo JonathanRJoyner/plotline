@@ -4,12 +4,14 @@
 //! posting frames to the page between steps. The page and the worker protocol belong to the GUI
 //! spec; this crate only wraps the session. JSON crosses as text, geometry as fresh typed arrays
 //! the worker can transfer, and every error as a `JsError` carrying the engine's message. No
-//! algorithm lives here.
+//! algorithm lives here. Learned line models run in a second module in the same worker, which
+//! `BridgeRuntime` reaches through `js/models_bridge.js`.
 
 use std::sync::{Arc, Mutex};
 
 use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::machine::Machine;
+use plotline_core::models::{self, ModelError, ModelRuntime};
 use plotline_core::runner::Shared;
 use plotline_core::{
     image, pens, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen, RunState,
@@ -17,6 +19,42 @@ use plotline_core::{
 };
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen(module = "/js/models_bridge.js")]
+extern "C" {
+    #[wasm_bindgen(catch)]
+    fn models_load(id: &str, bytes: &[u8], side: usize) -> Result<(), JsValue>;
+    #[wasm_bindgen(catch)]
+    fn models_infer(id: &str, rgb: &[f32]) -> Result<Vec<f32>, JsValue>;
+    #[wasm_bindgen(catch)]
+    fn models_unload(id: &str) -> Result<(), JsValue>;
+}
+
+/// The text of a JavaScript exception.
+fn thrown(e: JsValue) -> String {
+    match e.dyn_ref::<js_sys::Error>() {
+        Some(e) => e.message().into(),
+        None => e.as_string().unwrap_or_else(|| format!("{e:?}")),
+    }
+}
+
+/// Runs models in the worker's model module, through `js/models_bridge.js`.
+struct BridgeRuntime;
+
+impl ModelRuntime for BridgeRuntime {
+    fn load(&self, id: &str, bytes: &[u8], side: usize) -> Result<(), ModelError> {
+        models_load(id, bytes, side).map_err(|e| ModelError::Invalid(thrown(e)))
+    }
+
+    fn infer(&self, id: &str, rgb: &[f32]) -> Result<Vec<f32>, ModelError> {
+        models_infer(id, rgb).map_err(|e| ModelError::Run(thrown(e)))
+    }
+
+    fn unload(&self, id: &str) {
+        // Only a model that loaded is unloaded, so the module is there.
+        let _ = models_unload(id);
+    }
+}
 
 fn state_name(s: RunState) -> String {
     match s {
@@ -41,9 +79,28 @@ impl Session {
     #[wasm_bindgen(constructor)]
     #[allow(clippy::new_without_default)] // JavaScript builds it with `new Session()`
     pub fn new() -> Session {
-        Session {
-            inner: plotline_core::Session::new(DEFAULT_CACHE_BYTES),
-        }
+        let mut inner = plotline_core::Session::new(DEFAULT_CACHE_BYTES);
+        inner.set_model_runtime(Arc::new(BridgeRuntime));
+        Session { inner }
+    }
+
+    /// Load the ONNX file `bytes` as a model and return its `{"id", "label", "overlap", "entry"}`
+    /// JSON. With an `id` the bytes must be that catalogue model; without one they are a file of
+    /// the user's own, named by its hash. The worker loads the model module first.
+    #[wasm_bindgen(js_name = addModel)]
+    pub fn add_model(&mut self, id: Option<String>, bytes: &[u8]) -> Result<String, JsError> {
+        Ok(json!(self.inner.add_model(id.as_deref(), bytes)?).to_string())
+    }
+
+    /// Unload the model `id`; an id the session does not hold changes nothing.
+    #[wasm_bindgen(js_name = removeModel)]
+    pub fn remove_model(&mut self, id: &str) {
+        self.inner.remove_model(id);
+    }
+
+    /// The models the session holds, in id order, as a JSON list like `addModel`'s.
+    pub fn models(&self) -> String {
+        json!(self.inner.models()).to_string()
     }
 
     /// Decode PNG, JPEG or WebP bytes and use the picture as the source image.
@@ -457,6 +514,12 @@ pub fn list_styles() -> String {
     Value::from(styles).to_string()
 }
 
+/// The hosted models this release lists, as a JSON list of catalogue entries.
+#[wasm_bindgen]
+pub fn catalogue() -> String {
+    json!(models::catalogue()).to_string()
+}
+
 /// The style called `name` with each stage's settings as JSON Schema, as JSON.
 #[wasm_bindgen]
 pub fn describe(name: &str) -> Result<String, JsError> {
@@ -502,4 +565,23 @@ pub fn list_pens() -> String {
 pub fn list_inks() -> String {
     let inks = pens::INKS.iter();
     Value::from_iter(inks.map(|(name, color)| json!({"name": name, "color": color}))).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use wasm_bindgen::{JsCast, JsValue};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn add_model_without_the_module_says_so() {
+        let e = super::Session::new().add_model(None, b"x").unwrap_err();
+        let message: String = JsValue::from(e)
+            .unchecked_into::<js_sys::Error>()
+            .message()
+            .into();
+        assert!(
+            message.contains("the model module is not loaded"),
+            "{message}"
+        );
+    }
 }

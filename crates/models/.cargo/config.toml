@@ -1,0 +1,6 @@
+# wasm-pack runs cargo from this folder, so only the model module's build reads this file: the
+# engine module stays without SIMD. A RUSTFLAGS variable in the environment would replace it.
+# SIMD makes models about four times faster; relaxed SIMD is not used, since its results can
+# differ between machines (spec 2026-10-16-learned-line-models, "Measurements").
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
