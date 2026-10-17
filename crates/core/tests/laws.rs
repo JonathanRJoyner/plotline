@@ -38,7 +38,7 @@ use plotline_core::stages::split::SplitStage;
 use plotline_core::stages::tone::{flatten, guided, ToneStage};
 use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
-use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
+use plotline_core::synthetic::{flat, flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::tone_match;
 use plotline_core::{
     Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds, ToneMap, Tones,
@@ -1825,6 +1825,41 @@ fn the_timeline_rises_and_ends_at_the_plot_time() {
         prop_assert!(
             (last - total).abs() <= 1e-9 * total.max(1.0),
             "{last} s against {total} s"
+        );
+        Ok(())
+    });
+}
+
+/// The rippling styles lay more line where the tone is darker: on a flat page, with the tone map
+/// taking the grey as it is and no simplifying, a darker grey never draws a shorter line with one
+/// pen. See docs/decisions/2026-10-17-ripple-gamma-kept.md.
+#[test]
+fn a_ripple_lays_more_line_where_the_tone_is_darker() {
+    let names = vec!["waves".to_string(), "spiral".to_string()];
+    let greys = (0.0..1.0f32, 0.0..1.0f32);
+    check("ripple", 12, (case(names), greys), |(c, (a, b))| {
+        let length = |grey: f32| -> Result<f64, TestCaseError> {
+            let mut s = c.session();
+            s.set_image(flat(60, 80, grey));
+            let tone = json!({"levels": "manual", "black": 0.0, "white": 1.0, "gamma": 1.0,
+                "contrast": 0.0, "invert": false, "response": "off", "blur_mm": 0.0,
+                "flatten_mm": 0.0, "smooth_mm": 0.0, "focus": []});
+            s.update("tone", &tone).unwrap();
+            s.update("split", &json!({"mode": "one_pen"})).unwrap();
+            // Simplifying would straighten ripples narrower than its tolerance, and the shortest
+            // paths kept would differ as a ripple breaks a line at the map's edge differently.
+            s.update("order", &json!({"simplify_mm": 0.0, "min_length_mm": 0.0}))
+                .unwrap();
+            run(&mut s)?;
+            Ok(s.drawing().map_or(0.0, |d| {
+                d.layers.iter().map(|l| l.paths.total_length()).sum()
+            }))
+        };
+        let (dark, light) = (a.max(b).min(1.0 - 1e-3), a.min(b));
+        let (more, less) = (length(1.0 - dark)?, length(1.0 - light)?);
+        prop_assert!(
+            more >= less * (1.0 - 1e-9),
+            "{more} mm at ink {dark}, {less} mm at {light}"
         );
         Ok(())
     });
