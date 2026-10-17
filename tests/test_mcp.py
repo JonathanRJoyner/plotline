@@ -63,7 +63,7 @@ async def test_setup_tools_and_session(tmp_path):
         r = await call(c, "load_image", path=str(path))
         assert data(r) == {"path": str(path), "width_px": 64, "height_px": 48}
         r = await call(c, "set_page", width_mm=100, height_mm=100, margin_mm=5)
-        page = {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fit", "crop": [0] * 4}
+        page = {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fit", "paper": "#ffffff"}
         assert data(r) == page
         r = await call(c, "set_page", fit="fill")
         assert data(r) == {**page, "fit": "fill"}
@@ -79,6 +79,27 @@ async def test_setup_tools_and_session(tmp_path):
         assert "tone" in s["settings"]
 
 
+async def test_set_page_sets_the_paper_and_get_session_reports_it():
+    async with Client(build_server(Session())) as c:
+        assert data(await call(c, "get_session"))["paper"] == "#ffffff"
+        r = await call(c, "set_page", paper="#f5f0e1")
+        assert data(r) == {
+            "width_mm": 210,
+            "height_mm": 297,
+            "margin_mm": 10,
+            "fit": "fit",
+            "paper": "#f5f0e1",
+        }
+        assert data(await call(c, "get_session"))["paper"] == "#f5f0e1"
+        r = await call(c, "set_page", paper="Blue")
+        assert data(r)["paper"] == inks()["blue"]
+        # A refused paper is a tool error, and the page that came with it does not change.
+        r = await call(c, "set_page", width_mm=50, paper="cream")
+        assert r.is_error and "paper" in text(r)
+        s = data(await call(c, "get_session"))
+        assert (s["paper"], s["page"]["width_mm"]) == (inks()["blue"], 210)
+
+
 async def test_refused_values_are_tool_errors():
     async with Client(build_server(Session())) as c:
         r = await call(c, "set_page", width_mm=0)
@@ -92,7 +113,7 @@ async def test_set_machine_sets_the_page_and_clears():
         await call(c, "set_page", width_mm=300, height_mm=300, margin_mm=7, fit="fill")
         r = await call(c, "set_machine", machine=MACHINE)
         assert not r.is_error, text(r)
-        page = {"width_mm": 200, "height_mm": 174, "margin_mm": 7, "fit": "fill", "crop": [0] * 4}
+        page = {"width_mm": 200, "height_mm": 174, "margin_mm": 7, "fit": "fill"}
         assert data(r) == {"machine": MACHINE, "page": page}
         s = data(await call(c, "get_session"))
         assert (s["machine"], s["page"]) == (MACHINE, page)
@@ -507,7 +528,7 @@ async def test_set_page_crops_the_image_as_the_framing_suggestion_says(tmp_path)
         assert all(s["kind"] != "framing" for s in found)
         # Every other value stays; zeros remove the crop; a refused crop changes nothing.
         r = await call(c, "set_page", crop=[0, 0, 0, 0])
-        assert data(r)["crop"] == [0, 0, 0, 0]
+        assert "crop" not in data(r)  # a crop of zeros is left out
         await call(c, "set_page", crop=crop)
         for bad in ([0.5, 0, 0, 0], [0.1, 0.1]):
             r = await call(c, "set_page", crop=bad)

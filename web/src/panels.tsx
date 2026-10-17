@@ -11,13 +11,16 @@ import { addPen, libraryFile, loadLibrary, mergeLibraries, parseLibrary, removeP
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 import { controlsFor } from "./schema";
 import { place } from "./tour";
+import { onPaper } from "./view";
 
 const SIZES: [string, number, number][] = [
   ["A5", 148, 210], ["A4", 210, 297], ["A3", 297, 420], ["Letter", 215.9, 279.4], ["Tabloid", 279.4, 431.8],
 ];
 const near = (a: number, b: number) => Math.abs(a - b) <= 0.05;
 
-export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?: string; onChange: (canvas: Canvas) => void }): JSX.Element {
+type PageProps = { canvas: Canvas; paper: string; error?: string; onChange: (canvas: Canvas) => void; onPaper: (color: string) => void };
+
+export function PagePanel({ canvas, paper, error, onChange, onPaper }: PageProps): JSX.Element {
   const { width_mm: w, height_mm: h } = canvas;
   const size = SIZES.find(([, a, b]) => (near(a, w) && near(b, h)) || (near(a, h) && near(b, w)));
   const set = (patch: Partial<Canvas>) => onChange({ ...canvas, ...patch });
@@ -57,6 +60,11 @@ export function PagePanel({ canvas, error, onChange }: { canvas: Canvas; error?:
             <option value="fit">fit</option>
             <option value="fill">fill</option>
           </select>
+        </label>
+        <label>
+          Paper
+          {/* onChange fires when the picker closes, so one pick is one undo step. */}
+          <input type="color" value={paper} onChange={(e) => onPaper(e.currentTarget.value)} />
         </label>
       </div>
       {canvas.crop?.some((share) => share > 0) && (
@@ -141,7 +149,7 @@ function Modal({ opens, title, icon, wide, onClose, children }: ModalProps): JSX
 
 export type Thumb = { url: string | null; error: string | null };
 type StylesDialogProps = {
-  opens: number; styles: Array<{ name: string; label: string; description: string }>; style: string; canvas: Canvas;
+  opens: number; styles: Array<{ name: string; label: string; description: string }>; style: string; canvas: Canvas; paper: string;
   thumbs: Record<string, Thumb>; onPick: (style: string) => void; onClose: () => void;
 };
 
@@ -154,7 +162,7 @@ const FRAME = { w: 14, h: 36 };
 // (spec 2026-10-15-try-styles-and-undo section 2). The pictures arrive one by one; closing stops them.
 // Pointing at a cell, or tabbing to it, shows its picture enlarged beside it, inside the dialog. The
 // enlargement takes no clicks, and a touch shows none, so a tap still picks.
-export function StylesDialog({ opens, styles, style, canvas, thumbs, onPick, onClose }: StylesDialogProps): JSX.Element {
+export function StylesDialog({ opens, styles, style, canvas, paper, thumbs, onPick, onClose }: StylesDialogProps): JSX.Element {
   const [zoom, setZoom] = useState<{ name: string; label: string; left: number; top: number; width: number } | null>(null);
   const ratio = canvas.width_mm / canvas.height_mm;
   const show = (name: string, label: string, cell: HTMLElement) => {
@@ -182,7 +190,7 @@ export function StylesDialog({ opens, styles, style, canvas, thumbs, onPick, onC
                 onFocus={(e) => e.currentTarget.matches(":focus-visible") && show(s.name, s.label, e.currentTarget)}
                 onBlur={hide}
               >
-                <span class="paper" style={{ aspectRatio: `${canvas.width_mm} / ${canvas.height_mm}` }}>
+                <span class="paper" style={{ aspectRatio: `${canvas.width_mm} / ${canvas.height_mm}`, background: paper, color: onPaper(paper) }}>
                   {t?.url ? <img src={t.url} alt="" /> : <span>{t?.error ?? "Drawing…"}</span>}
                 </span>
                 {s.label}

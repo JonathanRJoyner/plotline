@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 from looks import off_look, style_with_looks
 from machines import MACHINE
-from pngs import write_png
+from pngs import decode_png, write_png
 
 from plotline import Pen, _core, get_style, inks, list_styles
 from plotline.cli.main import main, parse_pen, parse_set
@@ -135,6 +135,35 @@ def test_run_writes_all_outputs(tmp_path, image):
     assert preset["canvas"]["width_mm"] == 100 and preset["canvas"]["fit"] == "fill"
     assert preset["settings"]["tone"]["resolution"] == 64
     assert "paths:" in r.output and "tone:" in r.stderr
+
+
+def test_paper_reaches_the_preview_and_the_preset_and_may_be_an_ink_name(tmp_path, image):
+    png, saved = tmp_path / "o.png", tmp_path / "p.json"
+    base = ["run", "grid", image, "--out", str(tmp_path / "o.svg"), "--margin", "10"]
+    base += ["--set", "tone.resolution=64", "--preview", str(png), "--save-preset", str(saved)]
+
+    def paper_of(*options):
+        r = run(*base, *options)
+        assert r.exit_code == 0, r.output
+        corner = decode_png(png.read_bytes())[0, 0].tolist()
+        return corner, json.loads(saved.read_text())["paper"]
+
+    assert paper_of() == ([255, 255, 255], "#ffffff")
+    assert paper_of("--paper", "#f5f0e1") == ([245, 240, 225], "#f5f0e1")
+    assert paper_of("--paper", "Blue") == ([0x1D, 0x4F, 0xB8], inks()["blue"])
+    # The preset keeps the paper, and a run from it keeps it too.
+    assert paper_of("--preset", str(saved)) == ([0x1D, 0x4F, 0xB8], inks()["blue"])
+
+
+def test_a_bad_paper_exits_1(tmp_path, image):
+    out = str(tmp_path / "o.svg")
+    for args in (
+        ("run", "grid", image, "--out", out),
+        ("analyse", image),
+        ("testchart", "--out", out),
+    ):
+        r = run(*args, "--paper", "cream")
+        assert r.exit_code == 1 and "paper" in r.stderr, r.output
 
 
 def test_testchart_writes_the_chart_for_a_pen_and_a_page(tmp_path):

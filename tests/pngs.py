@@ -1,6 +1,6 @@
-"""A PNG writer for tests, so that file loading can be tested on images made in code.
+"""A PNG writer and reader for tests, so that file loading can be tested on images made in code.
 
-It writes 8-bit RGB without filtering, following the chunk layout of the PNG specification
+The writer writes 8-bit RGB without filtering, following the chunk layout of the PNG specification
 (W3C, Portable Network Graphics Specification, second edition, 2003).
 """
 
@@ -9,6 +9,8 @@ import zlib
 from pathlib import Path
 
 import numpy as np
+
+from plotline import _core
 
 
 def write_png(path: Path, rgb: np.ndarray) -> None:
@@ -23,3 +25,12 @@ def write_png(path: Path, rgb: np.ndarray) -> None:
     header = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)  # 8 bits per sample, RGB
     png = chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
     Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + png)
+
+
+def decode_png(data: bytes) -> np.ndarray:
+    """The pixels of the PNG ``data`` as an ``(H, W, 3)`` array of 0..255, read by the engine."""
+    session = _core.Session()
+    session.set_image_bytes(data)
+    image = session.image()
+    assert image is not None
+    return np.round(image * 255).astype(np.uint8)

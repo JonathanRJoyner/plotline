@@ -3,10 +3,12 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { dividerX, type Compare } from "./compare";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
 import { eachPath, pathCount } from "./paths";
-import { fitView, toMm, zoomAt, type View } from "./view";
+import { fitView, onPaper, toMm, zoomAt, type View } from "./view";
 
 type Props = {
   canvas: Canvas;
+  // The paper's colour as #rrggbb.
+  paper: string;
   // The latest frame with geometry from each pen of the run, by pen index; empty before the first.
   frames: (FrameEvent | undefined)[];
   result: ResultEvent | null;
@@ -69,12 +71,12 @@ function strokeLayers(ctx: CanvasRenderingContext2D, layers: Layer[]) {
 }
 
 // The paper with its shadow, and the margin's outline, in page millimetres.
-function drawPaper(ctx: CanvasRenderingContext2D, page: Canvas, scale: number, dpr: number) {
+function drawPaper(ctx: CanvasRenderingContext2D, page: Canvas, paper: string, scale: number, dpr: number) {
   ctx.save();
   ctx.shadowColor = "rgba(0, 0, 0, 0.35)";
   ctx.shadowBlur = 8 * dpr;
   ctx.shadowOffsetY = 2 * dpr;
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = paper;
   ctx.fillRect(0, 0, page.width_mm, page.height_mm);
   ctx.restore();
 
@@ -121,7 +123,7 @@ function paintCompare(ctx: CanvasRenderingContext2D, s: Props, c: Compare, bitma
   ctx.clearRect(0, 0, width, height);
   ctx.setTransform(view);
   if (other) {
-    drawPaper(ctx, other.canvas, view.a / dpr, dpr);
+    drawPaper(ctx, other.canvas, s.paper, view.a / dpr, dpr);
     if (c.against === "previous") strokeLayers(ctx, other.layers.filter((_, i) => !s.hidden.has(i)));
     else if (bitmap && other.tone) ctx.drawImage(bitmap, other.tone.x, other.tone.y, other.tone.w, other.tone.h);
   }
@@ -163,7 +165,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     ctx.stroke(p);
   };
 
-  drawPaper(ctx, page, view.scale, dpr);
+  drawPaper(ctx, page, s.paper, view.scale, dpr);
 
   if (s.showSource && bitmap && result?.tone) {
     const t = result.tone;
@@ -177,7 +179,8 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   const layers: Layer[] = held
     ? live.flatMap((f, i) => (f?.coords && f.offsets && !s.hidden.has(i) ? [{ pen: penOf(i), coords: f.coords, offsets: f.offsets }] : []))
     : (result?.layers ?? []).filter((_, i) => !s.hidden.has(i));
-  // A pen's live points multiply like the layers.
+  // Multiply, so pens that overlap darken like layered transparent inks on the plot, and ink takes
+  // the paper's colour; one pen on white looks the same. The rest of the page draws normally.
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
   live.forEach((f, i) => {
@@ -211,7 +214,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   }
 
   if (!s.hasImage) {
-    ctx.fillStyle = "#6b7280"; // 4.8:1 on the white paper
+    ctx.fillStyle = onPaper(s.paper);
     ctx.font = "6px sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -273,7 +276,7 @@ export function Preview(props: Props): JSX.Element {
       paint(ctx, props, view, size.w, size.h, window.devicePixelRatio || 1, bitmap);
     });
     return () => cancelAnimationFrame(id);
-  }, [props.canvas, props.frames, props.result, props.running, props.showSource, props.showTravel, props.compare?.against, props.compare?.at, props.previous, props.hidden, props.pens, props.hasImage, view, size, bitmap]);
+  }, [props.canvas, props.paper, props.frames, props.result, props.running, props.showSource, props.showTravel, props.compare?.against, props.compare?.at, props.previous, props.hidden, props.pens, props.hasImage, view, size, bitmap]);
 
   // Zooms by `k`, keeping the page point under (px, py) in place.
   const zoom = (k: number, px: number, py: number) => setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from looks import off_look, style_with_looks
 from machines import MACHINE
-from pngs import write_png
+from pngs import decode_png, write_png
 
 from plotline import (
     Cancelled,
@@ -323,6 +323,28 @@ def test_preview_region():
     assert struct.unpack(">II", png[16:24]) == (100, 141)
     with pytest.raises(ValueError, match="preview region"):
         s.preview_png(100, region=(0, 0, 0, 10))
+
+
+def test_the_paper_is_white_until_set_and_takes_only_rrggbb():
+    s = Session()
+    assert s.paper == "#ffffff"
+    s.set_paper("#f5f0e1")
+    assert s.paper == "#f5f0e1"
+    for bad in ("cream", "#fff", "f5f0e1"):
+        with pytest.raises(ValueError, match="paper"):
+            s.set_paper(bad)
+    assert s.paper == "#f5f0e1"
+
+
+def test_the_preview_shows_the_paper_in_the_margin_and_a_new_paper_needs_no_run():
+    s = Session()
+    s.set_image(_core.synthetic_gradient(64, 48))
+    s.set_canvas(Canvas(100, 75, 10))
+    s.update("tone", resolution=64)
+    s.run_blocking()
+    assert decode_png(s.preview_png(100))[0, 0].tolist() == [255, 255, 255]
+    s.set_paper("#f5f0e1")
+    assert decode_png(s.preview_png(100))[0, 0].tolist() == [245, 240, 225]
 
 
 def test_frames_carry_points_and_paths_as_arrays():

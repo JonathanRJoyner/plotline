@@ -122,6 +122,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | To | Use |
 | --- | --- |
 | Set the page and margin, in mm | `--width 210 --height 297 --margin 15` |
+| Set the paper colour the preview shows, by ink name or `#rrggbb` colour | `--paper '#f5f0e1'` |
 | Choose the pen, by ink name or `#rrggbb` colour | `--pen 'Fine:0.3:blue'` |
 | Share the drawing between pens given with `--pen` more than once; by default only the first draws | `--set split.mode=light_to_dark` or `by_colour` |
 | Change a setting | `--set points.spacing_mm=3` |

@@ -25,11 +25,12 @@ use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
 use plotline_core::optimize::{LONGEST, SLOWER, TRIALS};
+use plotline_core::preview::render_rgba;
 use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
-use plotline_core::stages::tone::flatten;
+use plotline_core::stages::tone::{flatten, guided};
 use plotline_core::style::Style;
 use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session};
@@ -804,6 +805,25 @@ fn flattening_ignores_uniform_lighting() {
     );
 }
 
+#[test]
+fn smoothing_stays_within_the_tone_range() {
+    // The output averages mixes of a pixel and window means, so it never leaves the picture's range.
+    check("smooth", 256, (picture(), 1usize..=40), |(picture, r)| {
+        let image = picture.image();
+        let (w, h) = (image.width as usize, image.height as usize);
+        let lum = image.luminance();
+        let lo = lum.iter().copied().fold(f32::INFINITY, f32::min) - 1e-5;
+        let hi = lum.iter().copied().fold(f32::NEG_INFINITY, f32::max) + 1e-5;
+        for (i, q) in guided(&lum, w, h, r).iter().enumerate() {
+            prop_assert!(
+                (lo..=hi).contains(q),
+                "pixel {i} of {w} x {h} is {q}, outside {lo} to {hi} at r {r}"
+            );
+        }
+        Ok(())
+    });
+}
+
 /// The lint findings whose number is a share inked, which rises as the drawing improves; every
 /// other finding's number falls.
 const RISING: &[&str] = &["empty", "dark"];
@@ -1434,6 +1454,49 @@ fn hpgl_stays_on_the_page_and_keeps_every_vertex() {
         prop_assert_eq!(pens, layers);
         let expected: usize = d.layers.iter().map(|l| l.paths.coords().len()).sum();
         prop_assert_eq!(vertices, expected);
+        Ok(())
+    });
+}
+
+/// The paper shows wherever the white-paper picture is pure white, and ink and outline only
+/// darken it: no channel of the picture on coloured paper is lighter than the paper or than the
+/// white-paper picture, give or take one level.
+///
+/// The picture on coloured paper is not the white-paper one times the paper: tiny-skia blends in
+/// 8-bit fixed point and rounds at every blend, and a pixel crossed by several passes of the pen
+/// rounds once per pass. A change of a few levels that is lost on a dark paper, because it rounds
+/// to nothing there, adds up to tens of levels (35 over 240 cases) in a dense drawing. So the law
+/// keeps what rounding cannot move.
+#[test]
+fn the_paper_shows_where_nothing_is_drawn_and_ink_only_darkens_it() {
+    let strategy = (case(all_styles()), any::<[u8; 3]>());
+    check("paper", 12, strategy, |(c, rgb)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let paper = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
+        let (w, h, white) = render_rgba(&d, 200, "#ffffff", false, false, None);
+        let (w2, h2, tinted) = render_rgba(&d, 200, &paper, false, false, None);
+        prop_assert_eq!((w, h), (w2, h2));
+        prop_assert_eq!(white.len(), 4 * (w * h) as usize);
+        prop_assert_eq!(tinted.len(), white.len());
+        for (i, (a, b)) in white.chunks(4).zip(tinted.chunks(4)).enumerate() {
+            prop_assert!(a[3] == 255 && b[3] == 255, "pixel {i} is not opaque");
+            if a[..3] == [255, 255, 255] {
+                prop_assert!(b[..3] == rgb, "pixel {i} is {b:?}, not the paper {paper}");
+            }
+            for k in 0..3 {
+                let most = u32::from(a[k].min(rgb[k])) + 1;
+                prop_assert!(
+                    u32::from(b[k]) <= most,
+                    "pixel {i} channel {k}: {} on {paper} is lighter than the white-paper {}",
+                    b[k],
+                    a[k]
+                );
+            }
+        }
         Ok(())
     });
 }

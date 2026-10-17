@@ -89,6 +89,17 @@ impl Session {
         Ok(())
     }
 
+    /// The colour of the paper the preview shows, written as `#rrggbb`; white until it is set.
+    fn paper(&self) -> String {
+        self.inner.paper().to_string()
+    }
+
+    /// Use `color`, written as `#rrggbb`, as the paper the preview shows. Anything else raises
+    /// `ValueError` and changes nothing.
+    fn set_paper(&mut self, color: &str) -> PyResult<()> {
+        self.inner.set_paper(color).map_err(session_error)
+    }
+
     fn pens<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         serde_to_py(py, self.inner.pens())
     }
