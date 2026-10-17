@@ -16,8 +16,9 @@ use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{
     Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
 };
+use crate::stats::DEFAULT_ACCEL_MM_S2;
 use crate::style::Style;
-use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap};
+use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap, Tones};
 
 /// `n` points at the origin.
 pub(crate) fn points(n: usize) -> Artifact {
@@ -41,6 +42,7 @@ pub(crate) fn tone() -> Artifact {
         ink: vec![0.5],
         mm_per_px: 1.0,
         origin_mm: [0.0, 0.0],
+        gamma: 1.0,
     }))
 }
 
@@ -54,9 +56,10 @@ pub(crate) fn tones(inks: &[f32]) -> Artifact {
             ink: vec![ink],
             mm_per_px: 1.0,
             origin_mm: [0.0, 0.0],
+            gamma: 1.0,
         })
     };
-    Artifact::Tones(Arc::new(inks.iter().map(map).collect()))
+    Artifact::Tones(Arc::new(Tones::each_whole(inks.iter().map(map).collect())))
 }
 
 /// Run roots: a 4 by 4 flat grey image, a 100 mm square page with no margin, and one black pen.
@@ -130,6 +133,7 @@ pub(crate) fn drawing_100_with_tone(paths: Vec<Vec<[f64; 2]>>) -> Drawing {
         ink: vec![1.0],
         mm_per_px: 100.0,
         origin_mm: [0.0, 0.0],
+        gamma: 1.0,
     }));
     d
 }
@@ -195,6 +199,7 @@ pub(crate) fn tone_map(w: u32, h: u32, ink: impl Fn(u32, u32) -> f32) -> ToneMap
         ink: ink.collect(),
         mm_per_px: 2.0,
         origin_mm: [10.0, 10.0],
+        gamma: 1.0,
     }
 }
 
@@ -238,14 +243,18 @@ pub(crate) fn run_tone_stage(
     run_tone_stage_in_lane(stage, tone, patch, Lane::SINGLE)
 }
 
-/// [`run_tone_stage`] for the stage's run in `lane` of a split.
+/// [`run_tone_stage`] for the stage's run in `lane` of a split, with the lane's pen [`black`].
 pub(crate) fn run_tone_stage_in_lane(
     stage: &dyn Stage,
     tone: ToneMap,
     patch: Value,
     lane: Lane,
 ) -> (Vec<Frame>, Arc<Paths>) {
-    match run_stage_in_lane(stage, vec![Artifact::Tone(Arc::new(tone))], patch, lane) {
+    let inputs = vec![
+        Artifact::Tone(Arc::new(tone)),
+        Artifact::Pens(Arc::new(vec![black()])),
+    ];
+    match run_stage_in_lane(stage, inputs, patch, lane) {
         (frames, Artifact::Paths(p)) => (frames, p),
         (_, a) => panic!("expected paths, got {}", a.kind().name()),
     }
@@ -295,6 +304,7 @@ pub(crate) fn machine() -> Machine {
         pen_down_gcode: String::new(),
         pen_up_gcode: String::new(),
         max_segment_mm: None,
+        accel_mm_s2: DEFAULT_ACCEL_MM_S2,
     }
 }
 

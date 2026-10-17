@@ -56,7 +56,7 @@ pub fn render_png(
     region: Option<[f64; 4]>,
 ) -> Result<Vec<u8>, PreviewError> {
     let v = view(d, width_px, region)?;
-    encode(render(d, width_px, paper, &v, travel, source).ok_or(PreviewError::Empty)?)
+    encode(render(d, width_px, paper, &v, travel, source, true).ok_or(PreviewError::Empty)?)
 }
 
 /// `d` as PNG bytes of the whole page, for showing `shrink` times smaller than it is drawn, as the
@@ -74,7 +74,7 @@ pub fn render_png_shrunk(
         min_px: shrink.max(1.0),
         ..view(d, width_px, None)?
     };
-    encode(render(d, width_px, paper, &v, false, false).ok_or(PreviewError::Empty)?)
+    encode(render(d, width_px, paper, &v, false, false, true).ok_or(PreviewError::Empty)?)
 }
 
 /// `pixmap` as PNG bytes.
@@ -112,7 +112,19 @@ pub fn render_rgba(
     let Ok(v) = view(d, width_px, region) else {
         return (width_px, 0, Vec::new());
     };
-    match render(d, width_px, paper, &v, travel, source) {
+    match render(d, width_px, paper, &v, travel, source, true) {
+        Some(pixmap) => (pixmap.width(), pixmap.height(), pixmap.take()),
+        None => (width_px, v.height_px, Vec::new()),
+    }
+}
+
+/// The whole page as [`render_rgba`] draws it with no travel and no source, but without the
+/// drawing area's outline, which is not plotted: what the plot looks like, for the colour match.
+pub(crate) fn render_ink(d: &Drawing, width_px: u32, paper: &str) -> (u32, u32, Vec<u8>) {
+    let Ok(v) = view(d, width_px, None) else {
+        return (width_px, 0, Vec::new());
+    };
+    match render(d, width_px, paper, &v, false, false, false) {
         Some(pixmap) => (pixmap.width(), pixmap.height(), pixmap.take()),
         None => (width_px, v.height_px, Vec::new()),
     }
@@ -153,6 +165,7 @@ fn render(
     view: &View,
     travel: bool,
     source: bool,
+    outline: bool,
 ) -> Option<Pixmap> {
     let View {
         x: view_x,
@@ -175,7 +188,8 @@ fn render(
     let (left, top) = to_px([x, y]);
     let (right, bottom) = to_px([x + w, y + h]);
     // A one pixel stroke centred half a pixel in, so the outline lies just inside the rect.
-    if let Some(rect) = Rect::from_ltrb(left + 0.5, top + 0.5, right - 0.5, bottom - 0.5) {
+    let rect = Rect::from_ltrb(left + 0.5, top + 0.5, right - 0.5, bottom - 0.5);
+    if let Some(rect) = rect.filter(|_| outline) {
         let outline = PathBuilder::from_rect(rect);
         let stroke = Stroke::default();
         // Multiplied like the ink, so the paper shows through it.

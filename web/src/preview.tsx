@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { dividerX, type Compare } from "./compare";
 import type { Canvas, FrameEvent, Layer, Pen, ResultEvent } from "./events";
 import { eachPath, pathCount } from "./paths";
+import type { Moment } from "./playback";
 import { fitView, onPaper, toMm, zoomAt, type View } from "./view";
 
 type Props = {
@@ -19,6 +20,8 @@ type Props = {
   compare: Compare | null;
   // The result the latest one replaced, for `compare`; null before a second run.
   previous: ResultEvent | null;
+  // The plot playback's drawing of `result` at its time, or null for the whole drawing.
+  playback: Moment | null;
   hidden: Set<number>;
   pens: Pen[];
   hasImage: boolean;
@@ -77,6 +80,28 @@ function strokeLayers(ctx: CanvasRenderingContext2D, layers: Layer[]) {
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
   for (const l of layers) strokeChunks(ctx, l.pen, pathCount(l.offsets), (chunk, i) => trace(chunk, l.coords, l.offsets[i], l.offsets[i + 1]));
+  ctx.restore();
+}
+
+// The result's layers as far as the playback's pen has got: each layer's whole paths, then the
+// part of the next one up to the pen.
+function strokePlayback(ctx: CanvasRenderingContext2D, layers: Layer[], m: Moment, hidden: Set<number>) {
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  layers.forEach((l, i) => {
+    const drawn = m.drawn[i];
+    if (!drawn || hidden.has(i)) return;
+    strokeChunks(ctx, l.pen, drawn.paths, (chunk, k) => trace(chunk, l.coords, l.offsets[k], l.offsets[k + 1]));
+    const part = drawn.part;
+    if (!part) return;
+    const p = new Path2D();
+    p.moveTo(l.coords[2 * part.from], l.coords[2 * part.from + 1]);
+    for (let v = part.from + 1; v < part.to; v++) p.lineTo(l.coords[2 * v], l.coords[2 * v + 1]);
+    p.lineTo(part.tip[0], part.tip[1]);
+    ctx.strokeStyle = l.pen.color;
+    ctx.lineWidth = l.pen.width_mm;
+    ctx.stroke(p);
+  });
   ctx.restore();
 }
 
@@ -177,6 +202,33 @@ function paintAim(ctx: CanvasRenderingContext2D, dpr: number) {
   ctx.restore();
 }
 
+// The playback's pen-up move under way, faint and dashed, and the pen as a ring of about 10 CSS
+// pixels with a white casing like the aim's, in device pixels, after the page content.
+function paintPen(ctx: CanvasRenderingContext2D, m: Moment, view: View, dpr: number) {
+  if (m.travel) {
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 1 / view.scale;
+    ctx.setLineDash([4 / view.scale, 3 / view.scale]);
+    ctx.beginPath();
+    ctx.moveTo(m.travel.from[0], m.travel.from[1]);
+    ctx.lineTo(m.travel.to[0], m.travel.to[1]);
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.beginPath();
+  ctx.arc(dpr * (view.x + m.pen[0] * view.scale), dpr * (view.y + m.pen[1] * view.scale), 5 * dpr, 0, 2 * Math.PI);
+  for (const [color, w] of [["#fff", 3.5], [RING, 1.5]] as const) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = w * dpr;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // Draws everything in page millimetres, so a line width is a length on the paper. While running,
 // each pen's latest frame stands in for the result and is drawn in that pen, so a finished pen's
 // lines stay while the next pen's frames arrive.
@@ -223,7 +275,10 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     if (pts && !s.hidden.has(i)) strokeChunks(ctx, penOf(i), pts.length / 2, (chunk, k) => trace(chunk, pts, k, k + 1));
   });
   ctx.restore();
-  strokeLayers(ctx, layers);
+  // Playback shows the finished result, not a run's frames.
+  const playback = !held && result ? s.playback : null;
+  if (playback && result) strokePlayback(ctx, result.layers, playback, s.hidden);
+  else strokeLayers(ctx, layers);
 
   if (s.showTravel && !held) {
     const travel = { name: "travel", color: "red", width_mm: 1 / view.scale };
@@ -249,6 +304,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   }
 
   if (s.compare && !s.running) paintCompare(ctx, s, s.compare, bitmap, dpr);
+  if (playback) paintPen(ctx, playback, view, dpr);
   if (s.focusing) paintAim(ctx, dpr);
 }
 
@@ -319,7 +375,7 @@ export function Preview(props: Props): JSX.Element {
       paint(ctx, props, view, size.w, size.h, window.devicePixelRatio || 1, bitmap);
     });
     return () => cancelAnimationFrame(id);
-  }, [props.canvas, props.paper, props.frames, props.result, props.running, props.showSource, props.showTravel, props.compare?.against, props.compare?.at, props.previous, props.hidden, props.pens, props.focusing, view, size, bitmap, themes]);
+  }, [props.canvas, props.paper, props.frames, props.result, props.running, props.showSource, props.showTravel, props.compare?.against, props.compare?.at, props.previous, props.playback, props.hidden, props.pens, props.focusing, view, size, bitmap, themes]);
 
   // Zooms by `k`, keeping the page point under (px, py) in place.
   const zoom = (k: number, px: number, py: number) => setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));

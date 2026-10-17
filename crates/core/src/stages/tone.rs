@@ -400,6 +400,7 @@ fn finish(
         ink: ink.into_iter().map(|v| v.clamp(0.0, 1.0)).collect(),
         mm_per_px,
         origin_mm,
+        gamma: s.gamma as f32,
     }
 }
 

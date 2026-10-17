@@ -93,6 +93,7 @@ class MachineSpec(TypedDict):
     pen_down_gcode: NotRequired[str]
     pen_up_gcode: NotRequired[str]
     max_segment_mm: NotRequired[float | None]
+    accel_mm_s2: NotRequired[float]
 
 
 @contextmanager
@@ -308,7 +309,9 @@ def build_server(session: Session | None = None) -> MCPServer:
         pen_down_gcode and pen_up_gcode, the lines written as they are in place of each Z move;
         the Z heights and z_feed are then unused. max_segment_mm, for a machine whose firmware
         draws a long straight move as a curve (a hanging plotter, say), cuts every move into
-        pieces no longer than it; leave it out to keep moves whole. The page becomes the area's
+        pieces no longer than it; leave it out to keep moves whole. accel_mm_s2 is how fast the
+        pen speeds up and slows down, in mm/s², 1000 when left out; only the plot time reads it,
+        since short moves never reach full speed. The page becomes the area's
         width and height, with the margin and fit kept, so that the drawing fits the machine;
         set_page can change it afterwards. The machine also sets the plot speeds that the stats
         and the lint use. export with format gcode needs a machine, and a result drawn before the
@@ -395,10 +398,15 @@ def build_server(session: Session | None = None) -> MCPServer:
         look: str | None = None,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
-        px wide. The JSON's tone key is {error, ssim, floor, reach}: how the drawing's tones,
-        seen through a 1.5 mm eye filter, follow the tone map, as the RMS error in tone-map ink
-        once the coverage is put on the tone map's scale (lower is closer) and the structural
-        similarity (1 is identical), or null when there is nothing to compare. Its lint key lists
+        px wide. The JSON's tone key is {error, ssim, floor, reach, contrast, blank, colour}: how
+        the drawing's tones, seen through a 1.5 mm eye filter, follow the tone map, as the RMS
+        error in tone-map ink once the coverage is put on the tone map's scale (lower is closer)
+        and the structural similarity (1 is identical), or null when there is nothing to compare.
+        contrast is how much of the image's tonal range the drawing reaches (1 is all of it),
+        blank the error of blank paper, and colour, for a drawing in more than one pen colour,
+        {error, blank, gain}: the mean colour difference (CIE ΔE*ab, lower is closer) of the
+        drawing and of blank paper against the image, and the share of blank paper's that the
+        drawing takes away. Its lint key lists
         physical problems with the drawing as {code, severity, message, value, patch}; a patch
         applies like an analyse_image suggestion's. A style that
         differs from the current one replaces it; a stage the two styles share keeps the values

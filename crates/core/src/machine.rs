@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::stats::Speeds;
+use crate::stats::{default_accel, Speeds, DEFAULT_ACCEL_MM_S2};
 
 /// A machine value that cannot be used; the message names the field.
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -54,6 +54,10 @@ impl PenLift {
     }
 }
 
+fn is_default_accel(v: &f64) -> bool {
+    *v == DEFAULT_ACCEL_MM_S2
+}
+
 /// A machine that draws with a pen: its drawable area, pen lift, feeds and the G-code written
 /// around a plot. The fields after `end_gcode` are left out of the JSON while they hold their
 /// defaults, so a machine that does not use them reads and writes as it did before they existed.
@@ -95,6 +99,10 @@ pub struct Machine {
     /// keeps every move whole.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_segment_mm: Option<f64>,
+    /// How fast the pen speeds up and slows down, in mm per second squared. Only the plot time
+    /// reads it: the files leave acceleration to the firmware.
+    #[serde(default = "default_accel", skip_serializing_if = "is_default_accel")]
+    pub accel_mm_s2: f64,
 }
 
 /// The shortest `max_segment_mm`, which bounds the number of lines a file can have.
@@ -158,6 +166,10 @@ impl Machine {
                 return bad(format!("{name} must be positive, got {feed}"));
             }
         }
+        let a = self.accel_mm_s2;
+        if !(a > 0.0 && a.is_finite()) {
+            return bad(format!("accel_mm_s2 must be positive, got {a}"));
+        }
         if let Some(v) = self.max_segment_mm {
             if !(v >= MIN_SEGMENT_MM && v.is_finite()) {
                 return bad(format!(
@@ -168,13 +180,14 @@ impl Machine {
         Ok(())
     }
 
-    /// The plot speeds the machine implies: the feeds in mm per second, and a pen lift as two
-    /// dwells, plus the down and up Z moves at `z_feed` when the pen lifts by Z.
+    /// The plot speeds the machine implies: the feeds in mm per second, its acceleration, and a pen
+    /// lift as two dwells, plus the down and up Z moves at `z_feed` when the pen lifts by Z.
     pub fn speeds(&self) -> Speeds {
         let dwells = 2.0 * f64::from(self.settle_ms) / 1000.0;
         Speeds {
             draw_mm_s: self.draw_feed / 60.0,
             travel_mm_s: self.travel_feed / 60.0,
+            accel_mm_s2: self.accel_mm_s2,
             pen_lift_s: match self.pen_lift {
                 PenLift::Z => 2.0 * (self.z_up_mm - self.z_down_mm) / (self.z_feed / 60.0) + dwells,
                 PenLift::Gcode => dwells,
@@ -222,6 +235,7 @@ mod tests {
         let s = machine().speeds();
         assert_eq!((s.draw_mm_s, s.travel_mm_s), (60.0, 100.0));
         assert!((s.pen_lift_s - 0.6).abs() < 1e-9);
+        assert_eq!(s.accel_mm_s2, 1000.0);
         // Lifted by G-code lines, the lift is the two 100 ms dwells alone.
         assert!((servo_machine().speeds().pen_lift_s - 0.2).abs() < 1e-9);
     }
@@ -234,17 +248,24 @@ mod tests {
             "pen_down_gcode",
             "pen_up_gcode",
             "max_segment_mm",
+            "accel_mm_s2",
         ] {
             assert!(v.get(key).is_none(), "{key} in {v}");
         }
         assert_eq!(serde_json::from_value::<Machine>(v).unwrap(), machine());
         let mut m = servo_machine();
         m.max_segment_mm = Some(2.0);
+        m.accel_mm_s2 = 500.0;
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(
-            (&v["pen_lift"], &v["max_segment_mm"]),
-            (&serde_json::json!("gcode"), &serde_json::json!(2.0))
+            (&v["pen_lift"], &v["max_segment_mm"], &v["accel_mm_s2"]),
+            (
+                &serde_json::json!("gcode"),
+                &serde_json::json!(2.0),
+                &serde_json::json!(500.0)
+            )
         );
+        assert_eq!(m.speeds().accel_mm_s2, 500.0);
         assert_eq!(serde_json::from_value::<Machine>(v).unwrap(), m);
     }
 
@@ -263,6 +284,16 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("pen_down_gcode"));
+    }
+
+    #[test]
+    fn the_acceleration_must_be_positive() {
+        let mut m = machine();
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            m.accel_mm_s2 = bad;
+            let err = m.validate().unwrap_err().to_string();
+            assert!(err.starts_with("accel_mm_s2 must be positive"), "{err}");
+        }
     }
 
     #[test]

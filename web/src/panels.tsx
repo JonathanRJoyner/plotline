@@ -315,8 +315,9 @@ export function StatsPanel({ stats, tone }: { stats: Stats | null; tone: ToneMat
       {pathsText(stats.path_count)} · pen down {lengthText(stats.pen_down_mm)} · pen up {lengthText(stats.pen_up_mm)}{" "}
       · about {Math.floor(t / 60)} min {t % 60} s to plot
       {tone && (
-        <span title="How far the drawing's tones are from the image's, seen from a metre or two: the tone error is in the image's own ink, 0 for a perfect match, and SSIM compares their shapes, 1 for identical.">
-          {" "}· tone error {tone.error.toFixed(3)} · SSIM {tone.ssim.toFixed(2)}
+        <span title="How far the drawing's tones are from the image's, seen from a metre or two: the tone error is in the image's own ink, 0 for a perfect match, and SSIM compares their shapes, 1 for identical. Contrast is how much of the image's range from light to dark the drawing reaches, 100 % for all of it. For a drawing in several colours, the colour ΔE compares it with the image in CIELAB, lower is closer, beside blank paper's.">
+          {" "}· tone error {tone.error.toFixed(3)} · SSIM {tone.ssim.toFixed(2)} · contrast {Math.round(100 * tone.contrast)} %
+          {tone.colour && ` · colour ΔE ${tone.colour.error.toFixed(1)} against ${tone.colour.blank.toFixed(1)} for blank paper`}
         </span>
       )}
     </p>
@@ -420,7 +421,7 @@ export function FitPanel({ image, disabled, error, fitted, optimum, settings, st
         </select>
         <button
           type="submit" disabled={disabled}
-          title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says."
+          title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target."
         >
           <Target /> Fit to target
         </button>
@@ -551,7 +552,11 @@ const FEEDS: [NumberKey, string][] = [["draw_feed", "Draw"], ["travel_feed", "Tr
 const AREA: [keyof Area, string][] = [["width", "Width"], ["height", "Height"], ["x", "Offset X"], ["y", "Offset Y"]];
 const SPEEDS: [keyof Speeds, string, string, number][] = [
   ["draw_mm_s", "Draw", "mm/s", 0.1], ["travel_mm_s", "Travel", "mm/s", 0.1], ["pen_lift_s", "Pen lift", "s", 0],
+  ["accel_mm_s2", "Acceleration", "mm/s²", 0.1],
 ];
+// The engine's acceleration for a machine whose JSON leaves it out.
+const ACCEL = 1000;
+const ACCEL_HELP = "How fast the pen speeds up and slows down. A short move never reaches full speed and corners slow the pen, so dots and short strokes take longer than their length suggests.";
 const SECTIONS = ["Machine", "Pen lift", "G-code", "HPGL", "Plot time"] as const;
 // A starting point to edit, not a real machine: its values must be replaced with the machine's own.
 const NEW_MACHINE: Machine = {
@@ -615,6 +620,8 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
             <p class="help">Offset is the machine position of the area's corner with the smallest X and Y. The page is centred in the area.</p>
             <h3>Feeds</h3>
             {FEEDS.map(([k, label]) => num(label, "mm/min", machine[k], (v) => onEdit({ ...machine, [k]: v })))}
+            {num("Acceleration", "mm/s²", machine.accel_mm_s2 ?? ACCEL, (v) => onEdit({ ...machine, accel_mm_s2: v }))}
+            <p class="help">{ACCEL_HELP} Only the plot time uses it: the G-code leaves acceleration to the firmware, so give the firmware's own value.</p>
           </>
         )}
       </>
@@ -705,7 +712,8 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
             {unit}
           </label>
         ))}
-        {machine && <p class="help">From the machine's feeds and pen lift.</p>}
+        <p class="help">{ACCEL_HELP}</p>
+        {machine && <p class="help">From the machine's feeds, acceleration and pen lift.</p>}
       </>
     ),
   }[section];

@@ -182,6 +182,28 @@ test("svg and json after a run", async () => {
   expect(JSON.parse(ok("json").value as string).format).toBe("plotline-paths");
 });
 
+test("timeline times the drawing at the speeds, one time per vertex, ending at the plot time", async () => {
+  const { posted, ok, ended } = setup();
+  expect(ok("timeline").value).toBeNull(); // no drawing yet
+  ok("setImage", ...image());
+  await ended(1);
+  const result = posted.find((m) => m.type === "result") as { layers: { coords: Float64Array; offsets: Uint32Array }[] };
+  type Timed = { start: number[]; layers: { travel: Float64Array; vertices: Float64Array }[] };
+  const timed = ok("timeline");
+  const t = timed.value as Timed;
+  expect(t.start).toEqual([10, 10]);
+  expect(t.layers).toHaveLength(1);
+  const { travel, vertices } = t.layers[0];
+  expect(2 * vertices.length).toBe(result.layers[0].coords.length);
+  expect(travel.length).toBe(2 * (result.layers[0].offsets.length - 1));
+  const end = timed.state.stats!.estimated_seconds;
+  expect(vertices[vertices.length - 1]).toBeCloseTo(end, 6);
+  // A slower pen lift moves every time after the first path's.
+  ok("setSpeeds", { ...timed.state.speeds, pen_lift_s: 2 });
+  const slower = ok("timeline").value as Timed;
+  expect(slower.layers[0].vertices[vertices.length - 1]).toBeGreaterThan(vertices[vertices.length - 1]);
+});
+
 test("a run that fails to post still ends once", async () => {
   const { posted, ok, ended } = setup((m) => { if (m.type === "frame") throw new Error("boom"); });
   ok("setImage", ...image());

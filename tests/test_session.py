@@ -264,7 +264,7 @@ def test_tone_match_and_auto_response():
     # The engine's pinned values, since the image, page and style are the same.
     match = s.tone_match()
     assert (match["error"], match["ssim"]) == (0.08197368769144689, 0.7488977156057808)
-    assert set(match) == {"error", "ssim", "floor", "reach"}
+    assert set(match) == {"error", "ssim", "floor", "reach", "contrast", "blank", "colour"}
     s.update("tone", response="auto")
     frames = []
     s.subscribe(frames.append)
@@ -371,6 +371,22 @@ def test_stats_use_the_speeds_edited_in_place():
     assert before.path_count == 1
     s.speeds.pen_lift_s += 1.0
     assert s.stats().estimated_seconds == pytest.approx(before.estimated_seconds + 1.0)
+
+
+def test_a_lower_acceleration_lengthens_the_plot_time_and_a_machine_sets_it():
+    s = slow(Session(), frames=1)
+    s.run_blocking()
+    assert s.speeds.accel_mm_s2 == 1000
+    before = s.stats().estimated_seconds
+    s.speeds.accel_mm_s2 = 1.0
+    assert s.stats().estimated_seconds > before
+    s.set_machine({**MACHINE, "accel_mm_s2": 250})
+    assert s.speeds.accel_mm_s2 == 250 and s.machine["accel_mm_s2"] == 250
+    # At its default the machine leaves it out, as a preset saved before it existed has it.
+    s.set_machine(MACHINE)
+    assert s.speeds.accel_mm_s2 == 1000 and "accel_mm_s2" not in s.machine
+    with pytest.raises(ValueError, match="accel_mm_s2 must be positive"):
+        s.set_machine({**MACHINE, "accel_mm_s2": 0})
 
 
 def test_an_error_after_the_last_frame_ends_the_run_in_error(monkeypatch):

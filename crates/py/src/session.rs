@@ -191,7 +191,7 @@ impl Session {
         serde_to_py(py, &self.inner.speeds())
     }
 
-    /// Use `{"draw_mm_s", "travel_mm_s", "pen_lift_s"}` as the plot speeds.
+    /// Use `{"draw_mm_s", "travel_mm_s", "pen_lift_s", "accel_mm_s2"}` as the plot speeds.
     fn set_speeds(&mut self, speeds: &Bound<'_, PyAny>) -> PyResult<()> {
         let speeds: Speeds = from_py(speeds)?;
         self.inner.set_speeds(speeds);

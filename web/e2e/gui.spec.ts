@@ -446,6 +446,7 @@ test("the stats read in metres and a single path", async ({ page }) => {
 test("the stats show the tone match", async ({ page }) => {
   await sample(page);
   await expect(page.locator(".stats")).toContainText(/tone error \d\.\d{3} · SSIM -?\d\.\d{2}/);
+  await expect(page.locator(".stats")).toContainText(/ · contrast \d+ %/);
 });
 
 test("Optimize suggests a spacing and changes nothing until Apply", async ({ page }) => {
@@ -502,6 +503,38 @@ test("Optimize names a closer spacing the time limit left out", async ({ page })
   const found = page.locator("form.fit span");
   await expect(found).toContainText("follows the image's tones best for its plot time");
   await expect(found).toContainText(/Spacing at [\d.]+ mm follows them more closely, with a tone error of \d\.\d{3}, but takes [\d.]+ min to plot, over the limit of [\d.]+ min: type a target in minutes to allow it\./);
+});
+
+test("a lower acceleration lengthens the plot time, and a machine brings its own", async ({ page }) => {
+  await sample(page);
+  const stats = page.locator(".stats");
+  const seconds = async () => {
+    const [, m, s] = /about (\d+) min (\d+) s to plot/.exec((await stats.textContent()) ?? "") ?? [];
+    return 60 * Number(m) + Number(s);
+  };
+  const before = await seconds();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("button", { name: "Plot time", exact: true }).click();
+  const accel = dialog.getByRole("spinbutton", { name: /^Acceleration/ });
+  await expect(accel).toHaveValue("1000");
+  await accel.fill("0");
+  await accel.blur();
+  await expect(accel).toHaveValue("1000"); // no estimate at 0, so it snaps back
+  await accel.fill("20");
+  await accel.blur();
+  // The stats follow the speeds without a new run.
+  await expect.poll(seconds).toBeGreaterThan(before);
+  // A machine sets the acceleration with its feeds, and Plot time shows it read-only.
+  await dialog.getByRole("button", { name: "Machine", exact: true }).click();
+  await dialog.getByRole("combobox", { name: /^Machine/ }).selectOption("new");
+  const own = dialog.getByRole("spinbutton", { name: /^Acceleration/ });
+  await expect(own).toHaveValue("1000");
+  await own.fill("500");
+  await own.blur();
+  await dialog.getByRole("button", { name: "Plot time", exact: true }).click();
+  await expect(accel).toHaveValue("500");
+  await expect(accel).toBeDisabled();
 });
 
 // A white picture, on which the line styles draw nothing.
@@ -956,6 +989,47 @@ async function canvasHash(page: Page, from: number, to: number): Promise<number>
     return hash;
   }, [from, to]);
 }
+
+// The preview's opaque pixels darker than mid grey: the ink, give or take the pen's ring. The
+// paper's shadow is see-through, so it does not count.
+const inked = (page: Page) => page.locator(".preview canvas").evaluate((c: HTMLCanvasElement) => {
+  const { data } = c.getContext("2d")!.getImageData(0, 0, c.width, c.height);
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4) if (data[i + 3] === 255 && data[i] + data[i + 1] + data[i + 2] < 384) n++;
+  return n;
+});
+
+test("Play lays the drawing down over the plot time, the slider and its keys scrub it, and Compare takes its place", async ({ page }) => {
+  await sample(page);
+  const [, m, s] = /about (\d+) min (\d+) s to plot/.exec((await page.locator(".stats").textContent()) ?? "") ?? [];
+  const full = await inked(page);
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect(page.getByRole("checkbox", { name: "Play", exact: true })).toBeChecked();
+  const times = page.locator(".playback .time");
+  // The playback lasts the stats' plot time, and it plays at once.
+  await expect(times).toContainText(` of ${m}:${s.padStart(2, "0")}, `);
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  const slider = page.getByRole("slider", { name: "Plot time" });
+  await slider.focus();
+  await page.keyboard.press("Home");
+  await expect(times).toContainText(/^0:00 of /);
+  await expect.poll(() => inked(page)).toBeLessThan(full / 10);
+  await page.keyboard.press("ArrowRight");
+  await expect(times).not.toContainText(/^0:00 of /);
+  await page.keyboard.press("End");
+  await expect(times).toContainText(/, 0:00 left$/);
+  await expect.poll(() => inked(page)).toBeGreaterThan(full * 0.9);
+  // Play from the end starts again from the beginning.
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  await expect(page.getByRole("checkbox", { name: "Play", exact: true })).not.toBeChecked();
+  await expect(page.locator(".playback")).toHaveCount(0);
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect(page.getByRole("checkbox", { name: "Compare", exact: true })).not.toBeChecked();
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect.poll(() => inked(page)).toBeGreaterThan(full * 0.9);
+});
 
 test("Compare swipes the previous drawing against the current one", async ({ page }) => {
   test.setTimeout(120_000);

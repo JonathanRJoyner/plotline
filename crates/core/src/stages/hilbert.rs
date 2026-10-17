@@ -25,7 +25,8 @@
 //! longer side has an odd number of cells and the shorter an even number, one diagonal step may be
 //! unavoidable. A leaf centre off the map, in the overhanging column or row or the strip a lane's
 //! move uncovers, is clamped onto the map's edge, so the curve is one path with one pen. When the
-//! drawing is split between pens, a leaf over almost no ink in its lane ends the path.
+//! drawing is split between pens, a leaf whose lane's ink is under half of what the curve covers
+//! over white, through leaves of `max_cell_mm` (see [`lane_floor`]), ends the path.
 //!
 //! Split between pens, pen `i` of `n` also moves the grid's corner up and left by `cell_mm * i / n`
 //! on both axes, and grows the grid until it covers the map from there. The leaves over full ink
@@ -40,7 +41,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::lines::{clamp_to, ChunkRun, LANE_MIN_INK};
+use super::lines::{clamp_to, lane_floor, ChunkRun};
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
 use crate::types::{Paths, ToneMap};
@@ -87,10 +88,11 @@ impl Stage for HilbertStage {
         "Hilbert curve"
     }
     fn version(&self) -> u32 {
-        3
+        4
     }
+    // The pen's width sets where a lane lifts it.
     fn requires(&self) -> &'static [Kind] {
-        &[Kind::Tone]
+        &[Kind::Tone, Kind::Pens]
     }
     fn provides(&self) -> Kind {
         Kind::Paths
@@ -110,9 +112,15 @@ impl Stage for HilbertStage {
         let s = validate::<HilbertSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
         let lane = ctx.lane();
-        let lift = lane.count > 1;
         let rect = tone.rect_mm();
         let (cell, max) = (s.cell_mm, s.max_cell_mm.max(s.cell_mm));
+        // Split between pens, a lane lifts the pen where the curve over white would cover more
+        // than the ink asks; alone, the curve is one path.
+        let floor = if lane.count > 1 {
+            lane_floor(inputs.pens()[0].width_mm, max)
+        } else {
+            0.0
+        };
         // Each pen's grid moves up and left by its share of a cell; the first pen's stays put.
         let d = cell * lane.index as f64 / lane.count as f64;
         // The tolerance keeps float noise, as in 6.0 / 0.6 = 10.000000000000002, from adding a
@@ -162,8 +170,7 @@ impl Stage for HilbertStage {
                         stack.extend(b.children().into_iter().rev());
                     } else {
                         let centre = clamp_to(rect, grid.centre(&b));
-                        // Split between pens, a lane lifts the pen over no ink.
-                        if lift && grid.tone.sample(centre) < LANE_MIN_INK {
+                        if grid.tone.sample(centre) < floor {
                             end(paths, open);
                         } else {
                             open.push(centre);
@@ -410,10 +417,10 @@ mod tests {
             (HilbertStage.name(), HilbertStage.label()),
             ("hilbert", "Hilbert curve")
         );
-        assert_eq!(HilbertStage.version(), 3);
+        assert_eq!(HilbertStage.version(), 4);
         assert_eq!(
             (HilbertStage.requires(), HilbertStage.provides()),
-            (&[Kind::Tone][..], Kind::Paths)
+            (&[Kind::Tone, Kind::Pens][..], Kind::Paths)
         );
     }
 
@@ -490,6 +497,21 @@ mod tests {
         assert_eq!(paths.len(), 1);
         assert_eq!(paths.coords().len(), 64 * 64);
         assert!(paths.coords().iter().all(|p| p[0] < 74.0));
+    }
+
+    #[test]
+    fn a_shared_lane_lifts_where_the_curve_over_white_is_twice_the_ink() {
+        // Folds of at most 2 mm with the 0.3 mm pen cover 15 % over white: a lane keeps the left
+        // half's 10 % and lifts over the right half's 5 %, which one pen draws.
+        let pale = |x: u32, _| if x < 16 { 0.1 } else { 0.05 };
+        let patch = json!({"cell_mm": 1.0, "max_cell_mm": 2.0});
+        let (_, alone) = run_tone_stage(&HilbertStage, tone_map(32, 16, pale), patch.clone());
+        assert!(alone.coords().iter().any(|p| p[0] > 50.0));
+        let lane = Lane { index: 0, count: 2 };
+        let (_, shared) =
+            run_tone_stage_in_lane(&HilbertStage, tone_map(32, 16, pale), patch, lane);
+        assert!(!shared.is_empty());
+        assert!(shared.coords().iter().all(|p| p[0] < 43.0), "{shared:?}");
     }
 
     #[test]
@@ -574,6 +596,7 @@ mod tests {
             ink: vec![1.0; (w * h) as usize],
             mm_per_px: mm,
             origin_mm: [10.0, 10.0],
+            gamma: 1.0,
         };
         let rect = tone.rect_mm();
         let (_, paths) = run_tone_stage(&HilbertStage, tone, json!({}));

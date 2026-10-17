@@ -1,6 +1,6 @@
 # Style guide
 
-Every style turns the image's tone into pen marks in its own way. This guide shows each one on the same picture, says what it is good for, which settings matter and what turning them does, and how to pick a pen for it.
+Every style turns the image's tone into pen marks in its own way. This guide shows each one on the same picture, says what it is good for, which settings matter and what turning them does, and how to pick a pen for it. New to plotline? The [first plot guide](guide.md) takes you from a picture to paper.
 
 Each picture is the code-rendered still life from the README, drawn on A4 with a 0.3 mm black pen at the style's defaults. There are two exceptions. `ink` is drawn at a threshold of 0.3, because `ink` is made for line art and the still life is not. `learned` is drawn with the `teed-1` model, because it needs a model file; its picture is the one on that model's card in the GUI, which the `model_cards` example draws, since the models are not in the repository. A setting is named as its stage and key, such as `hatch.spacing_mm`; the GUI shows the same settings under each stage's heading, `plotline describe STYLE` lists them with their ranges, and `plotline run` takes them as `--set stage.key=value`.
 
@@ -17,9 +17,9 @@ The GUI's style picker groups the styles under these same headings, and a test k
 
 **Image** (the `tone` stage) turns the picture into the map of ink the style draws from. `resolution` is the map's longer side in pixels; more follows the image more closely and runs slower. `black` and `white` clip the ends of the tone range, or `levels` set to `auto` picks them from the image itself. `gamma` above 1 darkens the midtones: `waves`, `spiral` and `mosaic` start at 1.9, because they ink in proportion to the tone and would draw the midtones too light at 1. `contrast` pushes tones away from mid-grey, `blur_mm` smooths away noise and fine texture, and `invert` swaps light and dark. `focus` is a list of points, `[x, y]` as shares of the image from its top-left corner and set in the GUI by turning on Focus and clicking the preview: the map keeps its detail within `focus_mm` of the nearest point and blurs more the further out it goes, up to `focus_blur_mm` from three radii out, so a style's marks spend their detail near the points. Without points nothing changes. `learned` has a Model stage in its place, which places the image on the page the same way.
 
-**Pen use** (the `split` stage) shares the drawing between the pens: the first pen alone, light to dark in list order, or each pen by its colour. With several pens, every style but `ink` and `learned` spreads its marks so that one pen does not draw on top of another.
+**Pen use** (the `split` stage) shares the drawing between the pens: the first pen alone, light to dark in list order, or each pen by its colour. With several pens, every style but `ink` and `learned` spreads its marks so that one pen does not draw on top of another. By colour, the tone `gamma` darkens each pen's own share of a colour rather than adding grey, which the black pen would draw over every colour ([decision](decisions/2026-10-17-colour-lanes.md)). `waves`, `spiral` and `hilbert` lift a pen where its share of the ink is under half of what their lines cover over white, so a pen leaves paper and other pens' colours alone.
 
-**Path order** (the `order` stage) reorders the paths to cut pen-up travel (`optimize`), drops paths shorter than `min_length_mm`, which clears specks, and, with `simplify_mm` above 0, removes the vertices a pen cannot show (Ramer–Douglas–Peucker; see [the decision](decisions/2026-10-16-path-simplification.md)).
+**Path order** (the `order` stage) joins the paths that meet into the fewest pen-down trails (`join`: `on` draws each edge once, `retrace` also draws some short edges twice so the pen lifts less; see [the decision](decisions/2026-10-17-join-paths-into-trails.md)), reorders the paths to cut pen-up travel (`optimize`), drops paths shorter than `min_length_mm`, which clears specks, and, with `simplify_mm` above 0, removes the vertices a pen cannot show (Ramer–Douglas–Peucker; see [the decision](decisions/2026-10-16-path-simplification.md)).
 
 **Density.** Every style but `ink` and `learned` has one density setting, named in its section. Fit to target in the GUI, the `--fit-minutes`, `--fit-paths`, `--fit-metres` and `--fit-dots` flags and the MCP `fit` tool change that setting until the drawing meets a plot time, a path count, metres of line or a dot count.
 
@@ -158,7 +158,7 @@ The model's answer is cached like any stage's, so changing the threshold, the pe
 
 These styles share one placement of points: the points spread evenly while staying dense where the image is dark (weighted Voronoi relaxation). The relaxation is the slow part, so switching between these styles reuses the points and redraws at once. Their placement settings are the same everywhere:
 
-- `voronoi.count` (the density for every style in the family): the number of points. More points give finer detail and a longer plot.
+- `voronoi.count` (the density for every style in the family): the number of points. More points give finer detail and a longer plot. It counts per pen: by colour the pens share their points by ink, so a pen whose colour makes up a tenth of the picture's ink places about a tenth of them, and light to dark each pen places its own.
 - `voronoi.exponent`: density follows ink to this power. 2 suits `line`, `tree`, `mesh` and `cells`, which put more ink between close points; the default of 1 keeps the points shared with `stipple`.
 - `voronoi.iterations`: relaxation passes. More spread the points more evenly.
 - `voronoi.seed`: picks another starting scatter.
@@ -224,7 +224,7 @@ The points joined by the shortest tree, so every point is reached and no loop fo
 
 **Settings.** The tree has none of its own; try `voronoi.exponent` 2.
 
-**Pens.** Fine pens. The tree is drawn as long branching strokes, so the pen lifts far less often than there are points.
+**Pens.** Fine pens. The tree is drawn as long branching strokes, and `order.join` is `retrace`, which draws some short twigs twice to join the strokes, so the pen lifts far less often than there are points.
 
 **Looks:** Faithful (`tone.response` auto and `voronoi.count` 20,000).
 
@@ -239,7 +239,7 @@ A triangle mesh over the points (their Delaunay triangulation), dense and dark w
 **Settings**
 - `delaunay.max_edge_mm`: leaves out edges longer than this, such as those across light areas, so white stays white.
 
-**Pens.** A fine pen: the mesh draws a lot of line, and close edges merge under a wide pen.
+**Pens.** A fine pen: the mesh draws a lot of line, and close edges merge under a wide pen. `order.join` is `retrace`, so the mesh is drawn in long strokes that draw some short edges twice.
 
 **Looks:** Faithful (`tone.response` auto and `voronoi.count` 6,000) and Fine (`voronoi.count` 20,000).
 
@@ -253,7 +253,7 @@ The outlines of the points' Voronoi cells: small cells where it is dark, large o
 
 **Settings.** The cells have none of their own; try `voronoi.exponent` 2.
 
-**Pens.** A fine pen. The outlines are drawn in thousands of short pieces, so expect many pen lifts.
+**Pens.** A fine pen. Every corner of a cell joins three edges, so the outlines cannot be drawn in fewer pieces than half the corners; `order.join` is `retrace`, which draws some short edges twice to join the pieces and lifts the pen about a seventh as often. Set it to `on` to draw every edge once, with many more lifts.
 
 **Looks:** Faithful (`tone.response` auto and `voronoi.count` 8,400) and Fine (`voronoi.count` 12,000).
 

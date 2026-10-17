@@ -34,11 +34,18 @@ use plotline_core::preview::{render_png_shrunk, render_rgba};
 use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
-use plotline_core::stage::Artifact;
-use plotline_core::stages::tone::{flatten, guided};
+use plotline_core::settings::merge;
+use plotline_core::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
+use plotline_core::stages::join::join;
+use plotline_core::stages::split::SplitStage;
+use plotline_core::stages::tone::{flatten, guided, ToneStage};
+use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
-use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
-use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session};
+use plotline_core::synthetic::{flat, flat_noise, gradient, ramp, scene, still_life, strokes};
+use plotline_core::tone_match;
+use plotline_core::{
+    Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds, ToneMap, Tones,
+};
 use proptest::prelude::*;
 use proptest::sample::select;
 use proptest::test_runner::{Config, RngSeed, TestCaseError, TestRunner};
@@ -458,14 +465,19 @@ fn case(names: Vec<String>) -> impl Strategy<Value = Case> {
     )
 }
 
+/// The pens of widths and colours `pens`.
+fn pens_of(pens: &[(f64, [u8; 3])]) -> Vec<Pen> {
+    (pens.iter().enumerate())
+        .map(|(i, (width, [r, g, b]))| {
+            let colour = format!("#{r:02x}{g:02x}{b:02x}");
+            Pen::new(&format!("Pen {i}"), *width, &colour).unwrap()
+        })
+        .collect()
+}
+
 impl Case {
     fn pens(&self) -> Vec<Pen> {
-        (self.pens.iter().enumerate())
-            .map(|(i, (width, [r, g, b]))| {
-                let colour = format!("#{r:02x}{g:02x}{b:02x}");
-                Pen::new(&format!("Pen {i}"), *width, &colour).unwrap()
-            })
-            .collect()
+        pens_of(&self.pens)
     }
 
     /// A fresh session, with its own cache, set up for this case.
@@ -1136,7 +1148,11 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         let above = fit.samples.iter().any(|x| x.metric > target);
         if !within && !(below && above) {
             // Out of reach: then the fit is no farther from the target than the end of the
-            // range that density points towards.
+            // range that density points towards, give or take the fit's tolerance or one of the
+            // end drawing's average paths. As in the density law, lines land on whole steps, so
+            // a closer spacing can draw a line less: flow's minutes fell from 0.0642 to 0.0639
+            // as its minimum spacing closed from 0.8 to 0.7 mm, and the search took that for a
+            // cliff and stayed near 0.75 mm while 0.3 mm gave 0.0700.
             let end = if (target > start) == d.direct {
                 d.max
             } else {
@@ -1150,10 +1166,12 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
             s.update(&d.stage, &json!({ &d.key: end })).unwrap();
             let mut r = s.start().unwrap();
             drain(&mut r)?;
-            let at_end = metrics(&s, &r)[metric];
+            let end_metrics = metrics(&s, &r);
+            let at_end = end_metrics[metric];
             let off = |m: f64| (ln(m) - ln(target)).abs();
+            let slack = ln(1.0 + TOLERANCE.max(1.0 / end_metrics[1].max(1.0)));
             prop_assert!(
-                off(fit.achieved) <= off(at_end),
+                off(fit.achieved) <= off(at_end) + slack,
                 "{} {target}: {} is farther than {at_end} at {end}: {:?}",
                 names[metric],
                 fit.achieved,
@@ -1203,31 +1221,33 @@ fn an_optimize_suggestion_keeps_the_limits() {
         prop_assert_eq!(found.current_minutes, minutes);
         prop_assert!(!found.reason.is_empty());
         let Some(error) = found.error else {
-            // Nothing scored: no trial within the limits had a tone error, and nothing is offered.
+            // Nothing scored: no trial within the limits had a score, and nothing is offered.
             prop_assert!(found.patch.is_none() && found.beyond.is_none());
             prop_assert!(found
                 .trials
                 .iter()
-                .all(|t| t.error.is_none() || t.over || t.slow || !t.warnings.is_empty()));
+                .all(|t| t.score.is_none() || t.over || t.slow || !t.warnings.is_empty()));
             return Ok(());
         };
-        // It is the quickest of the trials within the limits whose tone error is within a tenth
-        // of the lowest, and only a trial left out for its time beats it by more.
+        // It is the quickest of the trials within the limits whose score is within a tenth of the
+        // lowest, and only a trial left out for its time beats it by more.
         let kept: Vec<_> = (found.trials.iter())
-            .filter(|t| t.error.is_some() && !t.over && !t.slow && t.warnings.is_empty())
+            .filter(|t| t.score.is_some() && !t.over && !t.slow && t.warnings.is_empty())
             .collect();
         let lowest = kept
             .iter()
-            .filter_map(|t| t.error)
+            .filter_map(|t| t.score)
             .fold(f64::INFINITY, f64::min);
-        prop_assert!(error <= (1.0 + CLOSE) * lowest);
+        let best =
+            (kept.iter()).find(|t| t.minutes == Some(found.minutes) && t.error == Some(error));
+        prop_assert!(best.is_some_and(|t| t.score.unwrap() <= (1.0 + CLOSE) * lowest));
         prop_assert!(
             kept.iter()
-                .all(|t| t.error.unwrap() > (1.0 + CLOSE) * lowest
+                .all(|t| t.score.unwrap() > (1.0 + CLOSE) * lowest
                     || t.minutes >= Some(found.minutes))
         );
         if let Some(b) = &found.beyond {
-            prop_assert!(b.slow && (1.0 + CLOSE) * b.error.unwrap() < lowest);
+            prop_assert!(b.slow && (1.0 + CLOSE) * b.score.unwrap() < lowest);
         }
         // The suggestion, applied, plots in the time it reports, within the limit, and with no
         // warning the current settings' drawing does not have.
@@ -1441,6 +1461,7 @@ fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
             pen_down_gcode: "M280 P0 S30".to_string(),
             pen_up_gcode: "M280 P0 S90".to_string(),
             max_segment_mm: None,
+            accel_mm_s2: DEFAULT_ACCEL_MM_S2,
         };
         let split = Machine {
             max_segment_mm: Some(max),
@@ -1538,6 +1559,63 @@ fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero(
     });
 }
 
+/// Each segment of `paths` between two different points, as its two ends sorted, once.
+fn segments_of(paths: &Paths) -> Vec<[[i64; 2]; 2]> {
+    let point = |p: [f64; 2]| [p[0] as i64, p[1] as i64];
+    let mut out: Vec<[[i64; 2]; 2]> = (paths.iter())
+        .flat_map(|p| p.windows(2).map(|s| [point(s[0]), point(s[1])]))
+        .filter(|s| s[0] != s[1])
+        .map(|mut s| {
+            s.sort();
+            s
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[test]
+fn joining_never_adds_a_path_and_draws_every_segment_and_dot() {
+    // Paths on a coarse grid, so that paths meet, cross at vertices, repeat a segment, repeat a
+    // vertex in place and come as dots.
+    let vertex = (0..6i32, 0..6i32).prop_map(|(x, y)| [f64::from(x), f64::from(y)]);
+    let paths = prop::collection::vec(prop::collection::vec(vertex, 1..7), 0..16);
+    check("join", 512, paths, |list| {
+        let mut input = Paths::new();
+        for p in &list {
+            input.push(p);
+        }
+        let dots = |p: &Paths| {
+            let mut d: Vec<Vec<[f64; 2]>> = p
+                .iter()
+                .filter(|q| q.len() == 1)
+                .map(<[_]>::to_vec)
+                .collect();
+            d.sort_by(|a, b| {
+                a[0][0]
+                    .total_cmp(&b[0][0])
+                    .then(a[0][1].total_cmp(&b[0][1]))
+            });
+            d
+        };
+        let joined = join(&input, false);
+        let retraced = join(&input, true);
+        for out in [&joined, &retraced] {
+            prop_assert!(
+                out.len() <= input.len(),
+                "{} paths from {}",
+                out.len(),
+                input.len()
+            );
+            prop_assert_eq!(segments_of(out), segments_of(&input));
+            prop_assert_eq!(dots(out), dots(&input));
+        }
+        prop_assert!(retraced.len() <= joined.len());
+        Ok(())
+    });
+}
+
 #[test]
 fn a_jittered_raster_covers_lines_at_their_width_at_any_angle_and_place() {
     // Eight parallel lines 20 mm long and 2 mm apart, at an angle on the raster's lattice half the
@@ -1564,6 +1642,160 @@ fn a_jittered_raster_covers_lines_at_their_width_at_any_angle_and_place() {
         let inked = c.count.iter().filter(|&&n| n > 0).count() as f64 * cell * cell;
         let area = 8.0 * (20.0 * pen + std::f64::consts::PI * pen * pen / 4.0);
         prop_assert!((inked / area - 1.0).abs() < 0.06, "{inked} mm2 of {area}");
+        Ok(())
+    });
+}
+
+/// The plot time with acceleration is never below the time at full speed all the way, the
+/// distances over the speeds plus the lifts, which is what it was before acceleration counted; and
+/// it comes to that time as the acceleration grows without limit.
+#[test]
+fn acceleration_never_shortens_the_plot_time() {
+    let speed = || 1.0..500.0f64;
+    let strategy = (
+        case(all_styles()),
+        speed(),
+        speed(),
+        0.0..2.0f64,
+        1.0..1e5f64,
+    );
+    check("accel", 12, strategy, |(c, draw, travel, lift, accel)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let speeds = Speeds {
+            draw_mm_s: draw,
+            travel_mm_s: travel,
+            pen_lift_s: lift,
+            accel_mm_s2: accel,
+        };
+        let st = stats::compute(&d, speeds);
+        let full = st.pen_down_mm / draw + st.pen_up_mm / travel + st.path_count as f64 * lift;
+        // The two sums add the same moves in another order, so they may differ by rounding.
+        let eps = 1e-9 * full.max(1.0);
+        prop_assert!(
+            st.estimated_seconds >= full - eps,
+            "{} s with acceleration, {full} s without",
+            st.estimated_seconds
+        );
+        let unbounded = Speeds {
+            accel_mm_s2: f64::INFINITY,
+            ..speeds
+        };
+        let limit = stats::compute(&d, unbounded).estimated_seconds;
+        prop_assert!((limit - full).abs() <= eps, "{limit} s against {full} s");
+        Ok(())
+    });
+}
+
+/// No drawing's tone error is above blank paper's, and blank paper never beats a drawing: a
+/// drawing with no ink scores blank paper's error with no contrast, which Optimize never picks.
+/// In colour, blank paper takes away none of its own difference from the image, and no drawing
+/// takes away more than all of it.
+#[test]
+fn blank_paper_bounds_the_tone_match_and_never_wins() {
+    check("blank", 12, case(all_styles()), |c| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let (Some(d), Some(m)) = (s.drawing(), s.tone_match()) else {
+            return Ok(());
+        };
+        let tone = d.tone.as_deref().unwrap();
+        prop_assert!(m.error <= m.blank, "{m:?}");
+        let blank = tone_match::compare(&vec![0.0; tone.ink.len()], tone).unwrap();
+        prop_assert_eq!((blank.error, blank.contrast), (m.blank, 0.0));
+        prop_assert!(blank.score() >= m.score() && blank.score() == f64::INFINITY);
+        if let Some(colour) = m.colour {
+            prop_assert!(colour.gain <= 1.0, "{colour:?}");
+            let empty = Drawing {
+                layers: vec![],
+                ..(*d).clone()
+            };
+            let paper = tone_match::colour(&empty, &c.picture.image(), s.paper()).unwrap();
+            // The eye filter rounds a flat page in f32, so blank paper comes back to within a hair.
+            prop_assert!(paper.gain.abs() < 1e-3, "{paper:?}");
+        }
+        Ok(())
+    });
+}
+
+/// The plot playback's times, every pen-up move's start and end and every vertex's arrival, layer
+/// by layer, never go back, and the last one is the estimated plot time; each layer has one move
+/// per path and one time per vertex.
+#[test]
+fn the_timeline_rises_and_ends_at_the_plot_time() {
+    let strategy = (case(all_styles()), 0.0..2.0f64, 1.0..1e5f64);
+    check("timeline", 12, strategy, |(c, lift, accel)| {
+        let mut s = c.session();
+        s.set_speeds(Speeds {
+            pen_lift_s: lift,
+            accel_mm_s2: accel,
+            ..Speeds::default()
+        });
+        run(&mut s)?;
+        let (Some(d), Some(timeline)) = (s.drawing(), s.timeline()) else {
+            return Ok(());
+        };
+        let times = timeline.layers;
+        prop_assert_eq!(times.len(), d.layers.len());
+        let mut last = 0.0;
+        for (layer, t) in d.layers.iter().zip(&times) {
+            prop_assert_eq!(t.travel.len(), layer.paths.len());
+            prop_assert_eq!(t.vertices.len(), layer.paths.coords().len());
+            for (i, [up, down]) in t.travel.iter().copied().enumerate() {
+                let path = layer.paths.offsets()[i] as usize..layer.paths.offsets()[i + 1] as usize;
+                for at in [up, down]
+                    .into_iter()
+                    .chain(t.vertices[path].iter().copied())
+                {
+                    prop_assert!(at >= last, "{at} s comes after {last} s");
+                    last = at;
+                }
+            }
+        }
+        let total = s.stats().unwrap().estimated_seconds;
+        // The two add the same moves in another order, so they may differ by rounding.
+        prop_assert!(
+            (last - total).abs() <= 1e-9 * total.max(1.0),
+            "{last} s against {total} s"
+        );
+        Ok(())
+    });
+}
+
+/// The rippling styles lay more line where the tone is darker: on a flat page, with the tone map
+/// taking the grey as it is and no simplifying, a darker grey never draws a shorter line with one
+/// pen. See docs/decisions/2026-10-17-ripple-gamma-kept.md.
+#[test]
+fn a_ripple_lays_more_line_where_the_tone_is_darker() {
+    let names = vec!["waves".to_string(), "spiral".to_string()];
+    let greys = (0.0..1.0f32, 0.0..1.0f32);
+    check("ripple", 12, (case(names), greys), |(c, (a, b))| {
+        let length = |grey: f32| -> Result<f64, TestCaseError> {
+            let mut s = c.session();
+            s.set_image(flat(60, 80, grey));
+            let tone = json!({"levels": "manual", "black": 0.0, "white": 1.0, "gamma": 1.0,
+                "contrast": 0.0, "invert": false, "response": "off", "blur_mm": 0.0,
+                "flatten_mm": 0.0, "smooth_mm": 0.0, "focus": []});
+            s.update("tone", &tone).unwrap();
+            s.update("split", &json!({"mode": "one_pen"})).unwrap();
+            // Simplifying would straighten ripples narrower than its tolerance, and the shortest
+            // paths kept would differ as a ripple breaks a line at the map's edge differently.
+            s.update("order", &json!({"simplify_mm": 0.0, "min_length_mm": 0.0}))
+                .unwrap();
+            run(&mut s)?;
+            Ok(s.drawing().map_or(0.0, |d| {
+                d.layers.iter().map(|l| l.paths.total_length()).sum()
+            }))
+        };
+        let (dark, light) = (a.max(b).min(1.0 - 1e-3), a.min(b));
+        let (more, less) = (length(1.0 - dark)?, length(1.0 - light)?);
+        prop_assert!(
+            more >= less * (1.0 - 1e-9),
+            "{more} mm at ink {dark}, {less} mm at {light}"
+        );
         Ok(())
     });
 }
@@ -1734,4 +1966,156 @@ fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_gri
             );
         }
     }
+}
+
+/// Run `stage` on `inputs` with `patch` over its defaults to its output.
+fn run_stage(stage: &dyn Stage, inputs: Vec<Artifact>, patch: &Value) -> Artifact {
+    let settings = merge(&stage.defaults(), patch);
+    let inputs = Inputs::new(inputs.into_iter().map(|a| (a.kind(), a)).collect());
+    let mut run = (stage.start(inputs, &settings, RunContext::new(Arc::default()))).unwrap();
+    loop {
+        if let Step::Done(a) = run.step().unwrap() {
+            return a;
+        }
+    }
+}
+
+/// The Pen use stage's maps and budgets in `mode`, after the tone stage with `tone` over its
+/// defaults.
+fn split_in(image: &Image, canvas: &Canvas, pens: &[Pen], tone: &Value, mode: &Value) -> Tones {
+    let (image, canvas) = (
+        Artifact::Image(Arc::new(image.clone())),
+        Artifact::Canvas(Arc::new(canvas.clone())),
+    );
+    let tone = run_stage(&ToneStage, vec![image.clone(), canvas.clone()], tone);
+    let pens = Artifact::Pens(Arc::new(pens.to_vec()));
+    match run_stage(
+        &SplitStage,
+        vec![image, canvas, pens, tone],
+        &json!({ "mode": mode }),
+    ) {
+        Artifact::Tones(t) => Tones::clone(&t),
+        a => panic!("expected tone maps, got {}", a.kind().name()),
+    }
+}
+
+/// Each pen's map from the Pen use stage by colour, after the tone stage with `tone` over its
+/// defaults.
+fn by_colour(image: &Image, canvas: &Canvas, pens: &[Pen], tone: &Value) -> Vec<Arc<ToneMap>> {
+    split_in(image, canvas, pens, tone, &json!("by_colour")).maps
+}
+
+#[test]
+fn by_colour_a_gamma_bends_each_pens_share_and_adds_no_grey() {
+    // With nothing after it in the tone stage, a gamma gives each pen `1 - (1 - a)^gamma` of the
+    // share `a` of a colour it has at a gamma of 1, so a pen draws only where it draws at 1: a
+    // darker gamma no longer turns into grey that the black pen draws over every colour.
+    let strategy = (picture(), page(), pens(), 0.1..=5.0f64, any::<bool>());
+    check(
+        "gamma by colour",
+        24,
+        strategy,
+        |(picture, page, pens, gamma, auto)| {
+            let (image, canvas, pens) = (picture.image(), page.canvas(), pens_of(&pens));
+            let levels = if auto { "auto" } else { "manual" };
+            let at = |g: f64| {
+                by_colour(
+                    &image,
+                    &canvas,
+                    &pens,
+                    &json!({"resolution": 64, "gamma": g, "levels": levels}),
+                )
+            };
+            let (flat, bent) = (at(1.0), at(gamma));
+            for (k, (a, b)) in flat.iter().zip(&bent).enumerate() {
+                for (p, (&a, &b)) in a.ink.iter().zip(&b.ink).enumerate() {
+                    let want = 1.0 - (1.0 - f64::from(a)).powf(gamma);
+                    prop_assert!(
+                        (f64::from(b) - want).abs() < 1e-3,
+                        "pen {k}, pixel {p}: {b} at gamma {gamma}, want {want} from {a}"
+                    );
+                }
+            }
+            Ok(())
+        },
+    );
+}
+
+/// The styles whose density setting is the number of points their placer places.
+fn counted_styles() -> Vec<String> {
+    let counted = |style: &Style| {
+        Density::of(style).is_some_and(|d| {
+            let stage = style.stages.iter().find(|s| s.name() == d.stage).unwrap();
+            d.direct && d.integer && stage.provides() == Kind::Points
+        })
+    };
+    (list_styles().iter())
+        .filter(|s| counted(s))
+        .map(|s| s.name.clone())
+        .collect()
+}
+
+#[test]
+fn pens_share_a_point_count_between_them() {
+    // A style whose density setting is a number of points places at most that many per pen. By
+    // colour the pens share those budgets by ink: their parts run from 0 to the number of pens,
+    // each as wide as its share of the ink times the pens; in the other modes each pen has a
+    // whole budget of its own.
+    let first = &list_styles()[0];
+    let split = first.stages[first.stage_index("split").unwrap()].schema();
+    let modes = choices(&split["properties"]["mode"], &split["$defs"]).unwrap();
+    check(
+        "shared count",
+        16,
+        (case(counted_styles()), select(modes)),
+        |(c, mode)| {
+            let style = get_style(&c.style).unwrap();
+            let d = Density::of(&style).unwrap();
+            let count = c.settings.0[&d.stage][&d.key].as_f64().unwrap();
+            let mut s = c.session();
+            s.update("split", &json!({ "mode": mode })).unwrap();
+            let mut r = s.start().unwrap();
+            drain(&mut r)?;
+            if r.state() == RunState::Done {
+                let pens = s.drawing().unwrap().layers.len() as f64;
+                let placed = r.point_count().unwrap_or(0);
+                prop_assert!(
+                    placed as f64 <= count * pens,
+                    "{placed} points for a count of {count} and {pens} pens"
+                );
+            }
+            let (image, canvas) = (c.picture.image(), c.page.canvas());
+            let tones = split_in(
+                &image,
+                &canvas,
+                &c.pens(),
+                &json!({"resolution": 64}),
+                &mode,
+            );
+            let ink: Vec<f64> = (tones.maps.iter())
+                .map(|m| m.ink.iter().map(|&v| f64::from(v)).sum())
+                .collect();
+            let (n, all) = (ink.len() as f64, ink.iter().sum::<f64>());
+            if mode == "by_colour" && all > 0.0 {
+                let [first, last] = [tones.budgets[0][0], tones.budgets.last().unwrap()[1]];
+                prop_assert_eq!((first, last), (0.0, n));
+                for (k, (b, i)) in tones.budgets.iter().zip(&ink).enumerate() {
+                    let next = tones.budgets.get(k + 1).map_or(n, |b| b[0]);
+                    prop_assert_eq!(b[1], next, "pen {} does not meet the next", k);
+                    let want = n * i / all;
+                    prop_assert!(
+                        (b[1] - b[0] - want).abs() < 1e-9,
+                        "pen {k}: {b:?}, want {want}"
+                    );
+                }
+            } else {
+                prop_assert!(
+                    tones.budgets.iter().all(|b| *b == [0.0, 1.0]),
+                    "{:?}",
+                    tones.budgets
+                );
+            }
+            Ok(())
+        },
+    );
 }

@@ -319,7 +319,8 @@ class Session:
     def machine(self) -> dict[str, Any] | None:
         """The machine that ``gcode`` writes for, as the dict of a preset's ``machine`` (``name``,
         ``area``, the heights and feeds, ``start_gcode`` and ``end_gcode``, and when used
-        ``pen_lift``, ``pen_down_gcode``, ``pen_up_gcode`` and ``max_segment_mm``), or ``None``."""
+        ``pen_lift``, ``pen_down_gcode``, ``pen_up_gcode``, ``max_segment_mm`` and
+        ``accel_mm_s2``), or ``None``."""
         return self._core.machine()
 
     def set_machine(self, machine: dict[str, Any] | None) -> None:
@@ -408,11 +409,9 @@ class Session:
         of pen-down length, or ``dots`` for a style that places points. The style reruns with the
         setting changed, up to eight times, until the metric is within 2 % of the target, and the
         trial nearest it is kept: when the handle is ``done``, the setting holds its value,
-        ``result`` its drawing and the handle's ``fit`` the search. The time estimate leaves out
-        acceleration, so a time target runs optimistic on styles of short strokes or dots.
-        Raises ``RuntimeError`` when no image is loaded and ``ValueError`` for an unknown
-        metric, a target that is not above 0, a style with no density setting, or ``dots`` for
-        a style that places none.
+        ``result`` its drawing and the handle's ``fit`` the search. Raises ``RuntimeError`` when
+        no image is loaded and ``ValueError`` for an unknown metric, a target that is not above 0,
+        a style with no density setting, or ``dots`` for a style that places none.
         """
         self._core.set_speeds(asdict(self.speeds))
         return self._spawn(self._start(lambda: self._core.fit(metric, target), applies=True))
@@ -627,14 +626,20 @@ class Session:
         self._core.set_speeds(asdict(self.speeds))
         return _have(self._core.lint())
 
-    def tone_match(self) -> dict[str, float] | None:
+    def tone_match(self) -> dict[str, Any] | None:
         """How the result's tones follow its tone map, seen through a 1.5 mm eye filter, as
-        ``{"error", "ssim", "floor", "reach"}``: ``error`` is the RMS difference in tone-map ink
-        after the coverage is put on the tone map's scale by the line that fits them best (0 is a
-        perfect match), ``ssim`` their structural similarity (1 is identical), and ``floor`` and
-        ``reach`` the coverage that line puts at white and at full ink. ``None`` when there is
-        nothing to compare, as with an empty drawing. Raises ``RuntimeError`` when there is no
-        result."""
+        ``{"error", "ssim", "floor", "reach", "contrast", "blank", "colour"}``: ``error`` is the
+        RMS difference in tone-map ink after the coverage is put on the tone map's scale by the
+        line that fits them best (0 is a perfect match), ``ssim`` their structural similarity (1
+        is identical), and ``floor`` and ``reach`` the coverage that line puts at white and at
+        full ink. ``contrast`` is how much of the image's tonal range the drawing reaches before
+        that scaling (1 is the whole range; dot styles sit near 0.05 to 0.2), and ``blank`` the
+        error of blank paper, which ``error`` never exceeds. ``colour`` is ``None`` for a drawing
+        in one pen colour, and for more than one ``{"error", "blank", "gain"}``: the mean CIE 1976
+        ΔE*ab of the drawing against the source image, the same for blank paper, and ``gain`` the
+        share of blank paper's difference the drawing takes away (``1 - error / blank``). ``None``
+        when there is nothing to compare, as with an empty drawing. Raises ``RuntimeError`` when
+        there is no result."""
         _have(self._core.stats())
         return self._core.tone_match()
 

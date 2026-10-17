@@ -8,8 +8,8 @@
 //! algorithm, so there is nothing to cite.
 //!
 //! When the drawing is split between pens, each pen's lines turn by its share of the half turn, so
-//! that the pens do not draw over each other, and the pen lifts where its lane has almost no ink,
-//! breaking a line into runs.
+//! that the pens do not draw over each other, and the pen lifts where its lane's ink is under half
+//! of what a bare line covers (see [`lane_floor`]), breaking a line into runs.
 
 use std::f64::consts::PI;
 
@@ -17,7 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::lines::{clamp_to, direction, sample_line, scanlines, ChunkRun, LANE_MIN_INK};
+use super::lines::{clamp_to, direction, lane_floor, sample_line, scanlines, ChunkRun};
 use crate::math;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
@@ -63,10 +63,11 @@ impl Stage for WaveStage {
         "Waves"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
+    // The pen's width sets where a lane lifts it.
     fn requires(&self) -> &'static [Kind] {
-        &[Kind::Tone]
+        &[Kind::Tone, Kind::Pens]
     }
     fn provides(&self) -> Kind {
         Kind::Paths
@@ -93,8 +94,13 @@ impl Stage for WaveStage {
         let (dir, normal) = direction(angle);
         let swing = s.amplitude * s.spacing_mm / 2.0;
         let step = s.wavelength_mm / 12.0;
-        // Split between pens, a lane lifts the pen over no ink; alone, each line is drawn whole.
-        let lift = lane.count > 1;
+        // Split between pens, a lane lifts the pen where a bare line would cover more than the ink
+        // asks; alone, each line is drawn whole.
+        let floor = if lane.count > 1 {
+            lane_floor(inputs.pens()[0].width_mm, s.spacing_mm)
+        } else {
+            0.0
+        };
         Ok(Box::new(ChunkRun::new(
             lines.len(),
             "lines",
@@ -103,7 +109,7 @@ impl Stage for WaveStage {
                 let mut wave: Vec<[f64; 2]> = Vec::new();
                 for p in sample_line(a, b, step) {
                     let ink = tone.sample(p);
-                    if lift && ink < LANE_MIN_INK {
+                    if ink < floor {
                         if wave.len() >= 2 {
                             paths.push(&wave);
                         }
@@ -199,6 +205,28 @@ mod tests {
             shared.iter().all(|p| p[p.len() - 1][0] < 21.0),
             "{shared:?}"
         );
+    }
+
+    #[test]
+    fn a_shared_lane_lifts_where_a_bare_line_is_twice_the_ink() {
+        // Bare lines 2 mm apart with the 0.3 mm pen cover 15 %: a lane draws the left half's
+        // 10 %, and lifts over the right half's 5 %, nearer to bare paper than to a line.
+        let pale = |x: u32, _| if x < 5 { 0.1 } else { 0.05 };
+        let (_, alone) = run_tone_stage(&WaveStage, tone_map(10, 5, pale), json!({}));
+        assert!(alone.iter().all(|p| p[p.len() - 1][0] > 29.0));
+        let lane = Lane { index: 0, count: 2 };
+        let (_, shared) =
+            run_tone_stage_in_lane(&WaveStage, tone_map(10, 5, pale), json!({}), lane);
+        assert_eq!(shared.len(), alone.len());
+        assert!(shared.iter().all(|p| p[p.len() - 1][0] < 21.0));
+        // Lines 4 mm apart cover 7.5 %, under the right half's ink, so they cross the map.
+        let (_, wide) = run_tone_stage_in_lane(
+            &WaveStage,
+            tone_map(10, 5, pale),
+            json!({"spacing_mm": 4.0}),
+            lane,
+        );
+        assert!(wide.iter().all(|p| p[p.len() - 1][0] > 29.0));
     }
 
     #[test]

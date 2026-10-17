@@ -121,6 +121,10 @@ async def test_set_machine_sets_the_page_and_clears():
         s = data(await call(c, "get_session"))
         assert (s["machine"], s["page"]) == (MACHINE, page)
 
+        fast = {**MACHINE, "accel_mm_s2": 3000.0}
+        r = await call(c, "set_machine", machine=fast)
+        assert data(r)["machine"] == fast, text(r)
+
         r = await call(c, "set_machine", machine=None)
         assert data(r) == {"machine": None, "page": page}  # the page stays
         assert data(await call(c, "get_session"))["machine"] is None
@@ -309,7 +313,15 @@ async def test_run_and_preview(tmp_path):
         stats = json.loads(r.content[0].text)
         keys = {"path_count", "pen_down_mm", "pen_up_mm", "estimated_seconds", "tone", "lint"}
         assert set(stats) == keys and isinstance(stats["lint"], list)
-        assert set(stats["tone"]) == {"error", "ssim", "floor", "reach"}
+        assert set(stats["tone"]) == {
+            "error",
+            "ssim",
+            "floor",
+            "reach",
+            "contrast",
+            "blank",
+            "colour",
+        }
         assert png(r.content[1]).startswith(b"\x89PNG")
 
         r = await call(c, "preview", region_mm=[0, 0, 50, 50], width_px=200)
