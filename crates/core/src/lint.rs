@@ -496,7 +496,10 @@ fn simplified_fine_share(d: &Drawing, tolerance: f64, min_length: f64) -> Option
 /// see the pens: a pen thinner than a cell is undercounted (a dot counts only when a cell centre
 /// lies within half the pen of it), so what a patch would reach cannot be told. Truchet's arcs nest
 /// a spacing apart within half a tile, so its closer spacing must fit more arcs than the one it
-/// has (see [`nest_limit`]).
+/// has (see [`nest_limit`]). Dots sized as a share of their grid (`render.size`) ink about in
+/// proportion to their area, so they grow rather than crowd, which costs no more pen lifts; a
+/// closer grid shrinks them with it, so a spacing is asked for only while they are no wider than
+/// the pen.
 fn more_dark(
     cx: &Context,
     (d, m): (&Drawing, &Measure),
@@ -506,6 +509,24 @@ fn more_dark(
 ) -> Option<Value> {
     let seen = d.layers.iter().all(|l| l.pen.width_mm >= m.cell_mm);
     let tone = d.tone.as_deref().filter(|_| seen && keeps_all(cx))?;
+    if let (Some(size), Some((stage, _, s))) = (cx.number("render", "size"), spacing) {
+        // A dot no wider than the pen inks the pen's own disc.
+        let now = (size * s).max(widest);
+        let patch = cx.set(
+            "render",
+            "size",
+            step_up(now * (DARK_TARGET / c).sqrt() / s),
+        );
+        let to = patch
+            .as_ref()
+            .and_then(|p| p["settings"]["render"]["size"].as_f64());
+        if to.is_some_and(|to| to * s > now + 1e-9) {
+            return room(tone, DARK_TONE, false, s.max(cx.scale(stage))).then_some(patch?);
+        }
+        if size * s > widest {
+            return None;
+        }
+    }
     let closer = spacing.and_then(|(stage, key, s)| {
         let s2 = step_down(s * c / DARK_TARGET).max(step_up(widest));
         (s2 < s).then_some((stage, key, s, s2))
@@ -639,8 +660,13 @@ pub fn check(
         .max_by(|a, b| a.2.total_cmp(&b.2));
     if let Some((i, l, share)) = worst.filter(|w| w.2 > OVERDRAW_SHARE && close.is_none()) {
         let levels = cx.number("hatch", "levels").filter(|&n| n > 1.0);
+        let dot = cx.number("render", "size");
         let patch = match (levels, spacing) {
             (Some(n), _) => cx.set("hatch", "levels", n - 1.0),
+            // Dots sized as a share of the spacing overlap at any spacing once wider than it.
+            (None, Some(_)) if dot.is_some() => dot
+                .filter(|&size| size > 1.0)
+                .and_then(|_| cx.set("render", "size", 1.0)),
             (None, Some((stage, key, s))) => {
                 // Dots wider than the new spacing overlap whatever the spacing, so it gains
                 // nothing.
@@ -1184,6 +1210,33 @@ mod tests {
     }
 
     #[test]
+    fn overdraw_shrinks_grid_dots_only_if_they_overlap() {
+        let d = page((0..4).flat_map(|_| lines(2.0)).collect());
+        let patch = |size: f64| {
+            let all = lint(&d, "grid", |s| s["render"]["size"] = json!(size));
+            find(&all, "overdraw").unwrap().patch.clone()
+        };
+        // Grid dots grow with the spacing, so only a share wider than the spacing can be undone.
+        let touching = json!({"settings": {"render": {"size": 1.0}}});
+        assert_eq!(patch(1.2), Some(touching));
+        assert_eq!(patch(1.0), None);
+    }
+
+    #[test]
+    fn grid_dots_grow_to_reach_dark_rather_than_crowd() {
+        // Dots as wide as the 0.3 mm pen, 1 mm apart over a page of full ink, cover about 7 %.
+        let grid: Vec<_> = (0..100)
+            .flat_map(|j| (0..100).map(move |i| vec![[i as f64 + 0.5, j as f64 + 0.5]]))
+            .collect();
+        let d = drawing_100_with_tone(grid);
+        let size = |v: f64| move |s: &mut Value| s["render"]["size"] = json!(v);
+        let grown = json!({"settings": {"render": {"size": 0.8}}});
+        assert_eq!(dark_patch(&d, "grid", size(0.3)), Some(grown));
+        // Dots already at the widest share are not crowded closer, which would shrink them too.
+        assert_eq!(dark_patch(&d, "grid", size(1.5)), None);
+    }
+
+    #[test]
     fn lifts_and_travel_take_a_share_of_the_time() {
         let all = lint(&page(dots(100)), "grid", |_| {});
         let lifts = find(&all, "lifts").unwrap();
@@ -1498,7 +1551,7 @@ mod tests {
         let mut s = Session::new(256 << 20);
         assert!(s.lint().is_none());
         s.set_image(still_life(300, 437));
-        for (style, expected) in [("grid", vec!["dark", "lifts"]), ("hatch", vec![])] {
+        for (style, expected) in [("grid", vec!["lifts"]), ("hatch", vec![])] {
             s.set_style(style).unwrap();
             let mut run = s.start().unwrap();
             while run.next_frame().is_some() {}
@@ -1529,6 +1582,8 @@ mod tests {
         s.update("tone", &json!({"resolution": 64})).unwrap();
         s.update("points", &json!({"threshold": 0.6, "spacing_mm": 2}))
             .unwrap();
+        // Dots narrower than the pen, one vertex each, the drawing the value was pinned on.
+        s.update("render", &json!({"size": 0.1})).unwrap();
         let mut run = s.start().unwrap();
         while run.next_frame().is_some() {}
         let all = s.lint().unwrap();
@@ -1629,7 +1684,15 @@ mod tests {
             session(true, "hatch", json!({"hatch": {"threshold": 0.5}})),
             "specks",
         );
-        fixes(session(false, "grid", json!({})), "dark");
+        // Dots as wide as the pen in a 1 mm grid cover 7 % of the darkest parts.
+        fixes(
+            session(false, "grid", json!({"render": {"size": 0.3}})),
+            "dark",
+        );
+        fixes(
+            session(false, "dither", json!({"render": {"size": 0.3}})),
+            "dark",
+        );
         fixes(
             session(false, "hatch", json!({"order": {"optimize": false}})),
             "travel",

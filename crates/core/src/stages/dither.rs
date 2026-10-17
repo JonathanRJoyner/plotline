@@ -173,7 +173,7 @@ impl StageRun for DitherRun {
                 stage: String::new(),
                 progress,
                 label,
-                points: Some(Points(points)),
+                points: Some(Points(points, None)),
                 paths: None,
                 pen: 0,
             })
@@ -186,7 +186,10 @@ impl StageRun for DitherRun {
         }
         if self.next_row >= self.rows {
             let points = std::mem::take(&mut self.points);
-            return Ok(Step::Done(Artifact::Points(Arc::new(Points(points)))));
+            return Ok(Step::Done(Artifact::Points(Arc::new(Points(
+                points,
+                Some(self.spacing),
+            )))));
         }
         let end = (self.next_row + self.rows_per_frame).min(self.rows);
         for j in self.next_row..end {
@@ -294,6 +297,12 @@ mod tests {
         let (_, on) = run_dither(flat(), json!({"serpentine": true}));
         let (_, off) = run_dither(flat(), json!({"serpentine": false}));
         assert_ne!(on.0, off.0);
+    }
+
+    #[test]
+    fn gives_its_spacing_with_its_points() {
+        let (_, pts) = run_dither(tone_map(8, 4, |_, _| 0.3), json!({"spacing_mm": 2.0}));
+        assert_eq!(pts.1, Some(2.0));
     }
 
     #[test]

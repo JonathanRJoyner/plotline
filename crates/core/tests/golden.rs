@@ -69,14 +69,15 @@ fn styles_match_golden_files() {
             "grid",
             gradient(64, 48),
             // The spacing the files were checked against the Python engine at, before its default
-            // fell to 1.
-            json!({"tone": {"resolution": 64}, "points": {"threshold": 0.6, "spacing_mm": 2.0}}),
+            // fell to 1. A dot a tenth of the spacing is narrower than the pen, so it stays the one
+            // vertex the Python engine drew, and the files pin where the grid puts its points.
+            json!({"tone": {"resolution": 64}, "points": {"threshold": 0.6, "spacing_mm": 2.0}, "render": {"size": 0.1}}),
         ),
         (
             "grid_checkerboard",
             "grid",
             checkerboard(64, 48, 8),
-            json!({"tone": {"resolution": 64}, "points": {"threshold": 0.6, "spacing_mm": 2.0}}),
+            json!({"tone": {"resolution": 64}, "points": {"threshold": 0.6, "spacing_mm": 2.0}, "render": {"size": 0.1}}),
         ),
         (
             "stipple_gradient",

@@ -261,7 +261,7 @@ impl StageRun for PoissonRun {
                 self.grow();
             } else if !self.seed() {
                 let points = std::mem::take(&mut self.points);
-                return Ok(Step::Done(Artifact::Points(Arc::new(Points(points)))));
+                return Ok(Step::Done(Artifact::Points(Arc::new(Points(points, None)))));
             }
         }
         let n = self.points.len();
@@ -269,7 +269,7 @@ impl StageRun for PoissonRun {
             stage: String::new(),
             progress: (n as f64 / self.expected).min(1.0) as f32,
             label: format!("{n} points"),
-            points: Some(Points(self.points.clone())),
+            points: Some(Points(self.points.clone(), None)),
             paths: None,
             pen: 0,
         }))

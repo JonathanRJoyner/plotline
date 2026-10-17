@@ -23,6 +23,18 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "contrast pivots on mid-grey, which is where grid's default threshold sits",
     ),
     (
+        "grid",
+        "tone",
+        "resolution",
+        "the noise image is 64 pixels wide, so a finer map interpolates the same values at the cell centres and no cell crosses the threshold; with one-vertex dots only the order of equally near dots moved",
+    ),
+    (
+        "grid",
+        "tone",
+        "response",
+        "grid fills a wedge patch with touching dots or leaves it empty, so the lookup turns about its threshold",
+    ),
+    (
         "ink",
         "tone",
         "contrast",
@@ -39,18 +51,6 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "order",
         "min_length_mm",
         "every wave line crosses the whole drawing, far longer than the 10 mm limit",
-    ),
-    (
-        "grid",
-        "order",
-        "simplify_mm",
-        "at its defaults every mark is a dot, and a path of fewer than three vertices has nothing to simplify",
-    ),
-    (
-        "dither",
-        "order",
-        "simplify_mm",
-        "at its defaults every mark is a dot, and a path of fewer than three vertices has nothing to simplify",
     ),
     (
         "hatch",

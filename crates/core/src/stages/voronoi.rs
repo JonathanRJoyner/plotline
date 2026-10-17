@@ -217,7 +217,7 @@ impl VoronoiRun {
             stage: String::new(),
             progress,
             label,
-            points: Some(Points(self.points.clone())),
+            points: Some(Points(self.points.clone(), None)),
             paths: None,
             pen: 0,
         }
@@ -268,10 +268,13 @@ impl VoronoiRun {
     fn finish(&mut self) -> Points {
         let points = std::mem::take(&mut self.points);
         if self.iterations == 0 {
-            return Points(points);
+            return Points(points, None);
         }
         let kept = points.into_iter().zip(&self.mass);
-        Points(kept.filter(|&(_, &m)| m > 0.0).map(|(p, _)| p).collect())
+        Points(
+            kept.filter(|&(_, &m)| m > 0.0).map(|(p, _)| p).collect(),
+            None,
+        )
     }
 }
 

@@ -15,7 +15,8 @@
 //! - **Faithful:** the lowest mean tone error, `auto` only where it beats `off` by 5 %, offered
 //!   when it beats Balanced by 10 %.
 //! - **Quick:** where Balanced's median plot time is over 40 minutes, the median of what the
-//!   budget fit finds for 30 minutes.
+//!   budget fit finds for 30 minutes, offered when its mean tone error is at most twice
+//!   Balanced's.
 //! - **Fine:** the densest value whose mean tone error stays within a quarter of Balanced's, with
 //!   every value between it and the default passing too, unless it lies within a step of
 //!   Faithful's.
@@ -47,6 +48,9 @@ const STEP: f64 = 1.19;
 const BETTER: f64 = 0.9;
 const AUTO_BETTER: f64 = 0.95;
 const FINE_WORSE: f64 = 1.25;
+/// How much higher Quick's mean tone error may be than Balanced's: a style whose pen-down length
+/// alone takes most of half an hour reaches it only by a spacing that loses the picture.
+const QUICK_WORSE: f64 = 2.0;
 
 /// The images, the shape of the default A4 drawing area, as in the gallery.
 fn images() -> Vec<Image> {
@@ -301,7 +305,7 @@ fn measure(style: &str) -> Found {
         let sparser = if d.direct { v < base } else { v > base };
         let trial = bench.trial(&with(&json!({}), &d, v));
         table += &trial.row(&format!("quick, the fit found {found:?}"));
-        if sparser && trial.clean() {
+        if sparser && trial.clean() && trial.mean_error() <= QUICK_WORSE * balanced.mean_error() {
             quick = Some(trial);
         }
     }
