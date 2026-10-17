@@ -88,12 +88,12 @@ impl Session {
         Ok(())
     }
 
-    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page.
+    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page, and `"crop"` if there is one.
     #[wasm_bindgen(js_name = setCanvas)]
     pub fn set_canvas(&mut self, json: &str) -> Result<(), JsError> {
         let c: Canvas = serde_json::from_str(json)?;
-        self.inner
-            .set_canvas(Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit)?);
+        let page = Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit)?;
+        self.inner.set_canvas(page.with_crop(c.crop)?);
         Ok(())
     }
 
@@ -132,6 +132,19 @@ impl Session {
             .map(|p| Pen::new(&p.name, p.width_mm, &p.color))
             .collect::<Result<_, _>>()?;
         Ok(self.inner.set_pens(pens)?)
+    }
+
+    /// Use a list of `{"name", "width_mm", "color"}` as the user's own pens, which the image
+    /// analysis picks its palette from; `[]` clears it.
+    #[wasm_bindgen(js_name = setPenLibrary)]
+    pub fn set_pen_library(&mut self, json: &str) -> Result<(), JsError> {
+        let pens: Vec<Pen> = serde_json::from_str(json)?;
+        let pens = pens
+            .iter()
+            .map(|p| Pen::new(&p.name, p.width_mm, &p.color))
+            .collect::<Result<_, _>>()?;
+        self.inner.set_pen_library(pens);
+        Ok(())
     }
 
     /// Use the machine in `json` for G-code export, or `null` for none. A machine also sets the
@@ -400,12 +413,13 @@ impl Trial {
     }
 
     /// The drawing as PNG bytes `width` pixels wide on the paper the session had when the trial
-    /// was made, once the run is done.
+    /// was made, once the run is done, for showing `shrink` times smaller: every mark is at least
+    /// `shrink` pixels wide; see [`preview::render_png_shrunk`].
     #[wasm_bindgen(js_name = previewPng)]
-    pub fn preview_png(&self, width: u32) -> Result<Option<Vec<u8>>, JsError> {
+    pub fn preview_png(&self, width: u32, shrink: f64) -> Result<Option<Vec<u8>>, JsError> {
         let drawing = self.slot.lock().unwrap().drawing.clone();
         Ok(drawing
-            .map(|d| preview::render_png(&d, width, &self.paper, false, false, None))
+            .map(|d| preview::render_png_shrunk(&d, width, &self.paper, shrink))
             .transpose()?)
     }
 }

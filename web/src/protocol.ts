@@ -6,7 +6,7 @@ import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
-export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
+export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } | Pick<Canvas, "crop"> };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
 export type State = {
@@ -34,7 +34,8 @@ export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
 // The commands that change what a drawing is made from: each one redraws once it succeeds. `setPaper` is
-// not among them: the paper is no input of a run, so a change only repaints.
+// not among them: the paper is no input of a run, so a change only repaints. Nor is `setPenLibrary`: the
+// user's own pens only change the suggestions, which every reply's state carries.
 const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
@@ -52,6 +53,8 @@ export class Protocol {
   // reply carried.
   private source: ((s: Session) => void) | null = null;
   private saved: { preset: string; speeds: string } | null = null;
+  // The pen library as the session last took it, which a rebuilt session gets again.
+  private library = "[]";
   private readonly methods: Record<string, (...args: any[]) => unknown>;
 
   constructor(private session: Session, private readonly post: (msg: Reply | Event | ThumbEvent, transfer?: Transferable[]) => void) {
@@ -72,6 +75,11 @@ export class Protocol {
       setCanvas: (canvas: Canvas) => s().setCanvas(JSON.stringify(canvas)),
       setPaper: (color: string) => s().setPaper(color),
       setPens: (pens: Pen[]) => s().setPens(JSON.stringify(pens)),
+      setPenLibrary: (pens: Pen[]) => {
+        const json = JSON.stringify(pens);
+        s().setPenLibrary(json);
+        this.library = json;
+      },
       setStyle: (name: string) => s().setStyle(name),
       applyLook: (name: string) => s().applyLook(name),
       resetSettings: () => s().resetSettings(),
@@ -111,9 +119,9 @@ export class Protocol {
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
       restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
       // Draws every style after the reply, which carries the id its `thumb` events will have.
-      thumbs: (width: number) => {
+      thumbs: (width: number, shrink = 1) => {
         const id = ++this.thumbsId;
-        this.go = () => void this.thumbs(id, width);
+        this.go = () => void this.thumbs(id, width, shrink);
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
@@ -162,6 +170,7 @@ export class Protocol {
     this.current = null;
     this.session = new Session();
     try {
+      this.session.setPenLibrary(this.library); // before the image, so it is measured once
       this.source?.(this.session);
       if (this.saved) {
         this.session.loadPreset(this.saved.preset);
@@ -196,7 +205,7 @@ export class Protocol {
   // Draws every listed style in turn as a trial, which leaves the session's own run, drawing and
   // settings alone, and posts each as a `thumb` event. It yields as `drive` does, so commands get
   // their turn, and a newer `thumbs` or a `cancelThumbs` ends it.
-  private async thumbs(id: number, width: number): Promise<void> {
+  private async thumbs(id: number, width: number, shrink: number): Promise<void> {
     let lastYield = performance.now();
     for (const { name } of JSON.parse(listStyles()) as Array<{ name: string }>) {
       if (id !== this.thumbsId) return;
@@ -214,7 +223,7 @@ export class Protocol {
             }
           }
           error = trial.error() ?? null;
-          png = trial.previewPng(width) ?? null;
+          png = trial.previewPng(width, shrink) ?? null;
         } finally {
           free(trial);
         }

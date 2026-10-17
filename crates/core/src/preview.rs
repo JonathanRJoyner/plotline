@@ -56,7 +56,29 @@ pub fn render_png(
     region: Option<[f64; 4]>,
 ) -> Result<Vec<u8>, PreviewError> {
     let v = view(d, width_px, region)?;
-    let pixmap = render(d, width_px, paper, &v, travel, source).ok_or(PreviewError::Empty)?;
+    encode(render(d, width_px, paper, &v, travel, source).ok_or(PreviewError::Empty)?)
+}
+
+/// `d` as PNG bytes of the whole page, for showing `shrink` times smaller than it is drawn, as the
+/// GUI's style grid shows its pictures. Every mark is at least `shrink` pixels wide, so it is still
+/// a pixel wide on screen; [`render_png`] keeps marks one pixel wide in the PNG itself. Without
+/// this, a dot style's marks are lost in the shrink: 0.3 mm dots 1 mm apart average to almost
+/// white.
+pub fn render_png_shrunk(
+    d: &Drawing,
+    width_px: u32,
+    paper: &str,
+    shrink: f64,
+) -> Result<Vec<u8>, PreviewError> {
+    let v = View {
+        min_px: shrink.max(1.0),
+        ..view(d, width_px, None)?
+    };
+    encode(render(d, width_px, paper, &v, false, false).ok_or(PreviewError::Empty)?)
+}
+
+/// `pixmap` as PNG bytes.
+fn encode(pixmap: Pixmap) -> Result<Vec<u8>, PreviewError> {
     // The `image` crate's encoder, which decoding already needs, so the module carries one PNG
     // library. The pixels are opaque, so premultiplied RGBA is plain RGBA.
     let mut png = Vec::new();
@@ -97,12 +119,13 @@ pub fn render_rgba(
 }
 
 /// The part of the page a picture shows: the page point at its top-left corner, its scale and its
-/// height in pixels.
+/// height in pixels, and the least width of a mark in pixels.
 struct View {
     x: f64,
     y: f64,
     px_per_mm: f64,
     height_px: u32,
+    min_px: f64,
 }
 
 /// The view of `region`, or of the whole page when there is none, for a picture `width_px` wide.
@@ -118,6 +141,7 @@ fn view(d: &Drawing, width_px: u32, region: Option<[f64; 4]>) -> Result<View, Pr
         y,
         px_per_mm,
         height_px: (h * px_per_mm).round() as u32,
+        min_px: 1.0,
     })
 }
 
@@ -135,6 +159,7 @@ fn render(
         y: view_y,
         px_per_mm,
         height_px,
+        min_px,
     } = *view;
     let mut pixmap = Pixmap::new(width_px, height_px)?;
     let [r, g, b] = rgb(paper);
@@ -167,7 +192,7 @@ fn render(
         let mut color = paint(rgb(&layer.pen.color));
         // Inks are transparent, so where pens overlap their colours multiply, as in the GUI.
         color.blend_mode = BlendMode::Multiply;
-        let width = (layer.pen.width_mm * px_per_mm).max(1.0) as f32;
+        let width = (layer.pen.width_mm * px_per_mm).max(min_px) as f32;
         let (mut lines, mut dots) = (PathBuilder::new(), PathBuilder::new());
         for path in layer.paths.iter() {
             match path {

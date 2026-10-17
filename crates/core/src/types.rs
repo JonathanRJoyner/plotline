@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::stages::tone::crop_rect;
+use crate::stages::tone::source_rect;
 
 /// A value that failed validation; the message is shown to users.
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -73,7 +73,16 @@ pub enum Fit {
     Fill,
 }
 
-/// The page in mm, a margin around the drawing area, and how an image fits that area.
+/// The most a crop may cut from one side of the image, as a share of the image's size.
+pub const MAX_CROP: f64 = 0.45;
+
+/// Whether `crop` cuts nothing, so that a canvas leaves it out of its JSON and keeps its old bytes.
+fn no_crop(crop: &[f64; 4]) -> bool {
+    *crop == [0.0; 4]
+}
+
+/// The page in mm, a margin around the drawing area, how an image fits that area and the part of
+/// the image that is drawn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Canvas {
     /// The page width in mm.
@@ -84,6 +93,10 @@ pub struct Canvas {
     pub margin_mm: f64,
     /// How an image fits the drawing area.
     pub fit: Fit,
+    /// The shares of the source image cut from its left, top, right and bottom before it is fitted,
+    /// each 0 to [`MAX_CROP`]. Left out of the JSON while all zero.
+    #[serde(default, skip_serializing_if = "no_crop")]
+    pub crop: [f64; 4],
 }
 
 impl Canvas {
@@ -125,7 +138,23 @@ impl Canvas {
             height_mm,
             margin_mm,
             fit,
+            crop: [0.0; 4],
         })
+    }
+
+    /// This canvas with `crop` as its crop, rejecting a share that is not finite or not from 0 to
+    /// [`MAX_CROP`].
+    pub fn with_crop(mut self, crop: [f64; 4]) -> Result<Canvas, TypeError> {
+        for (side, share) in ["left", "top", "right", "bottom"].into_iter().zip(crop) {
+            // A range test is false for NaN.
+            if !(0.0..=MAX_CROP).contains(&share) {
+                return Err(TypeError::Invalid(format!(
+                    "crop {side} must be from 0 to {MAX_CROP}, got {share:?}"
+                )));
+            }
+        }
+        self.crop = crop;
+        Ok(self)
     }
 
     /// The page minus the margin, as `[x, y, w, h]` in mm.
@@ -151,17 +180,13 @@ impl Canvas {
         (w / f64::from(width_px), [x, y])
     }
 
-    /// The part of a `w x h` source image the page shows, as `[x, y, w, h]` in source pixels:
-    /// all of it for fit, and for fill the centre crop the tone stage cuts. Placing a source point
-    /// on the page and finding one again both start here.
+    /// The part of a `w x h` source image the page shows, as `[x, y, w, h]` in source pixels: the
+    /// canvas's crop, and for fill the centre of that cut to the drawing area's aspect, which is
+    /// the rectangle the tone stage and the colour split cut. Placing a source point on the page
+    /// and finding one again both start here.
     fn shown(&self, w: u32, h: u32) -> [usize; 4] {
-        let (w, h) = (w as usize, h as usize);
-        if self.fit == Fit::Fill {
-            let [_, _, dw, dh] = self.drawing_rect();
-            crop_rect(w, h, dw / dh)
-        } else {
-            [0, 0, w, h]
-        }
+        let (x, y, sw, sh) = source_rect(w as usize, h as usize, self);
+        [x, y, sw, sh]
     }
 
     /// The share of a `w x h` source image under the page point `mm`, as `[x, y]` from its
@@ -521,6 +546,57 @@ mod tests {
         assert!(fit.image_point([105.0, 50.0], 1000, 500).is_none());
     }
     #[test]
+    fn image_point_and_page_point_see_the_crop() {
+        let near =
+            |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9;
+        let page = |fit| {
+            let canvas = Canvas::new(100.0, 50.0, 0.0, fit).unwrap();
+            canvas.with_crop([0.25, 0.0, 0.25, 0.0]).unwrap()
+        };
+        // The middle half of a 1000 x 500 image is 500 x 500, which a fit draws as a 50 mm square
+        // in the middle of the page.
+        let fit = page(Fit::Fit);
+        assert!(near(
+            fit.image_point([25.0, 0.0], 1000, 500).unwrap(),
+            [0.25, 0.0]
+        ));
+        assert!(near(
+            fit.image_point([50.0, 25.0], 1000, 500).unwrap(),
+            [0.5, 0.5]
+        ));
+        assert!(near(
+            fit.image_point([75.0, 50.0], 1000, 500).unwrap(),
+            [0.75, 1.0]
+        ));
+        // The bands cut away are not on the page, and a share inside one is drawn off the image.
+        assert!(fit.image_point([10.0, 25.0], 1000, 500).is_none());
+        assert!(near(fit.page_point([0.1, 0.5], 1000, 500), [10.0, 25.0]));
+        // A fill cuts the crop to the page's shape around its middle: 500 x 250 from row 125.
+        let fill = page(Fit::Fill);
+        assert!(near(
+            fill.image_point([50.0, 25.0], 1000, 500).unwrap(),
+            [0.5, 0.5]
+        ));
+        assert!(near(
+            fill.image_point([0.0, 0.0], 1000, 500).unwrap(),
+            [0.25, 0.25]
+        ));
+        assert!(near(
+            fill.page_point([0.75, 0.75], 1000, 500),
+            [100.0, 50.0]
+        ));
+        for canvas in [&fit, &fill] {
+            for i in 0..=20 {
+                for j in 0..=20 {
+                    let mm = [f64::from(i) * 5.0, f64::from(j) * 2.5];
+                    if let Some(share) = canvas.image_point(mm, 1000, 500) {
+                        assert!(near(canvas.page_point(share, 1000, 500), mm), "{mm:?}");
+                    }
+                }
+            }
+        }
+    }
+    #[test]
     fn canvas_rejects_bad_dimensions() {
         for (w, h, m) in [
             (0.0, 10.0, 0.0),
@@ -530,6 +606,43 @@ mod tests {
         ] {
             assert!(Canvas::new(w, h, m, Fit::Fit).is_err());
         }
+    }
+    #[test]
+    fn with_crop_refuses_a_share_out_of_range_or_not_finite() {
+        let page = || Canvas::new(100.0, 50.0, 0.0, Fit::Fit).unwrap();
+        let crop = [0.1, 0.0, 0.45, 0.2];
+        assert_eq!(page().with_crop(crop).unwrap().crop, crop);
+        for (crop, want) in [
+            (
+                [-0.1, 0.0, 0.0, 0.0],
+                "crop left must be from 0 to 0.45, got -0.1",
+            ),
+            (
+                [0.0, 0.46, 0.0, 0.0],
+                "crop top must be from 0 to 0.45, got 0.46",
+            ),
+            (
+                [0.0, 0.0, f64::NAN, 0.0],
+                "crop right must be from 0 to 0.45, got NaN",
+            ),
+            (
+                [0.0, 0.0, 0.0, f64::INFINITY],
+                "crop bottom must be from 0 to 0.45, got inf",
+            ),
+        ] {
+            assert_eq!(page().with_crop(crop).unwrap_err().to_string(), want);
+        }
+    }
+    #[test]
+    fn an_all_zero_crop_serialises_to_the_old_bytes() {
+        let page = Canvas::new(210.0, 297.0, 10.0, Fit::Fit).unwrap();
+        let old = r#"{"width_mm":210.0,"height_mm":297.0,"margin_mm":10.0,"fit":"fit"}"#;
+        assert_eq!(serde_json::to_string(&page).unwrap(), old);
+        assert_eq!(serde_json::from_str::<Canvas>(old).unwrap(), page);
+        let cropped = page.with_crop([0.1, 0.0, 0.0, 0.2]).unwrap();
+        let json = serde_json::to_string(&cropped).unwrap();
+        assert_eq!(json, old.replace('}', r#","crop":[0.1,0.0,0.0,0.2]}"#));
+        assert_eq!(serde_json::from_str::<Canvas>(&json).unwrap(), cropped);
     }
     #[test]
     fn pen_validation() {

@@ -322,6 +322,43 @@ test("suggestions come with the state", () => {
   expect(state.suggestions[0].patch).toEqual({ page: { width_mm: 297, height_mm: 210 } });
 });
 
+// Four saturated stripes, like the colour image of the browser flow.
+const stripes = (): [number, number, Float32Array] => {
+  const [w, h] = [64, 48];
+  const colours = [[0.88, 0, 0], [0, 0.69, 0], [0, 0, 0.88], [0.94, 0.88, 0]];
+  const rgb = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) rgb.set(colours[Math.floor(x / 16)], (y * w + x) * 3);
+  return [w, h, rgb];
+};
+const library: Pen[] = [{ name: "Ink", width_mm: 0.3, color: "#000000" }, { name: "Lemon", width_mm: 0.5, color: "#f5c400" }];
+const kinds = (state: State) => state.suggestions.map((s) => s.kind);
+
+test("setPenLibrary changes the suggestions without a run, and a bad pen is refused", async () => {
+  const { posted, call, ok, ended } = setup();
+  expect(kinds(ok("setImage", ...stripes()).state)).toContain("colour");
+  await ended(1);
+  const { state } = ok("setPenLibrary", library);
+  expect(kinds(state)).toContain("pens_to_add");
+  for (const s of state.suggestions) for (const p of s.patch?.pens ?? []) expect(library).toContainEqual(p);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+  expect(call("setPenLibrary", [{ name: "Bad", width_mm: 0.3, color: "red" }]).ok).toBe(false);
+  expect(kinds(ok("preset").state)).toContain("pens_to_add");
+  expect(kinds(ok("setPenLibrary", []).state)).not.toContain("pens_to_add");
+});
+
+test("a rebuilt session keeps the pen library", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setPenLibrary", library);
+  ok("setImage", ...stripes());
+  await ended(1);
+  ok("setStyle", "_slow");
+  await ended(2);
+  ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+  await ended(3);
+  expect(posted.find((m) => m.type === "end" && m.id === 3)).toMatchObject({ state: "error" });
+  expect(kinds(ok("preset").state)).toContain("pens_to_add");
+});
+
 test("apply runs the patch and redraws once", async () => {
   const { posted, ok, ended } = setup();
   ok("setImage", 400, 200, syntheticGradient(400, 200));
@@ -335,6 +372,19 @@ test("apply runs the patch and redraws once", async () => {
   expect(state.suggestions.map((s) => s.kind)).not.toContain("orientation");
   expect(runs()).toBe(2);
   await ended(2);
+});
+
+test("apply takes a crop into the page, keeps the rest of it, and zeros take it off", async () => {
+  const { call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const { state } = ok("apply", { page: { crop: [0.1, 0, 0.2, 0] } });
+  expect(state.canvas).toMatchObject({ width_mm: 210, height_mm: 297, margin_mm: 10, crop: [0.1, 0, 0.2, 0] });
+  await ended(2);
+  // The engine leaves an all-zero crop out of the page, as it does of a preset.
+  expect(ok("apply", { page: { crop: [0, 0, 0, 0] } }).state.canvas.crop).toBeUndefined();
+  await ended(3);
+  expect(call("apply", { page: { crop: [0.5, 0, 0, 0] } }).ok).toBe(false);
 });
 
 test("apply sets a patch's pens before its settings and redraws once", async () => {

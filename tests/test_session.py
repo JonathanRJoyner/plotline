@@ -172,6 +172,44 @@ def test_the_engine_checks_canvas_and_pens_and_a_refusal_changes_nothing():
     assert s.canvas == Canvas(100, 75, 5, "fill") and s.pens == (Pen("Red", 0.5, "#ff0000"),)
 
 
+def test_the_page_takes_a_crop_that_reaches_the_drawing_and_the_preset(tmp_path):
+    s = Session()
+    s.set_image(_core.synthetic_gradient(64, 48))
+    s.update("tone", resolution=64)
+    s.set_canvas(Canvas(100, 100, 0))
+    s.run_blocking()
+    assert s.result.tone.ink.shape == (48, 64) and s.result.canvas.crop == (0.0,) * 4
+    plain = tmp_path / "plain.json"
+    s.save_preset(plain)
+    assert "crop" not in json.loads(plain.read_text())["canvas"]
+    # The middle half of the width, 32 x 48 pixels, drawn as a map 64 pixels tall.
+    s.set_canvas(Canvas(100, 100, 0, crop=(0.25, 0, 0.25, 0)))
+    assert s.canvas == Canvas(100, 100, 0, crop=[0.25, 0, 0.25, 0])
+    s.run_blocking()
+    assert s.result.tone.ink.shape == (64, 43) and s.result.canvas.crop == (0.25, 0, 0.25, 0)
+    cropped = tmp_path / "cropped.json"
+    s.save_preset(cropped)
+    assert json.loads(cropped.read_text())["canvas"]["crop"] == [0.25, 0, 0.25, 0]
+    t = Session()
+    t.load_preset(cropped)
+    assert t.canvas == s.canvas
+
+
+def test_the_engine_checks_the_crop_and_a_refusal_changes_nothing():
+    s = Session()
+    s.set_canvas(Canvas(100, 75, 5, crop=(0.1, 0.1, 0.1, 0.1)))
+    for crop, name in [
+        ((0.5, 0, 0, 0), "left"),
+        ((0, 0, 0, -0.1), "bottom"),
+    ]:
+        with pytest.raises(ValueError, match=f"crop {name} must be from 0 to 0.45"):
+            s.set_canvas(Canvas(100, 75, 5, crop=crop))
+    for crop in [(0, 0, float("nan"), 0), (0.1, 0.1)]:  # not finite, not four shares
+        with pytest.raises(ValueError):
+            s.set_canvas(Canvas(100, 75, 5, crop=crop))  # type: ignore[arg-type]
+    assert s.canvas == Canvas(100, 75, 5, crop=(0.1, 0.1, 0.1, 0.1))
+
+
 def test_set_style_keeps_the_cache():
     s = slow(Session(), frames=1)
     s.run_blocking()
@@ -487,6 +525,28 @@ def test_a_colour_image_suggests_pens_that_set_pens_accepts():
     assert patch["settings"] == {"split": {"mode": "by_colour"}}
     s.set_pens([Pen(p["name"], p["width_mm"], p["color"]) for p in patch["pens"]])
     assert [p.name for p in s.pens] == [p["name"] for p in patch["pens"]]
+
+
+def test_a_pen_library_chooses_the_palette():
+    img = np.ones((48, 64, 3))
+    for i, rgb in enumerate([[1.0, 0.0, 0.0], [0.0, 0.7, 0.0], [0.0, 0.0, 1.0], [1.0, 0.9, 0.0]]):
+        img[:, i * 16 : (i + 1) * 16] = rgb
+    s = Session()
+    s.set_image(img)
+    library = [Pen("Ink", 0.3, "#000000"), Pen("Lemon 0.5", 0.5, "#f5c400")]
+    s.set_pen_library(library)
+    analysis = s.analysis()
+    owned = {(p.name, p.width_mm, p.color) for p in library}
+    for suggestion in analysis["suggestions"]:
+        for p in (suggestion["patch"] or {}).get("pens", []):
+            assert (p["name"], p["width_mm"], p["color"]) in owned
+    assert "pens_to_add" in [x["kind"] for x in analysis["suggestions"]]
+    assert all(
+        a["error"] < analysis["stats"]["palette_error"]
+        for a in analysis["stats"]["palette_additions"]
+    )
+    with pytest.raises(ValueError):
+        s.set_pen_library([Pen("Bad", 0.3, "red")])
 
 
 def test_fit_meets_a_budget_and_applies_the_value():
