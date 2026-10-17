@@ -1,7 +1,7 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, Link, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
@@ -472,9 +472,11 @@ export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX
   );
 }
 
-type PresetsProps = { warnings: string[]; error?: string; onSave: () => void; onLoad: (file: File) => void };
+/** A share link just made: copied to the clipboard, or, when the browser refused, only shown. */
+export type ShareLink = { link: string; copied: boolean };
+type PresetsProps = { warnings: string[]; error?: string; shared: ShareLink | null; onSave: () => void; onLoad: (file: File) => void; onCopy: () => void };
 
-export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps): JSX.Element {
+export function PresetsPanel({ warnings, error, shared, onSave, onLoad, onCopy }: PresetsProps): JSX.Element {
   return (
     <fieldset data-tour="presets">
       <legend>Presets</legend>
@@ -490,6 +492,14 @@ export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps):
           }}
         />
       </label>
+      <button type="button" onClick={onCopy}><Link /> Copy link</button>
+      {shared?.copied && <p class="help" role="status">Link copied.</p>}
+      {shared && !shared.copied && (
+        <>
+          <p class="help">Your browser did not allow copying. Copy this link:</p>
+          <input type="text" class="share-link" readOnly aria-label="Share link" value={shared.link} onFocus={(e) => e.currentTarget.select()} />
+        </>
+      )}
       {error && <p class="error">{error}</p>}
       {warnings.length > 0 && <ul class="warnings">{warnings.map((w) => <li>{w}</li>)}</ul>}
     </fieldset>
