@@ -1,6 +1,6 @@
 # Learned line models and the model library
 
-Status: designed on 2026-10-16, not built. Decisions are recorded in the brief's decision log under "Learned line models", "Model runtime", "Model catalogue", "Model hosting" and "Model downloads".
+Status: built on 2026-10-17, with `teed-1` as the one listed model; `contour-1` follows in its own change, running on the whole image capped at 1024 pixels, converted from the authors' `model.zip`. Decisions: [learned line models](../../decisions/2026-10-16-learned-line-models.md), [model runtime](../../decisions/2026-10-16-model-runtime.md), [model catalogue](../../decisions/2026-10-16-model-catalogue.md), [model hosting](../../decisions/2026-10-16-model-hosting.md), [model downloads](../../decisions/2026-10-16-model-downloads.md) and [models in the style picker](../../decisions/2026-10-17-models-in-the-style-picker.md).
 
 ## Goal
 
@@ -38,7 +38,7 @@ What follows from them:
 - tract runs both models, every operator supported. Its output is within 1.4e-3 of PyTorch's, no pixel off by more than 1/255, and native and WebAssembly outputs differ by at most 5.1e-6. After rounding to 8 bits that still flips 1 to 11 pixels per image, so a learned style's output is not bit-identical across platforms.
 - A whole 2048-pixel image takes 3.3 GB, close to WebAssembly's 4 GB ceiling, so models run in tiles (see "Tiles").
 - SIMD makes the models about four times faster, and every current browser supports WebAssembly SIMD, so the model module is built with it.
-- tract inside the engine module would take every visitor's download from 0.75 MB to 4.1 MB gzipped, against a CI limit of 2.3 MB raw. tract therefore goes in a module of its own, fetched only when a model first runs. A module holding tract alone is 0.7 MB smaller gzipped than a second engine build with tract, and keeps one engine in memory.
+- tract inside the engine module would take every visitor's download from 0.75 MB to 4.1 MB gzipped, against a CI limit of 2.3 MB raw. tract therefore goes in a module of its own, fetched when a model is first downloaded, loaded or restored. A module holding tract alone is 0.7 MB smaller gzipped than a second engine build with tract, and keeps one engine in memory.
 - "Size-tuned" is `opt-level = "s"` for every crate but `tract-linalg`, which stays at 3, and `wasm-opt -Os`; it runs as fast as `-O3`. Relaxed SIMD is not used, because its results can differ between machines.
 - tract's own NNEF format would save another 0.55 MB gzipped for a fixed tile size, but a file of your own arrives as ONNX, so the module keeps the ONNX loader.
 
