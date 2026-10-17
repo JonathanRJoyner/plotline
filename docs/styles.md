@@ -44,7 +44,7 @@ A filled dot at every point of a square grid where the ink reaches a threshold. 
 
 **Pens.** Each dot is filled with a spiral, so a wider pen fills it in fewer turns and plots faster. A dot no wider than the pen is one touch of the pen. Every dot is a pen lift.
 
-**Looks:** Quick (`points.spacing_mm` 4.4: about 30 minutes on the median test image, against 122, in large dots) and Fine (0.7 mm).
+**Looks:** Quick (`points.spacing_mm` 5.6: about 30 minutes on the median test image, against 167, in large dots) and Fine (0.7 mm).
 
 ### `hatch`
 

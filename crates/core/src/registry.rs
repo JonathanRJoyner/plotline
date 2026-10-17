@@ -64,7 +64,7 @@ pub fn grid_style() -> Style {
         Arc::new(GridPlacer),
         Arc::new(DotRenderer),
     )
-    .with_look("quick", json!({"points": {"spacing_mm": 4.4}}))
+    .with_look("quick", json!({"points": {"spacing_mm": 5.6}}))
     .with_look("fine", json!({"points": {"spacing_mm": 0.7}}))
 }
 
