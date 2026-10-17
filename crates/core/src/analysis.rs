@@ -55,6 +55,9 @@ const PALETTE_MAX: usize = 4;
 const PALETTE_GAIN: f64 = 2.3;
 /// The most inks the additions to a pen library list.
 const ADDITIONS_MAX: usize = 3;
+/// The CIE76 ΔE*ab under which two colours count as the same: an ink a library pen is this near
+/// is owned, and a pixel this near the white paper is paper. About two just noticeable differences.
+const SAME_COLOUR: f64 = 5.0;
 /// The longer side of the grid the saliency map is made on: the scale of Hou and Zhang.
 const SALIENCY_PX: usize = 64;
 /// The standard deviation, in pixels of that grid, of the Gaussian that smooths the saliency
@@ -108,8 +111,9 @@ pub struct ImageStats {
     /// an image that is not colourful enough (colourfulness past 40) or that no colour improves
     /// on white paper.
     pub palette: Vec<PaletteInk>,
-    /// The palette's mean CIE 1976 colour difference ΔE*ab from the image (white paper's, if the
-    /// palette is empty); 0 when the image is not colourful enough for the fit to run.
+    /// The palette's mean CIE 1976 colour difference ΔE*ab from the image's inked pixels, those
+    /// not within ΔE 5 of white paper (all pixels, if none is inked), against white paper's if the
+    /// palette is empty; 0 when the image is not colourful enough for the fit to run.
     pub palette_error: f64,
     /// Inks from [`INKS`] that the pen library lacks and that would draw the image clearly better
     /// than its palette, best first, at most three; empty without a library. See [`additions`].
@@ -313,12 +317,13 @@ pub(crate) fn delta_e(p: [f64; 3], q: [f64; 3]) -> f64 {
     (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
 }
 
-/// One bin of the palette fit: its mean colour as encoded sRGB, that colour in CIELAB, and the
-/// number of pixels.
+/// One bin of the palette fit: its mean colour as encoded sRGB, that colour in CIELAB, the
+/// number of pixels, and whether the colour is white paper's (within [`SAME_COLOUR`] of it).
 struct Sample {
     rgb: [f64; 3],
     lab: [f64; 3],
     weight: f64,
+    paper: bool,
 }
 
 /// The samples of the planes `r`, `g` and `b`: the pixels binned `PALETTE_BINS`³ on their encoded
@@ -334,14 +339,17 @@ fn samples(r: &[f32], g: &[f32], b: &[f32]) -> Vec<Sample> {
         }
         *count += 1;
     }
+    let white = lab([1.0; 3]);
     bins.into_iter()
         .filter(|&(_, count)| count > 0)
         .map(|(sum, count)| {
             let rgb = sum.map(|s| s / count as f64);
+            let lab = lab(rgb);
             Sample {
                 rgb,
-                lab: lab(rgb),
+                lab,
                 weight: count as f64,
+                paper: delta_e(lab, white) <= SAME_COLOUR,
             }
         })
         .collect()
@@ -350,10 +358,13 @@ fn samples(r: &[f32], g: &[f32], b: &[f32]) -> Vec<Sample> {
 /// The mean ΔE*ab, weighted by pixel count, between each sample and its reproduction by inks of
 /// absorption `absorb`: the colour model of the Pen use stage (see `stages/split.rs`), where
 /// [`split::coverages`] gives the coverages that match the sample best and the reproduction is
-/// `R_c = prod_i (1 - a_i k_ic)`. No inks reproduce the white paper.
+/// `R_c = prod_i (1 - a_i k_ic)`. No inks reproduce the white paper. The paper's own samples are
+/// left out, so a large white background cannot hide a small vivid colour; an image that is all
+/// paper keeps them.
 fn mean_error(samples: &[Sample], absorb: &[[f64; 3]]) -> f64 {
     let (mut sum, mut weight) = (0.0, 0.0);
-    for s in samples {
+    let ink = samples.iter().any(|s| !s.paper);
+    for s in samples.iter().filter(|s| !ink || !s.paper) {
         let a = split::coverages(s.rgb, absorb);
         let shown = [0, 1, 2].map(|c| {
             a.iter()
@@ -375,6 +386,11 @@ fn absorb(hex: &str) -> [f64; 3] {
         width_mm: 1.0,
         color: hex.to_string(),
     })
+}
+
+/// The colour `hex`, written as `#rrggbb`, in CIELAB.
+fn lab_of(hex: &str) -> [f64; 3] {
+    lab(rgb(hex).map(|byte| f64::from(byte) / 255.0))
 }
 
 /// BT.601 luma of the colour `hex`, written as `#rrggbb`.
@@ -653,7 +669,8 @@ fn framing(map: &Saliency, aspect: f64) -> Option<[f64; 4]> {
     ])
 }
 
-/// The inks of [`INKS`] missing from the `candidates` that would draw the image clearly better
+/// The inks of [`INKS`] missing from the `candidates` (an ink within [`SAME_COLOUR`] of a candidate
+/// is not missing: the pen the user has stands in for it) that would draw the image clearly better
 /// than the palette `chosen` (indices into `candidates`, whose mean error is `error`). It looks
 /// one step on from the fit, the neighbourhood move of local search (C. H. Papadimitriou and
 /// K. Steiglitz, *Combinatorial Optimization: Algorithms and Complexity*, Prentice-Hall, 1982,
@@ -669,7 +686,12 @@ fn additions(
     error: f64,
 ) -> Vec<PaletteAddition> {
     let base: Vec<[f64; 3]> = chosen.iter().map(|&i| absorb(candidates[i].1)).collect();
-    let owned = |hex: &str| candidates.iter().any(|c| c.1.eq_ignore_ascii_case(hex));
+    // A maker's swatch or a colour picked by eye is never the built-in ink's hex, so near is owned.
+    let own: Vec<_> = candidates.iter().map(|c| lab_of(c.1)).collect();
+    let owned = |hex: &str| {
+        let ink = lab_of(hex);
+        own.iter().any(|&p| delta_e(p, ink) <= SAME_COLOUR)
+    };
     let mut out = Vec::new();
     for &(name, hex) in INKS.iter().filter(|ink| !owned(ink.1)) {
         let ink = absorb(hex);
@@ -1071,12 +1093,17 @@ mod tests {
             .collect()
     }
 
-    /// The mean ΔE*ab of drawing `image` (analysis scale 1) with only a black pen.
-    fn black_alone(image: &Image) -> f64 {
+    /// The palette fit's samples of `image` (analysis scale 1).
+    fn samples_of(image: &Image) -> Vec<Sample> {
         let [r, g, b] = [0, 1, 2]
             .map(|c| -> Vec<f32> { image.rgb.iter().skip(c).step_by(3).copied().collect() });
+        samples(&r, &g, &b)
+    }
+
+    /// The mean ΔE*ab of drawing `image` (analysis scale 1) with only a black pen.
+    fn black_alone(image: &Image) -> f64 {
         let absorb = split::absorption(&black(1.0)[0]);
-        mean_error(&samples(&r, &g, &b), &[absorb])
+        mean_error(&samples_of(image), &[absorb])
     }
 
     fn find<'a>(all: &'a [Suggestion], kind: &str) -> Option<&'a Suggestion> {
@@ -1594,6 +1621,99 @@ mod tests {
         // The same candidates in the same order fit the same palette as no library.
         assert_eq!(stats.palette, measure(&image).palette);
         assert!(measure(&image).palette_additions.is_empty());
+    }
+
+    /// A white `w` by `h` picture painted by `paint`, which gets each pixel's position as shares of
+    /// the width and height and returns its colour, or `None` to leave it white.
+    fn painted(w: u32, h: u32, paint: impl Fn(f32, f32) -> Option<[f32; 3]>) -> Image {
+        let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+                rgb.extend(paint(u, v).unwrap_or([1.0; 3]));
+            }
+        }
+        Image {
+            width: w,
+            height: h,
+            rgb,
+        }
+    }
+
+    #[test]
+    fn a_blue_pen_picked_by_eye_is_owned() {
+        // Dark green mountains and an orange sun on white, and a library whose blue is not the
+        // built-in blue's hex: the audit's case, which used to add a blue pen to a blue pen.
+        let image = painted(200, 120, |u, v| {
+            let ridge = 0.6 - 0.3 * ((u * 2.0).fract() * 2.0 - 1.0).abs();
+            if (u - 0.7).powi(2) + (v - 0.3).powi(2) < 0.15 * 0.15 {
+                Some([0.94, 0.49, 0.10])
+            } else if v > ridge {
+                Some([0.03, 0.32, 0.18])
+            } else {
+                None
+            }
+        });
+        let library = lib(&[
+            ("Black", 0.3, "#000000"),
+            ("Red", 0.3, "red"),
+            ("Blue", 0.3, "#1f4fb4"),
+            ("Yellow", 0.3, "yellow"),
+            ("Green", 0.3, "green"),
+        ]);
+        // Given a palette without the blue pen, the built-in blue clears the gain, so only the
+        // library's own blue, within ΔE 5 of it, keeps blue out of the additions.
+        let samples = samples_of(&image);
+        let candidates: Vec<_> = library.iter().map(|p| (&*p.name, &*p.color)).collect();
+        let chosen = [1, 3, 4];
+        let inks: Vec<_> = chosen.iter().map(|&i| absorb(candidates[i].1)).collect();
+        let error = mean_error(&samples, &inks);
+        let blue = INKS.iter().find(|i| i.0 == "blue").unwrap().1;
+        let with_blue = [inks.as_slice(), &[absorb(blue)]].concat();
+        assert!(error - mean_error(&samples, &with_blue) >= PALETTE_GAIN);
+        let more = additions(&samples, &candidates, &chosen, error);
+        assert!(more.iter().all(|a| a.name != "blue"), "{more:?}");
+        // The whole analysis tells the user to buy nothing. Before this fix it fitted Yellow, Green
+        // and Red (error 4.10) and offered a blue pen (1.79); now it fits the library's Blue too
+        // (error 2.92).
+        let (stats, all) = with_library(&image, &black(0.3), &library);
+        assert!(
+            stats.palette_additions.is_empty(),
+            "{:?}",
+            stats.palette_additions
+        );
+        assert!(find(&all, "pens_to_add").is_none());
+        let names: Vec<_> = stats.palette.iter().map(|p| &*p.name).collect();
+        assert_eq!(names, ["Yellow", "Green", "Red", "Blue"]);
+    }
+
+    #[test]
+    fn a_small_vivid_accent_earns_a_pen() {
+        // A black bar (10 %) and a red patch (3 %) on white paper: the paper used to dilute the
+        // red's error below what one more pen must gain. Before this fix the palette was black
+        // alone (error 2.88); now it is red and black (5.09, the mean over the inked pixels).
+        let image = painted(100, 100, |u, v| {
+            if v < 0.1 {
+                Some([0.0; 3])
+            } else if (0.4..0.55).contains(&u) && (0.4..0.6).contains(&v) {
+                Some([0.95, 0.05, 0.10])
+            } else {
+                None
+            }
+        });
+        let names: Vec<_> = measure(&image)
+            .palette
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, ["red", "black"]);
+    }
+
+    #[test]
+    fn an_image_of_paper_alone_still_has_a_mean_error() {
+        let paper = samples_of(&flat(8, 8, 1.0));
+        assert!(paper.iter().all(|s| s.paper));
+        assert_eq!(mean_error(&paper, &[]), 0.0);
     }
 
     #[test]
