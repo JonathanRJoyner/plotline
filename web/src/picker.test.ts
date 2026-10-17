@@ -43,28 +43,31 @@ test("every style the engine lists has a family", () => {
 const style = (name: string) => ({ name, label: name, description: `${name} draws.` });
 const teed = { id: "teed-1", label: "Edges", description: "Finds edges.", licence: "MIT" } as CatalogueEntry;
 
-test("without a model, learned is one entry that needs one and has a plain picture", () => {
+test("without a model, learned is the built-in xdog entry, drawn from the trial and with nothing to download", () => {
   const entries = withModels([style("grid"), style("learned"), style("stipple")], []);
-  expect(entries.map((e) => e.name)).toEqual(["grid", "learned", "stipple"]);
-  expect(entries[1]).toEqual({ ...style("learned"), note: "needs a model", picture: null });
+  expect(entries.map((e) => [e.name, e.model])).toEqual([["grid", undefined], ["learned", "xdog"], ["stipple", undefined]]);
+  expect(entries[1]).toMatchObject({ label: "Lines (XDoG)", note: "built in" });
+  expect(entries[1].description).toContain("needs no download");
+  expect("picture" in entries[1]).toBe(false); // so the card shows the trial's thumbnail
   expect(entries[0]).toEqual(style("grid"));
 });
 
-test("each loaded model is a learned entry of its own, with the card's picture when the catalogue lists it", () => {
+test("each loaded model is a learned entry of its own after the built-in one, with the card's picture when the catalogue lists it", () => {
   const models = [
     { id: "file-0123456789ab", label: "file-0123456789ab", overlap: 64, entry: null },
     { id: "teed-1", label: "Edges", overlap: 32, entry: teed },
   ];
   const entries = withModels([style("grid"), style("learned"), style("stipple")], models);
-  expect(entries.map((e) => [e.name, e.model])).toEqual([["grid", undefined], ["learned", "file-0123456789ab"], ["learned", "teed-1"], ["stipple", undefined]]);
-  expect(entries[1]).toMatchObject({ label: "file-0123456789ab", note: "your own", picture: null });
-  expect(entries[2]).toMatchObject({ label: "Edges", description: "Finds edges.", note: "MIT", picture: "models/teed-1.png" });
+  expect(entries.map((e) => [e.name, e.model])).toEqual([["grid", undefined], ["learned", "xdog"], ["learned", "file-0123456789ab"], ["learned", "teed-1"], ["stipple", undefined]]);
+  expect(entries[1]).toMatchObject({ label: "Lines (XDoG)", note: "built in" });
+  expect(entries[2]).toMatchObject({ label: "file-0123456789ab", note: "your own", picture: null });
+  expect(entries[3]).toMatchObject({ label: "Edges", description: "Finds edges.", note: "MIT", picture: "models/teed-1.png" });
   // Grouped, every model stays, in the order the engine lists them.
   const lines = groupStyles(entries).find(([label]) => label === "Lines")![1];
-  expect(lines.map((e) => e.model)).toEqual([undefined, "file-0123456789ab", "teed-1"]);
+  expect(lines.map((e) => e.model)).toEqual([undefined, "xdog", "file-0123456789ab", "teed-1"]);
 });
 
-test("withModels keeps every other style as it is, and gives learned one entry per model, or one with none", () => {
+test("withModels keeps every other style as it is, and gives learned the built-in entry first, then one per model", () => {
   const names = fc.uniqueArray(fc.oneof(fc.constantFrom(...known), fc.string({ minLength: 1 })));
   const ids = fc.uniqueArray(fc.stringMatching(/^[a-z0-9-]{1,12}$/), { maxLength: 4 });
   fc.assert(fc.property(names, ids, (names, ids) => {
@@ -74,8 +77,8 @@ test("withModels keeps every other style as it is, and gives learned one entry p
     expect(entries.filter((e) => e.name !== "learned")).toEqual(styles.filter((s) => s.name !== "learned"));
     const learned = entries.filter((e) => e.name === "learned");
     if (!names.includes("learned")) expect(learned).toEqual([]);
-    else if (ids.length === 0) expect(learned.map((e) => e.model)).toEqual([undefined]);
-    else expect(learned.map((e) => e.model)).toEqual(ids);
-    expect(learned.every((e) => e.picture !== undefined)).toBe(true); // never a trial run
+    else expect(learned.map((e) => e.model)).toEqual(["xdog", ...ids]);
+    // Only the built-in entry is drawn from the trial; a model's card has a picture of its own, or plain paper.
+    expect(learned.slice(1).every((e) => e.picture !== undefined)).toBe(true);
   }));
 });

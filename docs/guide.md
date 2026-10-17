@@ -5,6 +5,7 @@ This guide takes you from a picture to a plot on paper. It then lists what to ch
 Open the [hosted page](https://jonathanrjoyner.github.io/plotline/), or run `plotline gui` (see the [README](../README.md#command-line)). Your image is never uploaded: the engine runs inside the page.
 
 - [From picture to plot](#from-picture-to-plot)
+- [Drawing with models](#drawing-with-models)
 - [The same from the command line](#the-same-from-the-command-line)
 - [Troubleshooting](#troubleshooting)
 
@@ -12,7 +13,7 @@ Open the [hosted page](https://jonathanrjoyner.github.io/plotline/), or run `plo
 
 1. **Open an image.** Click Open image in the toolbar, or drop or paste a PNG, JPEG or WebP onto the page. Sample image opens a still life to try things on. Once an image is open, Suggestions at the top of the right-hand column lists changes that would suit it, and nothing changes until you click Apply.
 
-2. **Pick a style and a look.** Click the Style button to open the style picker, which draws every style small on your image, and click one; the [style guide](styles.md) says what each is for. Under the button, the Look select starts the style from Balanced (its defaults), Faithful (follows the image's tones most closely), Quick (about half an hour) or Fine (the densest marks that still plot cleanly). A style with only Balanced shows no Look select. The style's own settings are in the left column, and a change redraws on its own; Reset to defaults puts them all back.
+2. **Pick a style and a look.** Click the Style button to open the style picker, which draws every style small on your image, and click one; the [style guide](styles.md) says what each is for. Under the button, the Look select starts the style from Balanced (its defaults), Faithful (follows the image's tones most closely), Quick (about half an hour) or Fine (the densest marks that still plot cleanly). A style with only Balanced shows no Look select. No look draws its marks more than twice as sparsely as Balanced, so Quick saves time without thinning the picture to a few marks. The style's own settings are in the left column, and a change redraws on its own; Reset to defaults puts them all back, except Pen use while there is more than one pen.
 
 3. **Set the page.** In the Page panel choose the Size, Orientation and Margin of the paper in your plotter. Fit keeps the whole image on the page and fill covers the drawing area and crops the rest. Paper sets the colour the preview draws the ink onto, and does not change the plot.
 
@@ -23,9 +24,9 @@ Open the [hosted page](https://jonathanrjoyner.github.io/plotline/), or run `plo
    - Pen use, in the Pens panel, shares the drawing between the pens: "one pen" (the first alone, the default), "light to dark" or "by colour".
    - For a colour image, Apply on the colour suggestion in Suggestions picks two to four ink pens (from My pens if you saved any) and sets Pen use to "by colour".
 
-5. **Read the stats, the tone match and the plot lint.** Under the preview, the stats give the path count, the pen-down and pen-up lengths and the plot time. The tone error (0 is a perfect match) and SSIM (1 is identical) say how closely the drawing's tones follow the image. The plot lint lists trouble it found on paper as an error, a warning or an info, and Apply changes the setting that fixes one.
+5. **Read the stats, the tone match and the plot lint.** Under the preview, the stats give the path count, the pen-down and pen-up lengths and the plot time, which counts how fast the pen speeds up and slows down. The tone error (0 is a perfect match) and SSIM (1 is identical) say how closely the drawing's tones follow the image. The plot lint lists trouble it found on paper as an error, a warning or an info, and Apply changes the setting that fixes one. `learned` draws lines rather than tones, so it shows no tone error or SSIM.
 
-6. **Fit and optimize.** Open Fit and optimize under the stats. To meet a budget, type a Target, choose its unit (min, paths, m or dots) and click Fit to target, which changes the style's density setting until the drawing is near it. To follow the image's tones best for the plot time, click Optimize with no target, then Apply to take the density it suggests.
+6. **Fit and optimize.** Open Fit and optimize under the stats. To meet a budget, type a Target, choose its unit (min, paths, m or dots) and click Fit to target, which changes the style's density setting until the drawing is near it. To follow the image's tones best for the plot time, click Optimize with no target, then Apply to take the density it suggests. `learned` has no density setting and no tones to follow, so it has no Fit and optimize.
 
 7. **Plot the test chart.** Test chart in the Pens panel replaces the drawing with a page of labelled patches for the first pen, and needs no image. Plot it once for each pen and paper: it shows where lines merge, how big dots come out and how many passes the paper takes, and you can time the plot against the estimate. To chart another pen, move it to the top of the list, then click Run to draw your image again.
 
@@ -35,6 +36,17 @@ Open the [hosted page](https://jonathanrjoyner.github.io/plotline/), or run `plo
    - HPGL: click HPGL in the Export panel for one file with a pen selected for each layer. Settings > HPGL sets the plotter units per mm, 40 unless your plotter's manual says otherwise.
 
 9. **Save a preset.** Save preset in the Presets panel writes the style, page, pens, settings and machine to a small JSON file. Load preset reads it back, and also reads an exported SVG or JSON drawing, which carries its preset.
+
+## Drawing with models
+
+The `learned` style draws the lines a line model finds in your image, each once down its middle, so a line is one pen stroke. It needs no download: click the Style button and pick Lines (XDoG), noted "built in", under Lines.
+
+- **The built-in model.** Lines (XDoG) is `learned`'s default model. It is XDoG, a sharpened difference of Gaussians (H. Winnemöller, J. E. Kyprianidis and S. C. Olsen, *Computers & Graphics* 36(6), 2012), and finds the image's outlines. Its settings are in the Model stage in the left column. Model (`model.model`) is the model it draws with. Resolution (`model.resolution`) is the long side, in pixels, of the image the model sees: more finds finer lines. Sigma (`model.sigma`) is the width of its blur: raise it for fewer, bolder lines. Strength (`model.strength`) is how strongly it sharpens edges into lines: raise it to find fainter edges, at the cost of texture and noise. Threshold (`model.threshold`) near 0 draws outlines alone; raised towards 0.5 it also fills dark areas, which then draw as lines down their middles. Sigma, Strength and Threshold act on the built-in model only.
+- **Get models.** The style picker's Get models tab lists the trained models plotline offers, each with its picture, licence and size. Edges (TEED), `teed-1`, finds edges, texture included, rather than an artist's selection of lines. Download first shows its licence screen: Licence, Attribution, Training, Source, Paper and Size. For `teed-1` the Licence is MIT, and the Training line says it was trained on BIPED, a dataset whose README limits its use to non-commercial purposes. Nothing is fetched until you tick "I've read the licence" and click Accept. The model is then kept in this browser, gets its own card in the Styles tab and its own entry in the Model menu, and Remove in Get models forgets it.
+- **Load your own.** The Load your own tab's Choose a model file takes an ONNX file of up to 200 MB that takes a 1 x 3 x 512 x 512 RGB picture in 0 to 1 and gives back a 1 x 1 x 512 x 512 map, 1 where a line is. You're responsible for the licence of any model you load. If your model draws white lines on black, turn on Invert (`model.invert`).
+- **What it leaves out.** `learned` has no Image stage, so Focus, the tone error and SSIM, and Fit and optimize do not apply to it. To drop faint lines, raise Ink's Threshold (`ink.threshold`); to drop short ones, raise Path order's Min length (`order.min_length_mm`).
+
+On the command line, `plotline run learned photo.jpg --out drawing.svg` draws with the built-in model. `plotline models list` lists the models, `plotline models get teed-1` shows the licence and asks before it downloads, and `plotline models add model.onnx` keeps a file of your own and prints its id. Then pass the id, as in `--set model.model=teed-1`.
 
 ## The same from the command line
 
@@ -76,20 +88,21 @@ The marks cover too little of the paper. The plot lint may say "Where the image 
 
 - Click Apply on that finding, where it has one. It sets closer lines, or more points or strokes, where that is sure to darken the drawing.
 - Or lower the style's density setting by hand, such as `waves.spacing_mm`, or raise the count, such as `voronoi.count`. The style guide marks each style's density setting.
+- On `grid` and `dither`, each dot is a filled disc whose width is Size (`render.size`) times the spacing; at 1, the default, neighbours touch, so a closer spacing gives smaller dots rather than a lighter page. Raise Size above 1 for darker dots.
 - Raise Gamma (`tone.gamma`) in Image: above 1 it darkens the midtones. For a washed-out image set Levels (`tone.levels`) to auto, which sets black and white from the image.
 - Try the Faithful look, or set Response (`tone.response`) to auto, which corrects the image for how much paper the style covers at each grey.
 - If the lint says "No marks at these settings", lower the style's threshold (such as `points.threshold`) or change the tone settings it names.
 
 ### The plot would take too long
 
-There are too many marks, pen lifts or moves for the machine's speed.
+There are too many marks, pen lifts or moves for the machine's speed. The plot time counts acceleration, so dots, short strokes and sharp corners take as long as the pen needs to speed up and slow down for them.
 
 - Type the minutes you can spare as the Target in Fit and optimize and click Fit to target. On the command line use `--fit-minutes`.
 - Choose the Quick look, where the style has one.
 - Choose a style that draws long strokes and lifts the pen rarely: `waves`, `spiral`, `line`, `scribble`, `hilbert`, `contours` or `flow`. The lint says "Pen lifts take N % of the plot time" when lifting is the cost.
 - If the lint says "Pen-up travel takes N % of the plot time", Apply turns on Path order's Optimize (`order.optimize`), which cuts the travel.
 - Choose a smaller Size in the Page panel.
-- Check the speeds behind the estimate. With no machine they are Draw, Travel and Pen lift in Settings > Plot time; with a machine they come from its feeds and its pen lift. Time the test chart's plot against its estimate.
+- Check the speeds behind the estimate. With no machine they are Draw, Travel, Pen lift and Acceleration (1000 mm/s² unless you set it) in Settings > Plot time; with a machine they come from its feeds, its Acceleration in Settings > Machine and its pen lift. Time the test chart's plot against its estimate.
 
 ### Many tiny specks and pen lifts
 
@@ -113,8 +126,9 @@ The pen passes the same spot too often. The lint says "N % of what pen X inks is
 
 There are two causes.
 
-- Pen use is "one pen", the default, so only the first pen draws. The plot lint notes it, and its Apply sets "light to dark". For colours, set "by colour" in the Pens panel.
+- Pen use is "one pen", the default, so only the first pen draws. The plot lint notes it, and its Apply sets "light to dark". For colours, set "by colour" in the Pens panel. When the first pen is a light ink such as yellow, the note is a warning that says "a light ink alone shows little". Reset to defaults keeps Pen use while there is more than one pen, so a colour setup stays by colour.
 - The pens do not match the image. With "by colour", each pen draws the part of the image its colour makes up. Apply the colour suggestion in Suggestions, which picks two to four inks that draw the image's colours best. The lint says "These pens draw nothing at these settings" for a pen whose colour the image lacks, and you can remove that pen.
+- By colour, the tone gamma darkens each pen's own share of a colour rather than adding grey, so `waves`, `spiral` and `mosaic`, which start at Gamma 1.9, draw no black over red and yellow areas.
 
 ### Long straight moves curve on a hanging plotter
 

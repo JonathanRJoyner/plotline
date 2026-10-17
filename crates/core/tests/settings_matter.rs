@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use plotline_core::models::{file_id, StandIn, STANDIN_BYTES, STANDIN_HALF_BYTES};
+use plotline_core::models::{file_id, StandIn, STANDIN_BYTES};
 use plotline_core::registry::list_styles;
 use plotline_core::synthetic::noise;
 use plotline_core::{Canvas, Fit, Pen, Session};
@@ -579,9 +579,9 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "learned",
-        "order",
-        "join",
-        "on the noise image the stand-in model's lines are dots and short strokes, and no two share a vertex",
+        "model",
+        "invert",
+        "only a model file of your own that draws white lines on black needs it, and the built-in model, the default, ignores it",
     ),
     (
         "hilbert",
@@ -656,11 +656,6 @@ fn draw(s: &mut Session, style: &str, stage: &str, patch: &Value) -> Value {
     for (name, values) in defaults.as_object().unwrap() {
         s.update(name, values).unwrap();
     }
-    if style == "learned" {
-        // A model must be chosen to draw; the stand-in Sobel is the one the settings start from.
-        s.update("model", &json!({"model": file_id(STANDIN_BYTES)}))
-            .unwrap();
-    }
     s.update(stage, patch).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
@@ -674,7 +669,6 @@ fn every_setting_changes_the_drawing() {
     let mut s = Session::new(512 << 20);
     s.set_model_runtime(Arc::new(StandIn::default()));
     s.add_model(None, STANDIN_BYTES).unwrap();
-    s.add_model(None, STANDIN_HALF_BYTES).unwrap();
     s.set_image(noise(64, 48, 1));
     s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
     // Two pens, so that the split's light to dark mode has a second layer to add.
@@ -697,8 +691,8 @@ fn every_setting_changes_the_drawing() {
             for (key, prop) in &props {
                 let default = &defaults[name][key];
                 let value = if (name, key.as_str()) == ("model", "model") {
-                    // The model starts as the Sobel stand-in and moves to the half-strength one.
-                    json!(file_id(STANDIN_HALF_BYTES))
+                    // The model starts as the built-in one and moves to the Sobel stand-in.
+                    json!(file_id(STANDIN_BYTES))
                 } else {
                     another(prop, default, &stage["schema"]["$defs"])
                 };

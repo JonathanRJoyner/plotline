@@ -80,8 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = Session::new(DEFAULT_CACHE_BYTES);
     let (mut stats, mut cells) = (Map::new(), String::new());
     let (mut total, mut changed, mut new) = (0, 0, 0);
-    // `learned` needs a model file, and the models are not in the repository.
-    for style in list_styles().iter().filter(|s| s.name != "learned") {
+    for style in list_styles().iter() {
         session.set_style(&style.name)?;
         for (image_name, image) in &images {
             session.set_image(image.clone());

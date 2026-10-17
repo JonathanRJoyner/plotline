@@ -50,11 +50,11 @@ INSTRUCTIONS = (
     "which suggests a density, or set tone.response to auto. Use preview with region_mm to "
     "inspect detail. export writes the result. testchart draws a calibration chart for the "
     "first pen, to plot and compare by eye. set_machine describes a pen plotter or "
-    "pen-fitted printer; export with gcode then writes one file per pen. list_models shows the "
-    "models that the learned style can draw with; choose one with "
-    'run(style="learned", settings={"model": {"model": id}}). A person downloads a model, so '
-    "an assistant cannot. All lengths are millimetres, the page origin is its top-left corner and "
-    "y grows down. Paths must be absolute."
+    "pen-fitted printer; export with gcode then writes one file per pen. The learned style draws "
+    'with its built-in model, "xdog", by default; list_models shows the downloaded models it can '
+    'also draw with; choose one with run(style="learned", settings={"model": {"model": id}}). A '
+    "person downloads a model, so an assistant cannot. All lengths are millimetres, the page "
+    "origin is its top-left corner and y grows down. Paths must be absolute."
 )
 
 
@@ -189,7 +189,8 @@ def build_server(session: Session | None = None) -> MCPServer:
 
     @server.tool()
     async def list_models() -> dict[str, Any]:
-        """List the learned line models. downloaded are the models a run can use, each as {id,
+        """List the learned line models. The built-in model, xdog, is the learned style's
+        default and is not listed. downloaded are the models a run can use, each as {id,
         label}: pass an id as the model setting of the learned style. available are the models
         the catalogue offers that are not downloaded, each as {id, label, description, licence,
         bytes}. There is no tool to download one, because a person accepts each model's licence:
