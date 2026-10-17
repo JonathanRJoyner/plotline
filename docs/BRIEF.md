@@ -136,8 +136,9 @@ These are listed so the stage design leaves room for them. Most are new combinat
 | Flow and streamlines | Evenly spaced lines along an edge, gradient or noise field, with spacing or width set by tone | Tone map |
 | Modulated paths | A spiral or hatch whose wobble or zig-zag size follows tone | Tone map |
 | Hatching | Parallel hatch lines whose spacing follows tone, with optional cross-hatch layers | Tone map |
-| Regions and mosaic | Split the image into regions or tiles and render each with its own style. Built in part on 2026-10-15 as the `mosaic` style (§14, "Mosaic style"), which fills each region with lines at its own angle and spacing; giving regions different styles stays open | Any style |
+| Regions and mosaic | Split the image into regions or tiles and render each with its own style. Built in part on 2026-10-15 as the `mosaic` style (§14, "Mosaic style"), which fills each region with lines at its own angle and spacing. Giving regions different styles was ruled out on 2026-10-16 ([decision](decisions/2026-10-16-no-styles-per-region.md)) | Any style |
 | Multi-pen colour | Split colour images into per-pen layers (e.g. CMYK or a custom palette) and run a style per pen. Built on 2026-10-12 as the Pen use stage that every style shares, under [spec 8](superpowers/specs/2026-10-12-pen-use-design.md), rather than as a family | Any style |
+| Stacked styles | Draw two styles over the whole page, each in its own pen, such as line work over a tone fill, with no mask between them; the preview shows them together and one file exports both. Kept as a later family by the [decision on styles per region](decisions/2026-10-16-no-styles-per-region.md) | Any style, pen layers |
 
 ## 8. GUI and preview (decided: local web app)
 
