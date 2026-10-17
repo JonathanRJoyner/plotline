@@ -14,6 +14,8 @@
 //!   the cell's mean.
 //! - Thinning: T. Y. Zhang and C. Y. Suen, "A Fast Parallel Algorithm for Thinning Digital
 //!   Patterns", *Communications of the ACM* 27(3), 1984, pp. 236-239.
+//! - Filling: the even-odd scan-line polygon fill, as in J. D. Foley, A. van Dam, S. K. Feiner and
+//!   J. F. Hughes, *Computer Graphics: Principles and Practice*, 2nd ed., Addison-Wesley 1990.
 //! - Simplification: D. H. Douglas and T. K. Peucker, "Algorithms for the reduction of the number
 //!   of points required to represent a digitized line or its caricature", *The Canadian
 //!   Cartographer* 10(2), 1973, pp. 112-122.
@@ -407,6 +409,33 @@ pub fn cover(lines: &[Vec<[f64; 2]>], w: usize, h: usize, radius: f64) -> Vec<bo
     out
 }
 
+/// Which cells have their centre inside the closed `lines` (cell coordinates) by the even-odd
+/// rule, so a loop inside another cuts a hole. Each row is filled between successive crossings.
+pub fn fill(lines: &[Vec<[f64; 2]>], w: usize, h: usize) -> Vec<bool> {
+    let mut rows: Vec<Vec<f64>> = vec![Vec::new(); h];
+    for s in lines.iter().flat_map(|l| l.windows(2)) {
+        let (a, b) = (s[0], s[1]);
+        // Rows from the lower end up to but not including the upper one, so a vertex on a row
+        // counts once.
+        let lo = a[1].min(b[1]).ceil().max(0.0) as usize;
+        let hi = (a[1].max(b[1]).ceil().max(0.0) as usize).min(h);
+        for (y, row) in rows.iter_mut().enumerate().take(hi).skip(lo) {
+            let t = (y as f64 - a[1]) / (b[1] - a[1]);
+            row.push(a[0] + t * (b[0] - a[0]));
+        }
+    }
+    let mut out = vec![false; w * h];
+    for (y, row) in rows.iter_mut().enumerate() {
+        row.sort_by(f64::total_cmp);
+        for &[a, b] in row.as_chunks::<2>().0 {
+            let x0 = (a.floor() + 1.0).max(0.0) as usize;
+            let x1 = (b.ceil().max(0.0) as usize).min(w);
+            out[y * w + x0.min(x1)..y * w + x1].fill(true);
+        }
+    }
+    out
+}
+
 /// `line` smoothed by a Gaussian of `sigma` vertices along it. A closed line (last vertex equal
 /// to the first) wraps around and stays closed; an open one keeps its end points.
 pub fn smooth(line: &[[f64; 2]], sigma: f64, closed: bool) -> Vec<[f64; 2]> {
@@ -520,6 +549,21 @@ mod tests {
                 d[i]
             );
         }
+    }
+
+    #[test]
+    fn fill_sets_the_cells_inside_and_a_nested_loop_cuts_a_hole() {
+        let square = |lo: f64, hi: f64| vec![[lo, lo], [hi, lo], [hi, hi], [lo, hi], [lo, lo]];
+        // The diamond's corners sit on rows of cell centres: the side corners' row still fills,
+        // and the top and bottom corners add no cell.
+        let diamond = vec![[4.0, 1.0], [7.0, 4.0], [4.0, 7.0], [1.0, 4.0], [4.0, 1.0]];
+        let (w, h) = (9, 9);
+        let set = |m: &[bool]| (0..w * h).filter(|&i| m[i]).count();
+        let ring = fill(&[square(1.5, 6.5), square(3.5, 4.5)], w, h);
+        assert_eq!(set(&ring), 24);
+        assert!(ring[2 * w + 2] && !ring[4 * w + 4] && !ring[w + 1]);
+        // Rows 2 to 6 hold 1, 3, 5, 3 and 1 cells strictly inside.
+        assert_eq!(set(&fill(&[diamond], w, h)), 13);
     }
 
     #[test]
