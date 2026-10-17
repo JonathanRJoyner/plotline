@@ -650,6 +650,10 @@ def models_get(id: str, accept_licence: bool) -> None:
     if entry is None:
         click.echo(f"Error: {id!r} is not in the catalogue; run `plotline models list`", err=True)
         sys.exit(2)
+    with _errors():
+        if models.intact(entry):  # nothing to accept or fetch
+            click.echo(f"{id} is already downloaded")
+            return
     for line in (
         entry["label"],
         f"Licence: {entry['licence']}",

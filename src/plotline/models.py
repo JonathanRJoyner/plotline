@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -100,19 +101,37 @@ def _keep(id: str, data: bytes) -> Path:
     return path
 
 
+def intact(entry: dict[str, Any]) -> bool:
+    """Whether the kept file of the catalogue ``entry`` is there and has the size and SHA-256 the
+    entry lists."""
+    try:
+        data = (cache_dir() / f"{entry['id']}.onnx").read_bytes()
+    except OSError:
+        return False
+    return len(data) == int(entry["bytes"]) and hashlib.sha256(data).hexdigest() == entry["sha256"]
+
+
 def download(entry: dict[str, Any]) -> Path:
     """Fetch the model of a catalogue ``entry`` and keep it as ``<id>.onnx``; return the path.
 
     The caller has shown the licence and had it accepted. Nothing past ``entry["bytes"]`` is
     read, and the file is written only when its size and SHA-256 both match the entry. Raises
     ``ValueError`` for an id that is not a plain file name stem (before anything is fetched) and for
-    a file of the wrong size or hash, and ``OSError`` (``URLError`` is one) when
-    the fetch fails; either way nothing is kept.
+    a file of the wrong size or hash, and ``OSError`` when the fetch fails, with a message that
+    names the model and the address and holds no library wording; either way nothing is kept.
     """
     _check_id(entry["id"])
     expected = int(entry["bytes"])
-    with urllib.request.urlopen(entry["url"], timeout=_TIMEOUT) as response:
-        data = response.read(expected + 1)
+    try:
+        with urllib.request.urlopen(entry["url"], timeout=_TIMEOUT) as response:
+            data = response.read(expected + 1)
+    except OSError as e:  # a URLError, a timeout, or a connection that dropped
+        why = (
+            f"the server answered {e.code}"
+            if isinstance(e, urllib.error.HTTPError)
+            else "check your connection"
+        )
+        raise OSError(f"could not download {entry['id']} from {entry['url']}: {why}") from e
     if len(data) != expected:
         raise ValueError(
             f"the download of {entry['id']} is {'at least ' if len(data) > expected else ''}"

@@ -3,6 +3,7 @@
 import hashlib
 import io
 import shutil
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -102,6 +103,48 @@ def test_download_keeps_a_file_that_matches(monkeypatch):
     path = models.download(entry_for(data))
     assert path == models.cache_dir() / "demo-1.onnx" and path.read_bytes() == data
     assert models.kept() == [("demo-1", path)]
+
+
+def fail_with(monkeypatch, error: BaseException) -> None:
+    """Make every ``urlopen`` raise ``error``."""
+
+    def refuse(url, **kw):
+        raise error
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+
+
+@pytest.mark.parametrize(
+    ("error", "said"),
+    [
+        (urllib.error.URLError(OSError(11001, "getaddrinfo failed")), "check your connection"),
+        (TimeoutError("timed out"), "check your connection"),
+        (urllib.error.HTTPError("u", 404, "Not Found", {}, None), "answered 404"),
+    ],
+)
+def test_a_failed_fetch_says_which_model_and_where(monkeypatch, error, said):
+    data = FIXTURE.read_bytes()
+    fail_with(monkeypatch, error)
+    with pytest.raises(OSError) as raised:
+        models.download(entry_for(data))
+    message = str(raised.value)
+    assert "demo-1" in message and "https://example.test/demo-1.onnx" in message
+    assert said in message and "urlopen" not in message
+    assert models.kept() == []
+
+
+def test_intact_checks_the_kept_file_against_the_entry():
+    data = FIXTURE.read_bytes()
+    entry = entry_for(data)
+    assert not models.intact(entry)  # nothing kept
+    models.cache_dir().mkdir(parents=True)
+    path = models.cache_dir() / "demo-1.onnx"
+    path.write_bytes(data)
+    assert models.intact(entry)
+    path.write_bytes(data[::-1])  # the right size, the wrong bytes
+    assert not models.intact(entry)
+    path.write_bytes(data[:-1])
+    assert not models.intact(entry)
 
 
 def test_acceptance_is_per_licence_text():

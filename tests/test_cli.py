@@ -6,6 +6,7 @@ import http.server
 import io
 import json
 import sys
+import urllib.error
 import urllib.request
 import webbrowser
 import xml.etree.ElementTree as ET
@@ -780,3 +781,36 @@ def test_a_kept_file_that_cannot_load_leaves_a_plain_error(image, tmp_path):
         r = run_learned(image, tmp_path, "model.model=file-0123456789ab")
     assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
     assert "model file-0123456789ab is not loaded" in r.stderr
+
+
+def test_models_get_does_not_fetch_a_model_that_is_kept(monkeypatch):
+    with_catalogue(monkeypatch)
+    assert run("models", "get", "demo-1", "--accept-licence").exit_code == 0
+
+    def never(url, **kw):
+        raise AssertionError("fetched a model that is kept")
+
+    monkeypatch.setattr(urllib.request, "urlopen", never)
+    r = run("models", "get", "demo-1")  # not even a licence question
+    assert r.exit_code == 0, r.output
+    assert r.stdout == "demo-1 is already downloaded\n"
+    # A kept file that does not match is fetched again, and mended.
+    (models.cache_dir() / "demo-1.onnx").write_bytes(b"damaged")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, **kw: io.BytesIO(DEMO_BYTES))
+    r = run("models", "get", "demo-1")
+    assert r.exit_code == 0 and "already" not in r.output, r.output
+    assert models.kept()[0][1].read_bytes() == DEMO_BYTES
+
+
+def test_models_get_offline_says_which_model_and_where(monkeypatch):
+    entry = with_catalogue(monkeypatch)
+
+    def offline(url, **kw):
+        raise urllib.error.URLError(OSError(11001, "getaddrinfo failed"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", offline)
+    r = run("models", "get", "demo-1", "--accept-licence")
+    assert r.exit_code == 1 and r.stderr.startswith("Error:"), r.output
+    assert "demo-1" in r.stderr and entry["url"] in r.stderr
+    assert "urlopen" not in r.stderr and "Traceback" not in r.output
+    assert models.kept() == []
