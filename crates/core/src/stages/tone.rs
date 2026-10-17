@@ -143,7 +143,7 @@ const MAX_FOCUS: usize = 16;
 /// The order the settings form shows the settings in (`x-order` in the schema, which lists its
 /// properties alphabetically): Levels first, as it decides whether Black and White apply, then the
 /// tone settings, then the advanced and hidden ones in the struct's order.
-const ORDER: [&str; 14] = [
+const ORDER: [&str; 15] = [
     "levels",
     "black",
     "white",
@@ -154,6 +154,7 @@ const ORDER: [&str; 14] = [
     "flatten_mm",
     "response",
     "resolution",
+    "smooth_mm",
     "blur_mm",
     "focus",
     "focus_mm",
