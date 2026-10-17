@@ -1,9 +1,9 @@
 """The command line interface: list the styles, describe one, analyse an image, run a style on it,
 and serve the web interface and the MCP server.
 
-``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. ``testchart``
-writes a calibration chart for a pen. ``analyse`` prints the session's analysis of an image, with
-the palette picked from a pen library file when one is given.
+``run`` sets a ``Session`` up from its options, runs the style and writes the outputs, once for
+each image it is given. ``testchart`` writes a calibration chart for a pen. ``analyse`` prints the
+session's analysis of an image, with the palette picked from a pen library file when one is given.
 ``styles`` and ``describe`` read the style registry.
 ``gui`` serves the web bundle that a release wheel carries. ``mcp`` serves a session to an AI
 assistant on stdio. The work all happens in the session layer, so this module holds no algorithm
@@ -15,6 +15,7 @@ import importlib.util
 import json
 import sys
 import webbrowser
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -353,21 +354,110 @@ def use_machine(session: Session, path: str) -> None:
     session.set_canvas(replace(session.canvas, width_mm=area["width"], height_mm=area["height"]))
 
 
-def echo_stats(session: Session) -> None:
-    """Print the path count, pen-down and pen-up distances and estimated time of the result."""
+def stats_line(session: Session) -> str:
+    """The path count, pen-down and pen-up distances and estimated time of the result."""
     stats = session.stats()
-    click.echo(
+    return (
         f"paths: {stats.path_count}  pen down: {stats.pen_down_mm:.1f} mm  "
         f"pen up: {stats.pen_up_mm:.1f} mm  estimated: {stats.estimated_seconds:.1f} s"
     )
 
 
+def echo_stats(session: Session) -> None:
+    """Print ``stats_line`` of ``session``."""
+    click.echo(stats_line(session))
+
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+# The options of ``run`` that name one output file, with the extension each file gets when a batch
+# writes one per image into a folder. ``--out`` is always an SVG, whatever its extension is.
+FILE_OUTPUTS = {
+    "out": ".svg",
+    "json_out": ".json",
+    "preview": ".png",
+    "save_preset": ".json",
+    "hpgl": ".hpgl",
+}
+
+
+def expand_images(paths: tuple[str, ...]) -> list[Path]:
+    """The images that ``paths`` name, in order: a file as itself, and a folder as its PNG, JPEG and
+    WebP files (by extension, in any case, not those of subfolders) sorted by name. A folder with
+    none raises ``click.UsageError``. A path that is not a folder is kept as it is, so a missing
+    file is reported when it is read."""
+    images: list[Path] = []
+    for path in map(Path, paths):
+        if not path.is_dir():
+            images.append(path)
+            continue
+        found = sorted(
+            (f for f in path.iterdir() if f.suffix.lower() in IMAGE_SUFFIXES and f.is_file()),
+            key=lambda f: f.name,
+        )
+        if not found:
+            raise click.UsageError(f"{path} holds no PNG, JPEG or WebP files")
+        images += found
+    return images
+
+
+def batch_outputs(image: Path, folders: dict[str, str | None]) -> dict[str, str | None]:
+    """The file each output option writes for ``image`` in a batch: the image's stem and the
+    extension from ``FILE_OUTPUTS``, in the option's folder."""
+    return {
+        option: None if folder is None else str(Path(folder) / (image.stem + FILE_OUTPUTS[option]))
+        for option, folder in folders.items()
+    }
+
+
+def prepare_batch(images: list[Path], folders: dict[str, str | None]) -> None:
+    """Refuse, with ``click.UsageError``, a batch whose outputs would overwrite each other or an
+    input: two images with the same stem (compared in lower case, as a Windows folder does), or
+    two options that name the same folder and extension, or a folder that holds an input with an
+    output's name. Then create the folders. Nothing has been written before this returns."""
+    seen: dict[str, Path] = {}
+    for image in images:
+        if (first := seen.get(image.stem.casefold())) is not None:
+            raise click.UsageError(
+                f"{first} and {image} have the same name {image.stem!r}, so their outputs would "
+                "overwrite each other"
+            )
+        seen[image.stem.casefold()] = image
+    written = [
+        Path(path).resolve()
+        for image in images
+        for path in batch_outputs(image, folders).values()
+        if path is not None
+    ]
+    uses = Counter([*written, *(image.resolve() for image in images)])
+    if clash := next((path for path, n in uses.items() if n > 1), None):
+        raise click.UsageError(f"{clash} would be written twice, or over an input image")
+    with _errors():
+        for folder in folders.values():
+            if folder is not None:
+                Path(folder).mkdir(parents=True, exist_ok=True)
+
+
 @main.command()
 @click.argument("style")
-@click.argument("image", type=click.Path())
-@click.option("--out", required=True, type=click.Path(), help="Where to write the SVG.")
-@click.option("--json", "json_out", type=click.Path(), help="Also write the paths as JSON.")
-@click.option("--preview", type=click.Path(), help="Also write a PNG preview.")
+@click.argument("images", nargs=-1, required=True, type=click.Path())
+@click.option(
+    "--out",
+    required=True,
+    type=click.Path(),
+    help="Where to write the SVG. For more than one image, a folder that gets IMAGE.svg for each.",
+)
+@click.option(
+    "--json",
+    "json_out",
+    type=click.Path(),
+    help="Also write the paths as JSON. For more than one image, a folder of IMAGE.json files.",
+)
+@click.option(
+    "--preview",
+    type=click.Path(),
+    help="Also write a PNG preview. For more than one image, a folder of IMAGE.png files.",
+)
 @page_options
 @crop_option
 @pen_option
@@ -395,7 +485,10 @@ def echo_stats(session: Session) -> None:
 @click.option(
     "--save-preset",
     type=click.Path(),
-    help="Write the style, page, pens and settings used to a preset file.",
+    help=(
+        "Write the style, page, pens and settings used to a preset file. For more than one "
+        "image, a folder of IMAGE.json files."
+    ),
 )
 @machine_option
 @accel_option
@@ -404,14 +497,18 @@ def echo_stats(session: Session) -> None:
     type=click.Path(),
     metavar="DIR",
     help=(
-        "Also write one G-code file per pen into DIR. Needs a machine, from --machine or --preset."
+        "Also write one G-code file per pen into DIR. Needs a machine, from --machine or --preset. "
+        "For more than one image, DIR gets a subfolder named IMAGE for each."
     ),
 )
 @click.option(
     "--hpgl",
     type=click.Path(),
     metavar="FILE",
-    help="Also write the drawing as one HPGL file, with a pen selected for each layer.",
+    help=(
+        "Also write the drawing as one HPGL file, with a pen selected for each layer. For more "
+        "than one image, FILE is a folder of IMAGE.hpgl files."
+    ),
 )
 @click.option(
     "--hpgl-units",
@@ -443,7 +540,7 @@ def echo_stats(session: Session) -> None:
 )
 def run(
     style: str,
-    image: str,
+    images: tuple[str, ...],
     out: str,
     json_out: str | None,
     preview: str | None,
@@ -471,88 +568,149 @@ def run(
     quiet: bool,
     strict: bool,
 ) -> None:
-    """Run STYLE on IMAGE and write the drawing as an SVG. The tone match follows the stats,
-    and the plot lint's findings follow on stderr, each with the --set options that fix it where
-    a setting does."""
+    """Run STYLE on IMAGES and write each drawing as an SVG. An image is a PNG, JPEG or WebP file,
+    or a folder of them. The tone match follows the stats, and the plot lint's findings follow on
+    stderr, each with the --set options that fix it where a setting does.
+
+    With more than one image, or a folder, a batch runs: --out and the other options that name an
+    output file name folders, which get one file named after each image, --gcode gets a subfolder
+    for each, and every other option applies to every image. A line is printed for each image,
+    and the exit status is 1 if any failed."""
     given = zip(FITS, (fit_minutes, fit_paths, fit_metres, fit_dots), strict=True)
     fits = [(metric, target) for metric, target in given if target is not None]
     if len(fits) > 1:
         raise click.UsageError("give at most one --fit option")
-    session = Session(max_fps=4)
-    if not quiet:
-        session.subscribe(lambda frame: click.echo(f"{frame.stage}: {frame.label}", err=True))
-    with _errors():
-        session.load_image(image)
-        if preset is not None:
-            session.load_preset(preset)
-        # The preset's changed settings carry into STYLE where it has the same stages.
-        session.set_style(style)
-        if look is not None:
-            try:
-                session.apply_look(look)
-            except ValueError as error:
-                raise click.BadParameter(str(error), param_hint=["--look"]) from error
-        if machine is not None:
-            use_machine(session, machine)
-        if accel is not None:
-            session.speeds.accel_mm_s2 = accel
-        set_page(session, width, height, margin, fit, paper, crop)
-        if pens:
-            session.set_pens(pens)
-        for stage, key, value in sets:
-            session.update(stage, **{key: value})
-        if gcode is not None and session.machine is None:
-            raise click.UsageError(
-                "--gcode needs a machine: give --machine or a --preset that has one"
+
+    def one(
+        image: Path,
+        out: str,
+        json_out: str | None,
+        preview: str | None,
+        save_preset: str | None,
+        gcode: str | None,
+        hpgl: str | None,
+        batch: bool,
+    ) -> bool:
+        """Run on ``image`` and write the outputs, named by the arguments in place of the options
+        of the same names. A batch prints its one line on stdout and every note on stderr after
+        the image's path. Returns whether ``--strict`` fails the image."""
+        prefix = f"{image}: " if batch else ""
+        session = Session(max_fps=4)
+        if not quiet:
+            session.subscribe(
+                lambda frame: click.echo(f"{prefix}{frame.stage}: {frame.label}", err=True)
             )
-        if optimize:
-            handle = session.optimize(*(fits[0] if fits else (None, None)))
-            handle.wait()
-            if handle.error is not None:
-                raise handle.error
-            found = handle.optimum
-            assert found is not None  # a search that ended without an error is done
-            # With no trial scored, the reason says why and there is no patch.
-            click.echo(f"optimize: {found['reason']}")
-            if fix := _options(found["patch"]):
-                click.echo(f"  apply: {fix}")
-        elif fits:
-            [(metric, target)] = fits
-            handle = session.fit(metric, target)
-            handle.wait()
-            if handle.error is not None:
-                raise handle.error
-            chosen = handle.fit
-            assert chosen is not None  # a fit that ended without an error is done
-            unit = FITS[metric][2]
-            click.echo(
-                f"fit: {chosen['stage']}.{chosen['key']} = {chosen['value']} "
-                f"({chosen['achieved']:.4g} {unit} for a target of {target:g} {unit}, "
-                f"{len(chosen['samples'])} trials)"
+        with _errors():
+            session.load_image(image)
+            if preset is not None:
+                session.load_preset(preset)
+            # The preset's changed settings carry into STYLE where it has the same stages.
+            session.set_style(style)
+            if look is not None:
+                try:
+                    session.apply_look(look)
+                except ValueError as error:
+                    raise click.BadParameter(str(error), param_hint=["--look"]) from error
+            if machine is not None:
+                use_machine(session, machine)
+            if accel is not None:
+                session.speeds.accel_mm_s2 = accel
+            set_page(session, width, height, margin, fit, paper, crop)
+            if pens:
+                session.set_pens(pens)
+            for stage, key, value in sets:
+                session.update(stage, **{key: value})
+            if gcode is not None and session.machine is None:
+                raise click.UsageError(
+                    "--gcode needs a machine: give --machine or a --preset that has one"
+                )
+            if optimize:
+                handle = session.optimize(*(fits[0] if fits else (None, None)))
+                handle.wait()
+                if handle.error is not None:
+                    raise handle.error
+                found = handle.optimum
+                assert found is not None  # a search that ended without an error is done
+                # With no trial scored, the reason says why and there is no patch.
+                click.echo(f"{prefix}optimize: {found['reason']}", err=batch)
+                if fix := _options(found["patch"]):
+                    click.echo(f"{prefix}  apply: {fix}", err=batch)
+            elif fits:
+                [(metric, target)] = fits
+                handle = session.fit(metric, target)
+                handle.wait()
+                if handle.error is not None:
+                    raise handle.error
+                chosen = handle.fit
+                assert chosen is not None  # a fit that ended without an error is done
+                unit = FITS[metric][2]
+                click.echo(
+                    f"{prefix}fit: {chosen['stage']}.{chosen['key']} = {chosen['value']} "
+                    f"({chosen['achieved']:.4g} {unit} for a target of {target:g} {unit}, "
+                    f"{len(chosen['samples'])} trials)",
+                    err=batch,
+                )
+            else:
+                session.run_blocking()
+            session.export_svg(out)
+            if json_out is not None:
+                session.export_json(json_out)
+            if preview is not None:
+                Path(preview).write_bytes(session.preview_png())
+            if save_preset is not None:
+                session.save_preset(save_preset)
+            if gcode is not None:
+                files = session.export_gcode(gcode)
+                count = f"{len(files)} {'file' if len(files) == 1 else 'files'}"
+                click.echo(f"{prefix}gcode: {count} in {gcode}", err=batch)
+            if hpgl is not None:
+                session.export_hpgl(hpgl, hpgl_units)
+        lines = [stats_line(session)]
+        if (match := session.tone_match()) is not None:
+            lines.append(f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}")
+        click.echo(f"{image} -> {out}  {'  '.join(lines)}" if batch else "\n".join(lines))
+        findings = session.lint()
+        for finding in findings:
+            click.echo(f"{prefix}{finding['severity']}: {finding['message']}", err=True)
+            if fix := _options(finding["patch"]):
+                click.echo(f"{prefix}  fix: {fix}", err=True)
+        return strict and any(f["severity"] != "info" for f in findings)
+
+    files = expand_images(images)
+    # A folder always runs a batch, so --out names a folder however many images it holds.
+    if len(files) == 1 and not Path(images[0]).is_dir():
+        if one(files[0], out, json_out, preview, save_preset, gcode, hpgl, False):
+            sys.exit(1)
+        return
+    folders = {
+        "out": out,
+        "json_out": json_out,
+        "preview": preview,
+        "save_preset": save_preset,
+        "hpgl": hpgl,
+    }
+    prepare_batch(files, folders)
+    failed = False
+    for image in files:
+        to = batch_outputs(image, folders)
+        subfolder = None if gcode is None else str(Path(gcode) / image.stem)
+        try:
+            failed |= one(
+                image,
+                str(to["out"]),
+                to["json_out"],
+                to["preview"],
+                to["save_preset"],
+                subfolder,
+                to["hpgl"],
+                True,
             )
-        else:
-            session.run_blocking()
-        session.export_svg(out)
-        if json_out is not None:
-            session.export_json(json_out)
-        if preview is not None:
-            Path(preview).write_bytes(session.preview_png())
-        if save_preset is not None:
-            session.save_preset(save_preset)
-        if gcode is not None:
-            files = session.export_gcode(gcode)
-            click.echo(f"gcode: {len(files)} {'file' if len(files) == 1 else 'files'} in {gcode}")
-        if hpgl is not None:
-            session.export_hpgl(hpgl, hpgl_units)
-    echo_stats(session)
-    if (match := session.tone_match()) is not None:
-        click.echo(f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}")
-    findings = session.lint()
-    for finding in findings:
-        click.echo(f"{finding['severity']}: {finding['message']}", err=True)
-        if fix := _options(finding["patch"]):
-            click.echo(f"  fix: {fix}", err=True)
-    if strict and any(f["severity"] != "info" for f in findings):
+        except click.UsageError:
+            raise  # a wrong option, which fails every image the same way
+        except click.ClickException as error:
+            click.echo(f"{image}: failed: {error.format_message()}", err=True)
+            failed = True
+    if failed:
         sys.exit(1)
 
 
