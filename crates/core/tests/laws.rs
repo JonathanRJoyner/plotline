@@ -1,7 +1,7 @@
 //! Laws that every style and every setting keeps, checked on random inputs.
 //!
-//! Nothing here names a style or a setting, bar the model: it needs a file, so a case's session
-//! holds the two stand-in models and the setting takes either. The inputs come from the registry
+//! Nothing here names a style or a setting, bar the model: a case's session holds the two
+//! stand-in models, and the setting takes either or the built-in one. The inputs come from the registry
 //! and from each stage's settings schema, so a new style or setting is covered with no edit to
 //! this file. A case
 //! is a small image built in code (a two-colour gradient under discs, boxes and noise, or one of
@@ -37,6 +37,7 @@ use plotline_core::runner::Shared;
 use plotline_core::settings::merge;
 use plotline_core::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
 use plotline_core::stages::join::join;
+use plotline_core::stages::model::XDOG;
 use plotline_core::stages::split::SplitStage;
 use plotline_core::stages::tone::{flatten, guided, ToneStage};
 use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
@@ -349,9 +350,10 @@ fn value(stage: &str, key: &str, prop: &Value, defs: &Value) -> BoxedStrategy<Va
     };
     match prop["type"].as_str() {
         Some("boolean") => any::<bool>().prop_map(Value::from).boxed(),
-        // The one string setting is the model, and a session holds the two stand-in models.
+        // The one string setting is the model: the built-in one or a stand-in the session holds.
         Some("string") if (stage, key) == ("model", "model") => {
-            select(vec![file_id(STANDIN_BYTES), file_id(STANDIN_HALF_BYTES)])
+            let standins = [STANDIN_BYTES, STANDIN_HALF_BYTES].map(file_id);
+            select([vec![XDOG.to_string()], standins.to_vec()].concat())
                 .prop_map(Value::from)
                 .boxed()
         }
@@ -2053,7 +2055,8 @@ fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_gri
     // A colour scene on A4 with three coloured pens, in every Pen use mode. A dot style once drew
     // there but showed a blank cell: 0.3 mm dots 1 mm apart, a pixel wide in a 600 px picture,
     // average to almost white at the cell's size. A visible mark is a cell pixel at least 10 %
-    // darker than the paper, and every style's cell has them on at least 3 % of its pixels.
+    // darker than the paper, and every style's cell has them on at least 3 % of its pixels, or 1 %
+    // for a style with no tone stage, whose outlines leave the areas between them blank.
     let first = &list_styles()[0];
     let split = first.stages[first.stage_index("split").unwrap()].schema();
     let modes = choices(&split["properties"]["mode"], &split["$defs"]).unwrap();
@@ -2066,17 +2069,11 @@ fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_gri
     .to_vec();
     for mode in &modes {
         let mut s = Session::new(1 << 30);
-        s.set_model_runtime(Arc::new(StandIn::default()));
-        s.add_model(None, STANDIN_BYTES).unwrap();
         s.set_image(scene(300, 225));
         s.set_pens(pens.clone()).unwrap();
         for style in all_styles() {
             s.set_style(&style).unwrap();
             s.update("split", &json!({ "mode": mode })).unwrap();
-            if s.settings().get("model").is_some() {
-                s.update("model", &json!({"model": file_id(STANDIN_BYTES)}))
-                    .unwrap();
-            }
             for &(stage, key, cap) in SPEED_CAPS {
                 let now = &s.settings()[stage][key];
                 if now.as_f64().is_some_and(|v| v > cap) {
@@ -2093,11 +2090,6 @@ fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_gri
             let d = s.drawing().unwrap();
             let paths: usize = d.layers.iter().map(|l| l.paths.len()).sum();
             assert!(paths > 0, "{style} in {mode} draws nothing");
-            // The style grid leaves out a style that needs a downloaded model (`thumbs` in
-            // web/src/protocol.ts), so it has no cell to judge.
-            if s.settings().get("model").is_some() {
-                continue;
-            }
             let png = render_png_shrunk(&d, GRID_PX, s.paper(), GRID_SHRINK).unwrap();
             let picture = image::load_from_memory(&png).unwrap().to_luma8();
             let height = CELL_PX * picture.height() / picture.width();
@@ -2109,8 +2101,13 @@ fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_gri
             );
             let marked = cell.pixels().filter(|p| p.0[0] <= 230).count() as f64
                 / f64::from(CELL_PX * height);
+            let least = if s.settings().get("tone").is_some() {
+                0.03
+            } else {
+                0.01
+            };
             assert!(
-                marked >= 0.03,
+                marked >= least,
                 "{style} in {mode} marks {:.1} % of its cell",
                 100.0 * marked
             );
@@ -2268,4 +2265,25 @@ fn pens_share_a_point_count_between_them() {
             Ok(())
         },
     );
+}
+
+#[test]
+fn the_built_in_line_model_draws_nothing_on_blank_paper() {
+    // XDoG draws where its sharpened picture falls below the threshold; a flat picture has no
+    // edges to sharpen, so one no darker than the threshold draws nothing, whatever the blur.
+    let settings = (0.0f32..=1.0, 0.0f64..=1.0, 0.3f64..=8.0, 1.0f64..=250.0);
+    check("blank xdog", 32, settings, |(v, t, sigma, strength)| {
+        let threshold = -1.0 + t * (f64::from(v) + 1.0);
+        let mut s = Session::new(1 << 28);
+        s.set_image(flat(64, 48, v));
+        s.set_style("learned").unwrap();
+        let model = json!({"model": XDOG, "resolution": 256, "sigma": sigma,
+            "strength": strength, "threshold": threshold});
+        s.update("model", &model).unwrap();
+        run(&mut s)?;
+        let d = s.drawing().unwrap();
+        let paths: usize = d.layers.iter().map(|l| l.paths.len()).sum();
+        prop_assert_eq!(paths, 0, "flat {} at {}", v, model);
+        Ok(())
+    });
 }

@@ -8,12 +8,14 @@ import type { Canvas } from "./events";
 import { accept, accepted, type Call, fetchModel, forget, keptIds, loadModel } from "./models";
 import { Modal } from "./panels";
 import type { CatalogueEntry, ModelInfo } from "./protocol";
+import { BUILT_IN_MODEL } from "./schema";
 import { place } from "./tour";
 import { onPaper } from "./view";
 
 /**
- * One style the picker lists. A learned model's entry names its `model` and brings a note, and a
- * picture of its own, or null for plain paper; an entry with a `picture` field is never drawn.
+ * One style the picker lists. A learned line model's entry names its `model` and brings a note; the
+ * built-in one is drawn from the trial like a style, and a downloaded one has a picture of its own, or
+ * null for plain paper. An entry with a `picture` field is never drawn.
  */
 export type Entry = { name: string; label: string; description: string; note?: string; picture?: string | null; model?: string };
 
@@ -42,19 +44,23 @@ export function groupStyles<E extends { name: string }>(entries: readonly E[]): 
 const LEARNED = "learned";
 
 /**
- * The styles with `learned` as one entry per loaded model, in the engine's order, each with the
- * model's card picture when the catalogue lists it; with no model loaded, one entry that needs one.
+ * The styles with `learned` as the built-in line model's entry, drawn from the trial like any
+ * style, then one entry per loaded model in the engine's order, each with the model's card picture
+ * when the catalogue lists it.
  */
 export function withModels(styles: readonly Entry[], models: readonly ModelInfo[]): Entry[] {
   return styles.flatMap((s) => {
     if (s.name !== LEARNED) return [s];
-    if (models.length === 0) return [{ ...s, note: "needs a model", picture: null }];
-    return models.map((m) => ({
+    const builtIn: Entry = {
+      name: s.name, model: BUILT_IN_MODEL.id, label: BUILT_IN_MODEL.label, note: "built in",
+      description: "Finds the outlines in the image with a sharpened difference of Gaussians. Built in, so it needs no download.",
+    };
+    return [builtIn, ...models.map((m) => ({
       name: s.name, model: m.id, label: m.label,
       description: m.entry?.description ?? "Draws the lines a model file of your own finds in the image.",
       note: m.entry?.licence ?? "your own",
       picture: m.entry ? `models/${m.id}.png` : null,
-    }));
+    }))];
   });
 }
 
@@ -198,7 +204,6 @@ export function StylePicker({ opens, styles, style, canvas, paper, hasImage, thu
                     <button
                       type="button" value={s.name} title={s.description} aria-current={current ? "true" : undefined} autofocus={current}
                       onClick={(e) => {
-                        if (s.name === LEARNED && s.model === undefined) return openTab("get-models");
                         onPick(s);
                         e.currentTarget.closest("dialog")!.close();
                       }}

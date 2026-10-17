@@ -1,0 +1,3 @@
+Section: Styles
+
+- **`learned` draws out of the box:** its new default model, `xdog`, is built in, so a first drawing needs no download, no model runtime and no licence screen. It is XDoG, a sharpened difference of Gaussians (Winnemöller, Kyprianidis and Olsen, Computers & Graphics 2012), which finds the image's outlines; `model.sigma`, `model.strength` and `model.threshold` tune it. Trained models such as `teed-1` remain an opt-in download. The style picker lists the built-in model first, as "Lines (XDoG)". The tone error, SSIM and contrast are no longer reported for `learned`, and the GUI hides Fit and Optimize for it, since it has no tone stage. `learned` is now in the regression gallery.

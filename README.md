@@ -69,7 +69,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `spiral` | One spiral from the centre out that ripples the same way. |
 | `truchet` | Quarter-circle arcs on square tiles in random turns, joining into winding curves, with more nested arcs where the image is darker. |
 | `ink` | Line art, lettering and inked drawings. It outlines every ink shape and fills it with rings, and draws strokes thinner than the pen once down the middle, so the drawing keeps its own shapes and weights. |
-| `learned` | The lines a trained model finds in the image, each drawn once down its middle. It needs a model file, which you download from Styles, then Get models in the browser, or with `plotline models` on the command line. |
+| `learned` | The lines a line model finds in the image, each drawn once down its middle. The built-in model, XDoG, needs no download; trained models are an opt-in download from Styles, then Get models in the browser, or with `plotline models` on the command line. |
 | `stipple` | Points that spread evenly while staying dense in dark areas (weighted Voronoi relaxation), each drawn as a dot sized by the ink under it. |
 | `line` | The same points joined into one unbroken line that does not cross itself. |
 | `dashes` | A short stroke at each point, along the image's edges. |
