@@ -11,6 +11,12 @@
 //!
 //! One step runs one tile, so progress moves and Stop takes effect between tiles. The map's ink is
 //! the model's answer: 0 for paper and 1 for a full line.
+//!
+//! The built-in model, [`XDOG`], is no file: the stage runs it itself on the whole luminance map,
+//! with no runtime and no download, so the style draws as it comes. It is the thresholded
+//! sharpened difference of Gaussians of H. Winnemöller, J. E. Kyprianidis and S. C. Olsen, "XDoG:
+//! an eXtended difference-of-Gaussians compendium including advanced image stylization",
+//! *Computers & Graphics* 36(6), 2012, pp. 740-753; see [`xdog`].
 
 use std::sync::Arc;
 
@@ -18,6 +24,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::math;
 use crate::models::{ModelError, ModelRuntime, TILE};
 use crate::settings::{defaults_for, schema_for, validate, SettingsError};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
@@ -29,22 +36,81 @@ use crate::types::{Canvas, Image, ToneMap};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ModelSettings {
-    /// The id of a loaded model; the style picker sets it, and it is empty until one is chosen.
+    /// The id of the model: `xdog`, the built-in one, or a loaded one; the style picker sets it.
     pub model: String,
     /// Length of the image's longer edge in pixels as the model sees it; more pixels find finer lines but run slower.
     #[schemars(range(min = 256, max = 2048), extend("x-unit" = "px"))]
     pub resolution: u32,
     /// Swap line and paper in the model's answer, for a model file of your own that draws white lines on black.
     pub invert: bool,
+    /// Width of the built-in model's finer blur in model pixels; raise it for fewer, bolder lines.
+    #[schemars(range(min = 0.3, max = 8.0), extend("x-step" = 0.1, "x-unit" = "px"))]
+    pub sigma: f64,
+    /// How strongly the built-in model sharpens edges into lines; raise it to find fainter edges.
+    #[schemars(range(min = 1.0, max = 250.0), extend("x-step" = 1.0))]
+    pub strength: f64,
+    /// Brightness, after sharpening, below which the built-in model draws; raise it to fill dark areas.
+    #[schemars(range(min = -1.0, max = 1.0), extend("x-step" = 0.01))]
+    pub threshold: f64,
 }
 
 impl Default for ModelSettings {
     fn default() -> Self {
         ModelSettings {
-            model: String::new(),
+            model: XDOG.to_string(),
             resolution: 1024,
             invert: false,
+            sigma: SIGMA,
+            strength: STRENGTH,
+            threshold: THRESHOLD,
         }
+    }
+}
+
+/// The id of the built-in model, which the stage runs itself.
+pub const XDOG: &str = "xdog";
+const SIGMA: f64 = 1.0;
+const STRENGTH: f64 = 100.0;
+const THRESHOLD: f64 = 0.1;
+/// The ratio of the wider blur to the finer, 1.6, at which a difference of Gaussians is closest to
+/// the Laplacian of Gaussian (D. Marr and E. Hildreth, "Theory of edge detection", *Proc. R. Soc.
+/// Lond. B* 207, 1980, pp. 187-217), as XDoG takes it.
+const K: f64 = 1.6;
+/// XDoG's sharpness, phi: how fast a line darkens below the threshold, per unit of brightness.
+const PHI: f64 = 10.0;
+
+/// XDoG's line map of the luminance `y`, a row-major `w x h` grid with 1 for white. With `G_s` the
+/// Gaussian blur of sigma `s` ([`math::blur`], as the tone stage blurs), the sharpened image is
+/// `S = (1 + p) G_sigma(y) - p G_(k sigma)(y)` (eq. 7 of Winnemöller et al. 2012, with `p` the
+/// `strength`), and its soft threshold `T(S) = 1` for `S >= epsilon`, else `1 + tanh(phi (S -
+/// epsilon))` (eq. 6). `T` is 1 for paper and falls towards 0 in a line, so the map's ink is
+/// `1 - T`, written as `tanh(phi (epsilon - S))` below the threshold and 0 above it.
+fn xdog(y: &[f32], w: usize, h: usize, s: &ModelSettings) -> Vec<f32> {
+    let fine = math::blur(y, w, h, s.sigma);
+    let wide = math::blur(y, w, h, K * s.sigma);
+    let p = s.strength;
+    fine.iter()
+        .zip(&wide)
+        .map(|(&g, &gk)| {
+            let d = s.threshold - ((1.0 + p) * f64::from(g) - p * f64::from(gk));
+            // tanh(x) = (1 - e^-2x) / (1 + e^-2x), through the platform-independent exp.
+            let e = math::exp(-2.0 * PHI * d.max(0.0));
+            ((1.0 - e) / (1.0 + e)) as f32
+        })
+        .collect()
+}
+
+/// The built-in model's run: the map is made at the start, as it takes no tiles, and the one
+/// step gives it.
+struct Ready(Option<ToneMap>);
+
+impl StageRun for Ready {
+    fn step(&mut self) -> Result<Step, StageError> {
+        let map = self
+            .0
+            .take()
+            .ok_or_else(|| StageError::Failed("the model run has already finished".to_string()))?;
+        Ok(Step::Done(Artifact::Tone(Arc::new(map))))
     }
 }
 
@@ -88,6 +154,23 @@ impl Stage for ModelStage {
                 message,
             })
         };
+        let (image, canvas) = (inputs.image(), inputs.canvas());
+        if s.model == XDOG {
+            check_image(image)?;
+            let (iw, ih) = (image.width as usize, image.height as usize);
+            let lum = image.luminance();
+            let (y, w, h) = crop_to_source(&lum, iw, ih, canvas);
+            let (y, w, h) = resize(&y, w, h, s.resolution as usize);
+            let (mm_per_px, origin_mm) = canvas.image_transform(w as u32, h as u32);
+            return Ok(Box::new(Ready(Some(ToneMap {
+                width: w as u32,
+                height: h as u32,
+                ink: xdog(&y, w, h, &s),
+                mm_per_px,
+                origin_mm,
+                gamma: 1.0,
+            }))));
+        }
         if s.model.is_empty() {
             return Err(wrong(
                 "choose a model; get one from Styles, then Get models, or run \
@@ -114,7 +197,6 @@ impl Stage for ModelStage {
             .models()
             .runtime()
             .ok_or_else(|| StageError::Failed(ModelError::NoRuntime.to_string()))?;
-        let (image, canvas) = (inputs.image(), inputs.canvas());
         check_image(image)?;
         let res = s.resolution as usize;
         let [(r, w, h), (g, _, _), (b, _, _)] = [0, 1, 2].map(|c| plane(image, canvas, c, res));
@@ -378,13 +460,43 @@ mod tests {
     }
 
     #[test]
+    fn the_built_in_model_needs_no_store_and_finds_edges_alone() {
+        // No runtime and no models: the default model is the stage's own.
+        let run = |image: &Image| {
+            run_stage(
+                &ModelStage,
+                image,
+                &page(Fit::Fit),
+                json!({}),
+                Arc::default(),
+            )
+            .unwrap()
+            .1
+        };
+        for v in [1.0, 0.5, 0.2] {
+            assert!(
+                run(&flat(300, 200, v)).ink.iter().all(|&i| i == 0.0),
+                "flat {v}"
+            );
+        }
+        let map = run(&still_life(400, 300));
+        assert!(map.ink.iter().all(|v| (0.0..=1.0).contains(v)));
+        let lines = map.ink.iter().filter(|&&v| v >= 0.5).count();
+        // The outlines are lines a pixel or two wide, not filled shapes.
+        assert!(
+            lines > 0 && lines * 20 < map.ink.len(),
+            "{lines} line pixels"
+        );
+    }
+
+    #[test]
     fn an_empty_model_setting_is_a_settings_error() {
         let (models, _) = standin();
         let err = run_stage(
             &ModelStage,
             &gradient(8, 8),
             &page(Fit::Fit),
-            json!({}),
+            json!({"model": ""}),
             models,
         )
         .unwrap_err();

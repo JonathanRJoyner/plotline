@@ -255,7 +255,6 @@ export class Protocol {
   private async thumbs(id: number, width: number, shrink: number, names?: string[]): Promise<void> {
     let lastYield = performance.now();
     for (const name of names ?? (JSON.parse(listStyles()) as Array<{ name: string }>).map((s) => s.name)) {
-      if (name === "learned") continue; // it needs a downloaded model, so it has no trial picture
       if (id !== this.thumbsId) return;
       let png: Uint8Array | null = null;
       let error: string | null = null;

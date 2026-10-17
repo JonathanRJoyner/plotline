@@ -362,12 +362,15 @@ function RunView({ engine, status, stages, settings, image, error, fitError, onO
         <StatusBar stages={stages} progress={progress} run={run} stopping={stopping} />
         <StatsPanel stats={stats} tone={tone} />
         <LintList findings={lint} error={lintError} onApply={onApply} />
-        <FitPanel
-          image={image} disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} settings={settings} stages={stages}
-          onFit={(metric, target) => { setFitted(null); setOptimum(null); onFit(metric, target); }}
-          onOptimize={(metric, target) => { setFitted(null); setOptimum(null); onOptimize(metric, target); }}
-          onApply={(patch) => { setOptimum(null); onApply(patch); }}
-        />
+        {/* Fit and Optimize follow the tone match, which a style with no tone stage, such as learned, lacks. */}
+        {toned && (
+          <FitPanel
+            image={image} disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} settings={settings} stages={stages}
+            onFit={(metric, target) => { setFitted(null); setOptimum(null); onFit(metric, target); }}
+            onOptimize={(metric, target) => { setFitted(null); setOptimum(null); onOptimize(metric, target); }}
+            onApply={(patch) => { setOptimum(null); onApply(patch); }}
+          />
+        )}
       </footer>
     </>
   );

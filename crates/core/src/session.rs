@@ -701,8 +701,10 @@ impl Session {
     /// How the last finished drawing's tones follow its tone map; see [`crate::tone_match`]. It
     /// comes from the same measurement as [`Session::lint`], with the colour match of a drawing
     /// in more than one colour against the image on the session's paper. `None` without a
-    /// drawing, and when there is nothing to compare.
+    /// drawing, when there is nothing to compare, and for a style with no tone stage, such as
+    /// learned, whose map holds lines rather than the image's tones.
     pub fn tone_match(&self) -> Option<ToneMatch> {
+        self.style.stage_index("tone")?;
         let (d, m) = self.measure()?;
         let mut t = m.tone_match?;
         if let Some(image) = self.image.as_ref().filter(|_| tone_match::coloured(&d)) {

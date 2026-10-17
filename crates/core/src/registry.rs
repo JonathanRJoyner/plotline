@@ -143,15 +143,17 @@ pub fn ink_style() -> Style {
     .with_defaults("tone", json!({"resolution": 2500}))
 }
 
-/// The lines a trained model finds, drawn down their middles: model, split, ink, order. The model
+/// The lines a line model finds, drawn down their middles: model, split, ink, order. The model
 /// stage gives the lines as a tone map, which the ink stage in centreline mode traces; the model
-/// is chosen in the `model` setting and must be loaded into the session first.
+/// is chosen in the `model` setting, the built-in XDoG by default, and any other must be loaded
+/// into the session first.
 pub fn learned_style() -> Style {
     Style::new(
         "learned",
         "Learned lines",
-        "Draws the lines a trained line-drawing model finds in the image, each once down its \
-         middle. It needs a model: get one in the style picker or with `plotline models get`.",
+        "Draws the lines a line-drawing model finds in the image, each once down its middle. The \
+         built-in model needs no download; trained models are in the style picker and `plotline \
+         models get`.",
         vec![
             Arc::new(ModelStage),
             Arc::new(SplitStage),

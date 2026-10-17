@@ -99,11 +99,36 @@ test("the sample image draws in every style", async ({ page }) => {
   const styles = await styleNames(page);
   expect(styles.length).toBeGreaterThan(10);
   const first = await currentStyle(page);
-  // `learned` needs a downloaded model, so it draws nothing here.
-  for (const style of styles.filter((s) => s !== first && s !== "learned")) {
+  for (const style of styles.filter((s) => s !== first)) {
     id = await pick(page, style, id);
     await expect(page.locator(".stats"), style).toContainText(/paths?/);
   }
+});
+
+test("a first visit draws lines with the built-in model: no licence, no download, and no Fit and optimize", async ({ page }) => {
+  test.setTimeout(120_000);
+  // Anything fetched off the page's own server would be a download.
+  const requests: string[] = [];
+  page.on("request", (r) => { if (/^https?:/.test(r.url()) && new URL(r.url()).hostname !== "localhost") requests.push(r.url()); });
+  const id = await sample(page);
+  await styleButton(page).click();
+  const xdog = card(page, "learned").filter({ hasText: "Lines (XDoG)" });
+  await expect(xdog).toContainText("built in");
+  await expect(xdog).toContainText("needs no download");
+  // The card is drawn on the image like any style's, not left as plain paper.
+  await expect(xdog.locator("img")).toBeVisible({ timeout: 100_000 });
+  await xdog.click();
+  await expect(picker(page)).toBeHidden();
+  await expect(styleButton(page)).toHaveAttribute("value", "learned");
+  await ran(page, id);
+  await expect(page.locator(".stats")).toContainText(/[1-9][\d,]* paths?/);
+  await expect(page.locator(".stats")).not.toContainText("tone error"); // learned has no tone to match
+  await expect(page.getByRole("combobox", { name: "Model" })).toHaveValue("xdog");
+  await expect(page.locator("section.licence")).toHaveCount(0);
+  await expect(fitPanel(page)).toHaveCount(0);
+  await expect(page.getByText("Fit and optimize")).toHaveCount(0);
+  expect(requests).toEqual([]);
+  expect(await page.evaluate(async () => (await (await caches.open("plotline-models")).keys()).length)).toBe(0); // nothing was kept
 });
 
 test("a style switch keeps a changed setting, and Reset to defaults restores it", async ({ page }) => {
@@ -811,8 +836,7 @@ test("the style picker survives reopening and a run in progress", async ({ page 
     await expect(dialog).toBeHidden();
   }
   await styleButton(page).click();
-  // Every style but `learned`, which needs a downloaded model and so shows plain paper.
-  await expect(dialog.locator(".picker img")).toHaveCount(styles.length - 1, { timeout: 150_000 });
+  await expect(dialog.locator(".picker img")).toHaveCount(styles.length, { timeout: 150_000 });
   await expect(dialog.locator(".picker .paper > span")).toHaveCount(0); // no card left drawing or failed
   await page.keyboard.press("Escape");
   await ran(page, id);
@@ -861,12 +885,15 @@ test("a model of your own stays after a reload, and Remove forgets it", async ({
   const row = picker(page).locator("li", { hasText: name });
   await row.getByRole("button", { name: `Remove ${name}`, exact: true }).click();
   await expect(row).toHaveCount(0);
+  // Only the built-in model's card is left.
   await tab(page, "Styles").click();
-  await expect(card(page, "learned")).toContainText("needs a model");
+  await expect(card(page, "learned")).toHaveCount(1);
+  await expect(card(page, "learned")).toContainText("built in");
   await page.keyboard.press("Escape");
   await page.reload();
   await styleButton(page).click();
-  await expect(card(page, "learned")).toContainText("needs a model");
+  await expect(card(page, "learned")).toHaveCount(1);
+  await expect(card(page, "learned")).toContainText("built in");
 });
 
 test("a file that is not a model is refused in plain words", async ({ page }) => {
@@ -891,8 +918,7 @@ test("Get models shows the licence before any download", async ({ page, errors }
   });
   await open(page);
   await styleButton(page).click();
-  // Without a model, learned's card says so and opens Get models.
-  await card(page, "learned").click();
+  await tab(page, "Get models").click();
   await expect(tab(page, "Get models")).toHaveAttribute("aria-current", "true");
   const dialog = picker(page);
   // The listed model's card, and its button, named for the model.

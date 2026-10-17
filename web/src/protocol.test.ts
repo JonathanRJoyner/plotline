@@ -483,8 +483,7 @@ test("thumbs without an image posts each style's error", async () => {
   ok("thumbs", 120);
   for (let i = 0; i < 50; i++) await macrotask();
   const events = posted.filter((m) => m.type === "thumb");
-  expect(events).toHaveLength((ok("listStyles").value as unknown[]).length - 1); // not `learned`, which needs a model
-  expect(events.map((m) => m.style)).not.toContain("learned");
+  expect(events.map((m) => m.style)).toEqual((ok("listStyles").value as Array<{ name: string }>).map((s) => s.name));
   expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
 });
 
@@ -541,7 +540,7 @@ test("undoing a random run of edits through restore returns the start, and undo 
   const history = new History(1000);
   const see = (state: State, restored = false) => { history.see(setupOf(state), restored); return setupOf(state); };
   const start = see(ok("preset").state);
-  // Not `learned`: it has no tone stage for the edits below, and needs a model to draw.
+  // Not `learned`: it has no tone stage for the edits below.
   const styles = (ok("listStyles").value as Array<{ name: string }>).map((s) => s.name).filter((n) => n !== "learned");
   let seed = 7; // a fixed linear congruential sequence, so a failure repeats
   const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
@@ -662,8 +661,7 @@ test("a trap in one style's picture shows in its cell, and the grid and drawing 
   p.handle({ id: 2, method: "update", args: ["tone", { resolution: 64 }] });
   p.handle({ id: 3, method: "setImage", args: image() });
   while (!posted.some((m) => m.type === "end")) await macrotask();
-  // `learned` needs a downloaded model, so the grid leaves it out.
-  const styles = (JSON.parse(listStyles()) as Array<{ name: string }>).filter((s) => s.name !== "learned");
+  const styles = JSON.parse(listStyles()) as Array<{ name: string }>;
   p.handle({ id: 4, method: "thumbs", args: [120] });
   for (let i = 0; i < 20000 && posted.filter((m) => m.type === "thumb").length < styles.length; i++) await macrotask();
   const thumbs = posted.filter((m) => m.type === "thumb");
