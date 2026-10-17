@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "id": "teed-1",
+    "label": "Edges (TEED)",
+    "description": "Finds the edges in a photo, texture included, rather than an artist's selection of lines. Fast: under a second at 1024 pixels.",
+    "url": "https://raw.githubusercontent.com/JonathanRJoyner/plotline-models/6b7b215c5c4843f5b52107d870eae43796359e4f/teed-1.onnx",
+    "sha256": "873bcc6caa178cdf5a41f39db0764ae9f0b24b7da6accce81cf3044e5ed8cdbf",
+    "licence": "MIT",
+    "attribution": "Copyright (c) 2022 Xavier Soria Poma",
+    "source": "https://github.com/xavysp/TEED",
+    "paper": "X. Soria, Y. Li, M. Rouhani and A. D. Sappa, \"Tiny and efficient model for the edge detection generalization\", Proc. ICCV Workshops, 2023, pp. 1364-1373. https://arxiv.org/abs/2308.06468",
+    "training": "TEED was trained on BIPED, a dataset by the same first author, whose own terms allow only non-commercial use. The weights are released under MIT by their author.",
+    "bytes": 254517,
+    "overlap": 32
+  }
+]

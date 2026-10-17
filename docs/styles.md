@@ -2,10 +2,10 @@
 
 Every style turns the image's tone into pen marks in its own way. This guide shows each one on the same picture, says what it is good for, which settings matter and what turning them does, and how to pick a pen for it.
 
-Each picture is the code-rendered still life from the README, drawn on A4 with a 0.3 mm black pen at the style's defaults. The one exception is `ink`, drawn at a threshold of 0.3, because `ink` is made for line art and the still life is not. A setting is named as its stage and key, such as `hatch.spacing_mm`; the GUI shows the same settings under each stage's heading, `plotline describe STYLE` lists them with their ranges, and `plotline run` takes them as `--set stage.key=value`.
+Each picture is the code-rendered still life from the README, drawn on A4 with a 0.3 mm black pen at the style's defaults. There are two exceptions. `ink` is drawn at a threshold of 0.3, because `ink` is made for line art and the still life is not. `learned` is drawn with the `teed-1` model, because it needs a model file; its picture is the one on that model's card in the GUI, which the `model_cards` example draws, since the models are not in the repository. A setting is named as its stage and key, such as `hatch.spacing_mm`; the GUI shows the same settings under each stage's heading, `plotline describe STYLE` lists them with their ranges, and `plotline run` takes them as `--set stage.key=value`.
 
 - [Settings every style shares](#settings-every-style-shares)
-- [Lines](#lines): [`grid`](#grid), [`hatch`](#hatch), [`waves`](#waves), [`spiral`](#spiral), [`truchet`](#truchet), [`ink`](#ink)
+- [Lines](#lines): [`grid`](#grid), [`hatch`](#hatch), [`waves`](#waves), [`spiral`](#spiral), [`truchet`](#truchet), [`ink`](#ink), [`learned`](#learned)
 - [The Voronoi point family](#the-voronoi-point-family): [`stipple`](#stipple), [`line`](#line), [`dashes`](#dashes), [`tree`](#tree), [`mesh`](#mesh), [`cells`](#cells), [`scribble`](#scribble)
 - [Sketch lines](#sketch-lines): [`sketch`](#sketch)
 - [Other placers](#other-placers): [`halftone`](#halftone), [`dither`](#dither), [`circles`](#circles)
@@ -13,13 +13,13 @@ Each picture is the code-rendered still life from the README, drawn on A4 with a
 
 ## Settings every style shares
 
-**Image** (the `tone` stage) turns the picture into the map of ink the style draws from. `resolution` is the map's longer side in pixels; more follows the image more closely and runs slower. `black` and `white` clip the ends of the tone range, or `levels` set to `auto` picks them from the image itself. `gamma` above 1 darkens the midtones: `waves`, `spiral` and `mosaic` start at 1.9, because they ink in proportion to the tone and would draw the midtones too light at 1. `contrast` pushes tones away from mid-grey, `blur_mm` smooths away noise and fine texture, and `invert` swaps light and dark.
+**Image** (the `tone` stage) turns the picture into the map of ink the style draws from. `resolution` is the map's longer side in pixels; more follows the image more closely and runs slower. `black` and `white` clip the ends of the tone range, or `levels` set to `auto` picks them from the image itself. `gamma` above 1 darkens the midtones: `waves`, `spiral` and `mosaic` start at 1.9, because they ink in proportion to the tone and would draw the midtones too light at 1. `contrast` pushes tones away from mid-grey, `blur_mm` smooths away noise and fine texture, and `invert` swaps light and dark. `learned` has a Model stage in its place, which places the image on the page the same way.
 
-**Pen use** (the `split` stage) shares the drawing between the pens: the first pen alone, light to dark in list order, or each pen by its colour. With several pens, every style but `ink` spreads its marks so that one pen does not draw on top of another.
+**Pen use** (the `split` stage) shares the drawing between the pens: the first pen alone, light to dark in list order, or each pen by its colour. With several pens, every style but `ink` and `learned` spreads its marks so that one pen does not draw on top of another.
 
 **Path order** (the `order` stage) reorders the paths to cut pen-up travel (`optimize`) and drops paths shorter than `min_length_mm`, which clears specks.
 
-**Density.** Every style but `ink` has one density setting, named in its section. Fit to target in the GUI, the `--fit-minutes`, `--fit-paths`, `--fit-metres` and `--fit-dots` flags and the MCP `fit` tool change that setting until the drawing meets a plot time, a path count, metres of line or a dot count.
+**Density.** Every style but `ink` and `learned` has one density setting, named in its section. Fit to target in the GUI, the `--fit-minutes`, `--fit-paths`, `--fit-metres` and `--fit-dots` flags and the MCP `fit` tool change that setting until the drawing meets a plot time, a path count, metres of line or a dot count.
 
 **Pen lifts.** Each path costs one lift of the pen. On a plotter that lifts slowly, or on a pen-fitted 3D printer where every lift is a Z move, styles that draw a few long paths (`waves`, `spiral`, `line`, `scribble`, `hilbert`, `contours`, `flow`) plot faster and wear the machine less than styles of thousands of dots or strokes.
 
@@ -125,6 +125,28 @@ Draws the marks of line art, lettering and inked drawings as they are. Every ink
 - `ink.min_area_mm2`: drops shapes smaller than this, such as dust in a scan.
 
 **Pens.** Set the pen you will plot with before running: the rings are spaced by its width. Large solid areas lay down a lot of ink, so use paper that takes it.
+
+**Looks:** none yet.
+
+### `learned`
+
+<img src="../web/public/models/teed-1.png" width="260" align="right" alt="The still life drawn with the learned style and the TEED model">
+
+Draws the lines that a trained model finds in the image. The model, a small neural network, turns the picture into a map of where its lines are; the ink stage then draws each line once down its middle, as `ink` does in its centreline mode, so a line is one pen stroke.
+
+**Use it for** a drawing that follows the edges and outlines of a photograph instead of its tones. Which lines you get depends on the model: `teed-1`, the one plotline lists today, finds edges, texture included, rather than an artist's selection of lines, and is fast.
+
+**Getting a model.** `learned` draws nothing until you have a model, and the models are not part of plotline. In the browser, Styles, then Get models, lists the models plotline offers; each card shows its licence, its attribution and what it was trained on, and downloads it once you accept. On the command line, `plotline models list` shows them and `plotline models get teed-1` shows the same and downloads it. The browser fetches the model runtime, a second WebAssembly module, only when a model is first used, so a visit that never uses one does not download it. A model file of your own, an ONNX file of up to 200 MB, loads from Load your own in the browser or with `plotline models add`; you are responsible for its licence.
+
+**Settings**
+- `model.model`: the id of the model to draw with, such as `teed-1`. It is empty until you choose one, and a run without one says how to get a model.
+- `model.resolution`: the long side, in pixels, of the image the model sees, from 256 to 2048. More finds finer lines and takes longer. The model works on tiles of 512 pixels, so memory stays low at any resolution.
+- `model.invert`: swaps line and paper in the model's answer. Only a model file of your own that draws white lines on black needs it; the listed models already run the right way.
+- `ink.threshold`: how dark a line must be to be drawn. Lower it to keep faint lines; raise it to keep only the strong ones.
+
+The model's answer is cached like any stage's, so changing the threshold, the pens or the path order does not run the model again. A few pixels of the model's answer can differ between the browser and the command line, so the two may not draw exactly the same paths.
+
+**Pens.** Any pen; a line is drawn at the pen's own width. Each line costs one pen lift, and a busy photograph gives many short ones, so raise `ink.threshold`, or `order.min_length_mm`, to drop the fainter and shorter ones.
 
 **Looks:** none yet.
 

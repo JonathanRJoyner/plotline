@@ -4,6 +4,10 @@ New entries go under Unreleased until the next release.
 
 ## Unreleased
 
+### Styles
+
+- **`learned`**, the twenty-second style: it draws the lines that a trained model finds in the image, each once down its middle. The model stage runs the model over the image in 512-pixel tiles, with the image mirrored past its edges, and the ink stage traces the result; `model.resolution` (256 to 2048, 1024 by default) sets the size the model sees and `model.invert` flips a model that draws white lines on black. The first listed model is `teed-1`, TEED (Soria, Li, Rouhani and Sappa, ICCV Workshops 2023). Models are not part of plotline: download one from Styles, then Get models in the browser, or with `plotline models get teed-1`, after accepting its licence, or load an ONNX file of your own. The browser fetches the model runtime, a second WebAssembly module, only when a model is first used. The MCP `list_models` tool lists the models. `learned` is not in the regression gallery, because the models are not in the repository.
+
 ### Output
 
 - **Pen lift by G-code lines:** a machine whose pen is lifted by a servo or a solenoid sets `pen_lift` to `gcode` and gives its own pen-down and pen-up lines, which the G-code writer puts where it would move Z. In the GUI, Settings > Pen lift > Lift by.

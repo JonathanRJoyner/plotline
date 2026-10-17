@@ -251,6 +251,13 @@ mod tests {
         if !numbered {
             return Some(format!("{id}: id does not end in -<n>"));
         }
+        // The tiler keeps TILE - 2 * overlap pixels of each tile, and tile sides are multiples of 8.
+        if 2 * e.overlap >= TILE || !e.overlap.is_multiple_of(8) {
+            return Some(format!(
+                "{id}: overlap {} must be a multiple of 8 under half a tile",
+                e.overlap
+            ));
+        }
         None
     }
 
@@ -376,13 +383,16 @@ mod tests {
         // The check itself: a good entry passes and each fault is found.
         let good = entry("test-1", STANDIN_BYTES);
         assert_eq!(problem(&good), None);
-        let faults: [fn(&mut CatalogueEntry); 6] = [
+        let faults: [fn(&mut CatalogueEntry); 8] = [
             |e| e.licence = "GPL-3.0-only".into(),
             |e| e.sha256 = "ABC".into(),
             |e| e.url = "https://example.invalid/main/m.onnx".into(),
             |e| e.training.clear(),
             |e| e.attribution.clear(),
             |e| e.id = "test".into(),
+            // 256 leaves no centre, and over it the tiler would hang or panic.
+            |e| e.overlap = TILE / 2,
+            |e| e.overlap = 12,
         ];
         for fault in faults {
             let mut bad = good.clone();

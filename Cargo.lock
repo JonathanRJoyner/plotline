@@ -841,8 +841,10 @@ dependencies = [
 name = "plotline-models"
 version = "0.2.0-dev0"
 dependencies = [
+ "image",
  "plotline-core",
  "prost",
+ "serde_json",
  "tract-onnx",
  "wasm-bindgen",
 ]

@@ -23,6 +23,11 @@ tract-onnx = { version = "0.23", default-features = false }
 prost = "0.14"
 wasm-bindgen = { version = "0.2", optional = true }
 
+# For the `model_cards` example only: it settles the core's settings with JSON and saves a greyscale PNG.
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = "1"
+
 # On WebAssembly, tract's random-number operators take their seed from the browser's crypto API.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tract-onnx = { version = "0.23", default-features = false, features = ["getrandom-js"] }
