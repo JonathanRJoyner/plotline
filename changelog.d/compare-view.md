@@ -1,1 +1,0 @@
-- **Compare:** a chip on the GUI's preview swipes the current drawing against the previous run or the source image, on the same page at the same zoom, with a divider you drag or move with the keyboard.

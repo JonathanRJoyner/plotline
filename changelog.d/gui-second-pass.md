@@ -1,1 +1,0 @@
-- **A calmer first screen:** an empty preview offers the sample image and opening one. Fit to target and Optimize fold into "Fit and optimize". Compare shows once there is a drawing, form fields have borders that read at 3:1, Enter places a focus point from the keyboard, and the tour is 14 steps in the order of the work.

@@ -1,3 +1,0 @@
-Section: Images
-
-- **Auto framing:** the page can crop the image (`crop`: the shares cut from its left, top, right and bottom, each up to 0.45), and when the subject fills only part of the image the analysis suggests a crop to it, `framing`. The subject comes from a spectral-residual saliency map, and the crop is the smallest rectangle of the page's shape that holds most of it. Nothing is cropped until you apply it: Apply in the Suggestions panel, `plotline run --crop LEFT,TOP,RIGHT,BOTTOM`, `set_page(crop=...)` in the MCP server or `Canvas(crop=...)`. The Page panel shows Cropped with a Remove crop button, and Undo takes a crop back. A page with no crop is saved and exported as before.

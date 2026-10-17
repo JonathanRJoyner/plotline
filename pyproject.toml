@@ -1,6 +1,6 @@
 [project]
 name = "plotline"
-version = "0.2.0.dev0"
+version = "0.2.0"
 description = "Turn images into drawings for pen plotters."
 readme = "README.md"
 license = "MIT"

@@ -425,7 +425,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "plotline-core"
-version = "0.2.0-dev0"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "delaunator",
@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "plotline-py"
-version = "0.2.0-dev0"
+version = "0.2.0"
 dependencies = [
  "numpy",
  "plotline-core",
@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "plotline-wasm"
-version = "0.2.0-dev0"
+version = "0.2.0"
 dependencies = [
  "js-sys",
  "plotline-core",
