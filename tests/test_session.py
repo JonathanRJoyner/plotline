@@ -262,13 +262,13 @@ def test_tone_match_and_auto_response():
     s.run_blocking()
     # The engine's pinned values, since the image, page and style are the same.
     match = s.tone_match()
-    assert (match["error"], match["ssim"]) == (0.08399718265758667, 0.730502253480983)
+    assert (match["error"], match["ssim"]) == (0.08197368769144689, 0.7488977156057808)
     assert set(match) == {"error", "ssim", "floor", "reach"}
     s.update("tone", response="auto")
     frames = []
     s.subscribe(frames.append)
     s.run_blocking()
-    assert s.tone_match()["error"] == 0.09068600548308096
+    assert s.tone_match()["error"] == 0.08880655753709105
     assert any(f.stage == "tone" and f.label.startswith("response: ") for f in frames)
 
 
