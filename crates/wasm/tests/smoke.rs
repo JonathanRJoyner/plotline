@@ -192,6 +192,42 @@ fn still_life_analysis_matches_native() {
     assert!(a["suggestions"].is_array());
 }
 #[wasm_bindgen_test]
+fn framing_matches_native() {
+    // The same literals as analysis::tests::the_framing_crop_is_pinned in the core crate: a dark
+    // disc of radius 0.05 at (0.7, 0.3) on a light 256 x 256 field, on the default A4 page.
+    let rgb: Vec<f32> = (0..256 * 256)
+        .flat_map(|i| {
+            let (u, v) = (
+                (i % 256) as f32 / 256.0 - 0.7,
+                (i / 256) as f32 / 256.0 - 0.3,
+            );
+            [if u * u + v * v <= 0.05 * 0.05 {
+                0.1
+            } else {
+                0.95
+            }; 3]
+        })
+        .collect();
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(256, 256, &rgb).unwrap();
+    let a: serde_json::Value = serde_json::from_str(&s.analysis().unwrap()).unwrap();
+    let framing = (a["suggestions"].as_array().unwrap().iter())
+        .find(|g| g["kind"] == "framing")
+        .expect("a framing suggestion");
+    let crop: Vec<f64> = (framing["patch"]["page"]["crop"].as_array().unwrap().iter())
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    for (got, want) in crop.iter().zip([0.43, 0.0, 0.01, 0.2]) {
+        assert!((got - want).abs() < 1e-12, "{crop:?}");
+    }
+    // The page takes the crop, the preset carries it, and a bad one is refused.
+    let page =
+        r#"{"width_mm":210,"height_mm":297,"margin_mm":10,"fit":"fit","crop":[0.45,0,0.04,0.29]}"#;
+    s.set_canvas(page).unwrap();
+    assert!(s.preset().contains(r#""crop""#));
+    assert!(s.set_canvas(&page.replace("0.45,0", "0.5,0")).is_err());
+}
+#[wasm_bindgen_test]
 fn a_fit_takes_the_native_steps() {
     // The same literals as fit::tests::the_samples_are_pinned in the core crate.
     let mut s = plotline_wasm::Session::new();

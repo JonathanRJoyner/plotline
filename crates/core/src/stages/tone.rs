@@ -30,6 +30,7 @@
 //! Every step runs in f32 in the Python engine's order, with each setting rounded to f32 where
 //! numpy rounds it, so both engines give the same values.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -183,10 +184,10 @@ impl Default for ToneSettings {
     }
 }
 
-/// Turn the image into a tone map. In order: luminance, a centre crop for `fill`, resize, flatten
-/// (when `flatten_mm` is set), smooth (when `smooth_mm` is set), levels (found from the filtered
-/// map when `levels` is auto), gamma, contrast, invert, blur and the blur that grows away from the
-/// focus points.
+/// Turn the image into a tone map. In order: luminance, the canvas's crop and for `fill` a centre
+/// crop to the drawing area's aspect (see [`source_rect`]), resize, flatten (when `flatten_mm` is
+/// set), smooth (when `smooth_mm` is set), levels (found from the filtered map when `levels` is
+/// auto), gamma, contrast, invert, blur and the blur that grows away from the focus points.
 pub struct ToneStage;
 
 impl Stage for ToneStage {
@@ -335,18 +336,11 @@ impl StageRun for ToneRun {
     }
 }
 
-/// The resized luminance of `image` on `canvas` and its width and height: luminance, a centre
-/// crop for `fill` and the resize.
+/// The resized luminance of `image` on `canvas` and its width and height: luminance, the crop of
+/// [`source_rect`] and the resize.
 fn resized(image: &Image, canvas: &Canvas, s: &ToneSettings) -> (Vec<f32>, usize, usize) {
-    let (mut lum, mut w, mut h) = (
-        image.luminance(),
-        image.width as usize,
-        image.height as usize,
-    );
-    if canvas.fit == Fit::Fill {
-        let [_, _, dw, dh] = canvas.drawing_rect();
-        (lum, w, h) = crop_to_aspect(&lum, w, h, dw / dh);
-    }
+    let all = image.luminance();
+    let (lum, w, h) = crop_to_source(&all, image.width as usize, image.height as usize, canvas);
     resize(&lum, w, h, s.resolution as usize)
 }
 
@@ -675,13 +669,8 @@ pub fn guided(y: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
 /// The width and height of the tone map the stage makes from a `w x h` image on `canvas` at
 /// `resolution`, without making it.
 pub(crate) fn map_size(w: usize, h: usize, canvas: &Canvas, resolution: u32) -> (usize, usize) {
-    let (w, h) = if canvas.fit == Fit::Fill {
-        let [_, _, dw, dh] = canvas.drawing_rect();
-        crop_size(w, h, dw / dh)
-    } else {
-        (w, h)
-    };
-    resize_size(w, h, resolution as usize)
+    let (_, _, cw, ch) = source_rect(w, h, canvas);
+    resize_size(cw, ch, resolution as usize)
 }
 
 /// The width and height of a centre crop of a `w x h` grid to a width over height of `aspect`, to
@@ -692,25 +681,42 @@ fn crop_size(w: usize, h: usize, aspect: f64) -> (usize, usize) {
     (cw, ch)
 }
 
-/// The centre crop of a `w x h` grid to a width over height of `aspect`, as `[x, y, w, h]`; see
-/// [`crop_size`].
-pub(crate) fn crop_rect(w: usize, h: usize, aspect: f64) -> [usize; 4] {
-    let (cw, ch) = crop_size(w, h, aspect);
-    [(w - cw) / 2, (h - ch) / 2, cw, ch]
+/// The part of a `w x h` source image that is drawn on `canvas`, as `(x, y, width, height)` in
+/// whole pixels. The canvas's crop comes first: each side's cut is its share of the side, to the
+/// nearest pixel with halves to even, and at least one pixel is left. For `fill` the rest is then
+/// cut around its centre to the drawing area's aspect, see [`crop_size`]. The tone stage, the
+/// colour split and [`map_size`] all take the image's placement from this one rectangle.
+pub(crate) fn source_rect(w: usize, h: usize, canvas: &Canvas) -> (usize, usize, usize, usize) {
+    let cut = |share: f64, side: usize| {
+        ((share * side as f64).round_ties_even() as usize).min(side.saturating_sub(1))
+    };
+    let [left, top, right, bottom] = canvas.crop;
+    let (x, y) = (cut(left, w), cut(top, h));
+    let cw = (w - x).saturating_sub(cut(right, w)).max(1);
+    let ch = (h - y).saturating_sub(cut(bottom, h)).max(1);
+    if canvas.fit == Fit::Fill {
+        let [_, _, dw, dh] = canvas.drawing_rect();
+        let (fw, fh) = crop_size(cw, ch, dw / dh);
+        return (x + (cw - fw) / 2, y + (ch - fh) / 2, fw, fh);
+    }
+    (x, y, cw, ch)
 }
 
-/// Centre-crop a row-major `w x h` grid to a width over height of `aspect`, see [`crop_rect`].
-/// Returns the crop and its width and height.
-pub(crate) fn crop_to_aspect(
-    lum: &[f32],
+/// The pixels of [`source_rect`] in a row-major `w x h` grid: the grid, borrowed when the
+/// rectangle is all of it, and its width and height.
+pub(crate) fn crop_to_source<'a>(
+    grid: &'a [f32],
     w: usize,
     h: usize,
-    aspect: f64,
-) -> (Vec<f32>, usize, usize) {
-    let [x0, y0, cw, ch] = crop_rect(w, h, aspect);
-    let rows = lum[y0 * w..(y0 + ch) * w].chunks_exact(w);
-    let crop = rows.flat_map(|row| &row[x0..x0 + cw]).copied().collect();
-    (crop, cw, ch)
+    canvas: &Canvas,
+) -> (Cow<'a, [f32]>, usize, usize) {
+    let (x, y, cw, ch) = source_rect(w, h, canvas);
+    if (cw, ch) == (w, h) {
+        return (Cow::Borrowed(grid), w, h);
+    }
+    let rows = grid[y * w..(y + ch) * w].chunks_exact(w);
+    let crop = rows.flat_map(|row| &row[x..x + cw]).copied().collect();
+    (Cow::Owned(crop), cw, ch)
 }
 
 /// Resize a row-major `w x h` grid to `long_edge` pixels on the longer side, keeping the aspect
@@ -760,6 +766,7 @@ mod tests {
         height_mm: 100.0,
         margin_mm: 0.0,
         fit: Fit::Fit,
+        crop: [0.0; 4],
     };
 
     /// Run the tone stage to the end with `patch` over the defaults; the resolution is 64 unless
@@ -937,6 +944,87 @@ mod tests {
         );
     }
     #[test]
+    fn the_source_rectangle_is_the_crop_then_the_fill() {
+        let wide = Canvas::new(100.0, 50.0, 0.0, Fit::Fill).unwrap();
+        for (canvas, (w, h), want) in [
+            (SQUARE, (100, 50), (0, 0, 100, 50)),
+            (wide.clone(), (64, 64), (0, 16, 64, 32)),
+            (
+                Canvas {
+                    crop: [0.1, 0.2, 0.3, 0.0],
+                    ..SQUARE
+                },
+                (100, 50),
+                (10, 10, 60, 40),
+            ),
+            // Halves go to even: 12.5 pixels cut from the left and 37.5 from the right.
+            (
+                Canvas {
+                    crop: [0.125, 0.0, 0.375, 0.0],
+                    ..SQUARE
+                },
+                (100, 50),
+                (12, 0, 50, 50),
+            ),
+            // The crop first, then the middle of what is left cut to the page: 50 x 50 to 50 x 25.
+            (
+                Canvas {
+                    crop: [0.25, 0.0, 0.25, 0.0],
+                    ..wide
+                },
+                (100, 50),
+                (25, 12, 50, 25),
+            ),
+            // Two cuts that meet leave one pixel.
+            (
+                Canvas {
+                    crop: [0.45, 0.0, 0.45, 0.0],
+                    ..SQUARE
+                },
+                (2, 2),
+                (1, 0, 1, 2),
+            ),
+        ] {
+            assert_eq!(source_rect(w, h, &canvas), want, "{:?}", canvas.crop);
+        }
+    }
+    #[test]
+    fn a_crop_gives_a_map_of_its_aspect_and_placement() {
+        // The middle half of the 100 x 50 gradient is square. Fit sits it in the middle of the
+        // page; fill covers the page with the middle 50 x 25 of it. Ink is 1 - x / 99 at column x.
+        let crop = [0.25, 0.0, 0.25, 0.0];
+        let page = |fit| Canvas {
+            crop,
+            ..Canvas::new(100.0, 50.0, 0.0, fit).unwrap()
+        };
+        let (_, t) = run_tone(gradient(100, 50), page(Fit::Fit), json!({}));
+        assert_eq!((t.width, t.height), (64, 64));
+        assert_eq!(t.rect_mm(), [25.0, 0.0, 50.0, 50.0]);
+        assert!((t.ink[0] - (1.0 - 25.0 / 99.0)).abs() < 0.01);
+        assert!((t.ink[63] - (1.0 - 74.0 / 99.0)).abs() < 0.01);
+        let (_, t) = run_tone(gradient(100, 50), page(Fit::Fill), json!({}));
+        assert_eq!((t.width, t.height), (64, 32));
+        assert_eq!(t.rect_mm(), [0.0, 0.0, 100.0, 50.0]);
+        assert!((t.ink[0] - (1.0 - 25.0 / 99.0)).abs() < 0.01);
+    }
+    #[test]
+    fn flattening_and_smoothing_work_on_the_cropped_map() {
+        // Both filter the resized map, which is the crop's, so the map keeps the crop's size and
+        // placement and still changes, as it does with no crop.
+        let page = Canvas {
+            crop: [0.25, 0.0, 0.25, 0.0],
+            ..Canvas::new(100.0, 50.0, 0.0, Fit::Fit).unwrap()
+        };
+        let image = || still_life(100, 50);
+        let plain = run_tone(image(), page.clone(), json!({})).1;
+        for patch in [json!({"flatten_mm": 5}), json!({"smooth_mm": 3})] {
+            let t = run_tone(image(), page.clone(), patch.clone()).1;
+            assert_eq!((t.width, t.height), (plain.width, plain.height), "{patch}");
+            assert_eq!(t.rect_mm(), plain.rect_mm(), "{patch}");
+            assert_ne!(t.ink, plain.ink, "{patch}");
+        }
+    }
+    #[test]
     fn extreme_aspect_ratios_keep_their_values() {
         let (_, t) = run_tone(gradient(4000, 1), SQUARE, json!({"resolution": 100}));
         assert_eq!((t.width, t.height), (100, 1));
@@ -968,11 +1056,24 @@ mod tests {
     #[test]
     fn map_size_is_the_size_the_stage_makes() {
         let fill = Canvas::new(100.0, 50.0, 0.0, Fit::Fill).unwrap();
+        let cropped = Canvas {
+            crop: [0.3, 0.1, 0.05, 0.2],
+            ..SQUARE
+        };
         for (canvas, (w, h), resolution) in [
             (SQUARE, (300, 200), 100),
             (SQUARE, (200, 300), 64),
             (fill.clone(), (64, 64), 64),
-            (fill, (1000, 333), 128),
+            (fill.clone(), (1000, 333), 128),
+            (cropped, (300, 200), 100),
+            (
+                Canvas {
+                    crop: [0.2, 0.0, 0.0, 0.3],
+                    ..fill
+                },
+                (1000, 333),
+                128,
+            ),
         ] {
             let patch = json!({"resolution": resolution});
             let (_, t) = run_tone(flat(w, h, 0.5), canvas.clone(), patch);
@@ -1098,6 +1199,39 @@ mod tests {
         let t = run_tone(image(), page(), patch).1;
         assert_eq!(t.ink[at(0, 32)], plain.ink[at(0, 32)]);
         assert_ne!(t.ink[at(31, 32)], plain.ink[at(31, 32)]);
+    }
+    #[test]
+    fn focus_points_follow_the_canvas_crop() {
+        // The 100 x 50 checkerboard loses its left quarter, so the share 0.625 is the middle of
+        // the 75 x 50 part drawn, and the page's. A fit draws that at 100 x 66.7 mm in the middle
+        // of the page, as a map of 64 x 43 pixels of 1.5625 mm. The checkerboard's edge is column
+        // 21 of the map.
+        let page = || Canvas {
+            crop: [0.25, 0.0, 0.0, 0.0],
+            ..Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap()
+        };
+        let image = || checkerboard(100, 50, 50);
+        let at = |x: usize, y: usize| y * 64 + x;
+        let plain = run_tone(image(), page(), json!({})).1;
+        let soft = run_tone(image(), page(), json!({"blur_mm": 3})).1;
+        assert_eq!((plain.width, plain.height), (64, 43));
+        assert_ne!(plain.ink[at(21, 21)], soft.ink[at(21, 21)]);
+        let patch = json!({"focus": [[0.625, 0.5]], "focus_mm": 5});
+        let t = run_tone(image(), page(), patch).1;
+        assert_eq!(t.ink[at(32, 21)], plain.ink[at(32, 21)]);
+        // 17 mm from the point, three radii away, the edge takes all the blur.
+        assert!((t.ink[at(21, 21)] - soft.ink[at(21, 21)]).abs() < 1e-6);
+        // A share inside the cut-away quarter is 16.7 mm off the page's left edge, 50 mm from the
+        // edge at column 21, so that edge is only half blurred. At its uncropped place, 12.5 mm
+        // in, the point would be 21 mm away, inside its 25 mm, and keep the edge sharp.
+        let patch = json!({"focus": [[0.125, 0.5]], "focus_mm": 25});
+        let t = run_tone(image(), page(), patch).1;
+        let (mid, sharp, blurred) = (
+            t.ink[at(21, 21)],
+            plain.ink[at(21, 21)],
+            soft.ink[at(21, 21)],
+        );
+        assert!(mid != sharp && mid != blurred, "{sharp} {mid} {blurred}");
     }
     #[test]
     fn bad_focus_points_are_refused_naming_the_point() {

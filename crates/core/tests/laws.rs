@@ -255,20 +255,25 @@ fn picture() -> impl Strategy<Value = Picture> {
     ]
 }
 
-/// A page in mm, its margin as a share of the most it could be, and whether the image fills it.
+/// A page in mm, its margin as a share of the most it could be, whether the image fills it, and
+/// the shares of the image cut from its left, top, right and bottom.
 #[derive(Clone, Debug)]
 struct Page {
     width: f64,
     height: f64,
     margin: f64,
     fill: bool,
+    crop: [f64; 4],
 }
 
 impl Page {
     fn canvas(&self) -> Canvas {
         let margin = self.margin * self.width.min(self.height) / 2.0;
         let fit = if self.fill { Fit::Fill } else { Fit::Fit };
-        Canvas::new(self.width, self.height, margin, fit).expect("the margin leaves an area")
+        let canvas = Canvas::new(self.width, self.height, margin, fit);
+        canvas
+            .and_then(|c| c.with_crop(self.crop))
+            .expect("the margin leaves an area")
     }
 }
 
@@ -279,8 +284,19 @@ fn page() -> impl Strategy<Value = Page> {
             height,
             margin,
             fill,
+            crop: [0.0; 4],
         },
     )
+}
+
+/// The crop of a case, drawn from its `cancel_at` instead of from a strategy of its own, so that
+/// every case the other laws drew before crops existed is still drawn: one case in four is
+/// cropped, each side by up to the most it may be, and a shrunk case has none.
+fn crop_of(cancel_at: usize) -> [f64; 4] {
+    if cancel_at % 4 != 3 {
+        return [0.0; 4];
+    }
+    [0, 1, 2, 3].map(|i| f64::from((hash(cancel_at as u64, i) + 1.0) / 2.0) * 0.45)
 }
 
 /// One to three pens as width in mm and colour, thin ones included.
@@ -420,7 +436,10 @@ fn case(names: Vec<String>) -> impl Strategy<Value = Case> {
             style,
             settings,
             picture,
-            page,
+            page: Page {
+                crop: crop_of(cancel_at),
+                ..page
+            },
             pens,
             cancel_at,
         },
@@ -607,6 +626,30 @@ fn every_run_keeps_the_run_laws() {
     });
 }
 
+#[test]
+fn a_crop_of_zeros_leaves_every_drawing_unchanged() {
+    check("zero crop", 24, case(all_styles()), |c| {
+        let mut plain = c.clone();
+        plain.page.crop = [0.0; 4];
+        let canvas = plain.page.canvas();
+        let mut json = serde_json::to_value(&canvas).unwrap();
+        prop_assert!(
+            json.get("crop").is_none(),
+            "a crop of zeros is written: {json}"
+        );
+        // The same page as a file that spells the zeros out would give it.
+        json["crop"] = json!([0.0, 0.0, 0.0, 0.0]);
+        let spelled = serde_json::from_value::<Canvas>(json).unwrap();
+        let mut a = plain.session();
+        run(&mut a)?;
+        let mut b = plain.session();
+        b.set_canvas(spelled.with_crop([0.0; 4]).unwrap());
+        run(&mut b)?;
+        prop_assert!(left(&a) == left(&b), "a crop of zeros changes the drawing");
+        Ok(())
+    });
+}
+
 /// Values at the ends of a setting's range: either end or the default for a number, any value of
 /// a boolean or an enum.
 fn corner(stage: &str, key: &str, prop: &Value, defs: &Value) -> BoxedStrategy<Value> {
@@ -654,6 +697,7 @@ fn a_run_at_the_ends_of_every_range_ends_with_a_drawing_or_a_message() {
             height: 160.0,
             margin: 0.0,
             fill,
+            crop: [0.0; 4],
         };
         gather(parts).prop_map(move |settings| Case {
             style: name.clone(),
@@ -672,7 +716,7 @@ fn a_run_at_the_ends_of_every_range_ends_with_a_drawing_or_a_message() {
 }
 
 /// Apply a suggestion's or a finding's patch as the front ends do: the style, then the settings,
-/// then the page size with the margin and fit kept.
+/// then the page size or the crop with the rest of the page kept.
 fn apply(s: &mut Session, patch: &Value) -> Result<(), TestCaseError> {
     if let Some(style) = patch["style"].as_str() {
         s.set_style(style)
@@ -700,12 +744,19 @@ fn apply(s: &mut Session, patch: &Value) -> Result<(), TestCaseError> {
         let c = s.canvas().clone();
         let size = |k: &str| page.get(k).and_then(Value::as_f64);
         let (w, h) = (size("width_mm"), size("height_mm"));
+        let crop = match page.get("crop") {
+            Some(v) => {
+                serde_json::from_value(v.clone()).map_err(|e| TestCaseError::fail(e.to_string()))?
+            }
+            None => c.crop,
+        };
         let canvas = Canvas::new(
             w.unwrap_or(c.width_mm),
             h.unwrap_or(c.height_mm),
             c.margin_mm,
             c.fit,
         );
+        let canvas = canvas.and_then(|canvas| canvas.with_crop(crop));
         s.set_canvas(canvas.map_err(|e| TestCaseError::fail(e.to_string()))?);
     }
     Ok(())

@@ -6,7 +6,7 @@ import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
-export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
+export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } | Pick<Canvas, "crop"> };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
 export type State = {

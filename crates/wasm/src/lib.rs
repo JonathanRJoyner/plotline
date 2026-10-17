@@ -88,12 +88,12 @@ impl Session {
         Ok(())
     }
 
-    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page.
+    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page, and `"crop"` if there is one.
     #[wasm_bindgen(js_name = setCanvas)]
     pub fn set_canvas(&mut self, json: &str) -> Result<(), JsError> {
         let c: Canvas = serde_json::from_str(json)?;
-        self.inner
-            .set_canvas(Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit)?);
+        let page = Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit)?;
+        self.inner.set_canvas(page.with_crop(c.crop)?);
         Ok(())
     }
 

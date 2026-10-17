@@ -68,6 +68,9 @@ export function PagePanel({ canvas, paper, error, onChange, onPaper }: PageProps
           <input type="color" value={paper} onChange={(e) => onPaper(e.currentTarget.value)} />
         </label>
       </div>
+      {canvas.crop?.some((share) => share > 0) && (
+        <p class="crop">Cropped <button type="button" onClick={() => set({ crop: [0, 0, 0, 0] })}>Remove crop</button></p>
+      )}
       {error && <p class="error">{error}</p>}
     </fieldset>
   );

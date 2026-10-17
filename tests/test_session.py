@@ -172,6 +172,44 @@ def test_the_engine_checks_canvas_and_pens_and_a_refusal_changes_nothing():
     assert s.canvas == Canvas(100, 75, 5, "fill") and s.pens == (Pen("Red", 0.5, "#ff0000"),)
 
 
+def test_the_page_takes_a_crop_that_reaches_the_drawing_and_the_preset(tmp_path):
+    s = Session()
+    s.set_image(_core.synthetic_gradient(64, 48))
+    s.update("tone", resolution=64)
+    s.set_canvas(Canvas(100, 100, 0))
+    s.run_blocking()
+    assert s.result.tone.ink.shape == (48, 64) and s.result.canvas.crop == (0.0,) * 4
+    plain = tmp_path / "plain.json"
+    s.save_preset(plain)
+    assert "crop" not in json.loads(plain.read_text())["canvas"]
+    # The middle half of the width, 32 x 48 pixels, drawn as a map 64 pixels tall.
+    s.set_canvas(Canvas(100, 100, 0, crop=(0.25, 0, 0.25, 0)))
+    assert s.canvas == Canvas(100, 100, 0, crop=[0.25, 0, 0.25, 0])
+    s.run_blocking()
+    assert s.result.tone.ink.shape == (64, 43) and s.result.canvas.crop == (0.25, 0, 0.25, 0)
+    cropped = tmp_path / "cropped.json"
+    s.save_preset(cropped)
+    assert json.loads(cropped.read_text())["canvas"]["crop"] == [0.25, 0, 0.25, 0]
+    t = Session()
+    t.load_preset(cropped)
+    assert t.canvas == s.canvas
+
+
+def test_the_engine_checks_the_crop_and_a_refusal_changes_nothing():
+    s = Session()
+    s.set_canvas(Canvas(100, 75, 5, crop=(0.1, 0.1, 0.1, 0.1)))
+    for crop, name in [
+        ((0.5, 0, 0, 0), "left"),
+        ((0, 0, 0, -0.1), "bottom"),
+    ]:
+        with pytest.raises(ValueError, match=f"crop {name} must be from 0 to 0.45"):
+            s.set_canvas(Canvas(100, 75, 5, crop=crop))
+    for crop in [(0, 0, float("nan"), 0), (0.1, 0.1)]:  # not finite, not four shares
+        with pytest.raises(ValueError):
+            s.set_canvas(Canvas(100, 75, 5, crop=crop))  # type: ignore[arg-type]
+    assert s.canvas == Canvas(100, 75, 5, crop=(0.1, 0.1, 0.1, 0.1))
+
+
 def test_set_style_keeps_the_cache():
     s = slow(Session(), frames=1)
     s.run_blocking()
