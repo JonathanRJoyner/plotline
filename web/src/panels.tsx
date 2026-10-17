@@ -1,7 +1,7 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, LayoutGrid, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
@@ -11,8 +11,6 @@ import { lengthText, pathsText } from "./format";
 import { addPen, libraryFile, mergeLibraries, parseLibrary, removePen, samePen, usable } from "./library";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 import { controlsFor } from "./schema";
-import { place } from "./tour";
-import { onPaper } from "./view";
 
 const SIZES: [string, number, number][] = [
   ["A5", 148, 210], ["A4", 210, 297], ["A3", 297, 420], ["Letter", 215.9, 279.4], ["Tabloid", 279.4, 431.8],
@@ -138,7 +136,7 @@ export function PensPanel({ pens, hidden, error, onEdit, onToggle, onTestchart, 
 // close event, unless it asks with `onClose`. The body holds a list of sections or items on the left
 // and fields on the right.
 type ModalProps = { opens: number; title: string; icon: JSX.Element; wide?: boolean; onClose?: () => void; children: ComponentChildren };
-function Modal({ opens, title, icon, wide, onClose, children }: ModalProps): JSX.Element {
+export function Modal({ opens, title, icon, wide, onClose, children }: ModalProps): JSX.Element {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     if (opens > 0 && !ref.current!.open) ref.current!.showModal();
@@ -152,68 +150,6 @@ function Modal({ opens, title, icon, wide, onClose, children }: ModalProps): JSX
       </header>
       <div class="body">{children}</div>
     </dialog>
-  );
-}
-
-export type Thumb = { url: string | null; error: string | null };
-type StylesDialogProps = {
-  opens: number; styles: Array<{ name: string; label: string; description: string }>; style: string; canvas: Canvas; paper: string;
-  thumbs: Record<string, Thumb>; onPick: (style: string) => void; onClose: () => void;
-};
-
-// The enlarged picture is this many times the cell's; its frame (padding, border and caption, as
-// style.css draws them) adds this many pixels around it.
-const ZOOM = 2.5;
-const FRAME = { w: 14, h: 36 };
-
-// Every style drawn small on the current image, page and pens, in a grid; a click switches to it
-// (spec 2026-10-15-try-styles-and-undo section 2). The pictures arrive one by one; closing stops them.
-// Pointing at a cell, or tabbing to it, shows its picture enlarged beside it, inside the dialog. The
-// enlargement takes no clicks, and a touch shows none, so a tap still picks.
-export function StylesDialog({ opens, styles, style, canvas, paper, thumbs, onPick, onClose }: StylesDialogProps): JSX.Element {
-  const [zoom, setZoom] = useState<{ name: string; label: string; left: number; top: number; width: number } | null>(null);
-  const ratio = canvas.width_mm / canvas.height_mm;
-  const show = (name: string, label: string, cell: HTMLElement) => {
-    const paper = cell.querySelector(".paper")!.getBoundingClientRect();
-    const box = cell.closest("dialog")!.getBoundingClientRect();
-    const width = Math.min(ZOOM * paper.width, box.width - 16 - FRAME.w, (box.height - 16 - FRAME.h) * ratio);
-    const r = { left: paper.left - box.left, top: paper.top - box.top, right: paper.right - box.left, bottom: paper.bottom - box.top };
-    const { left, top } = place(r, width + FRAME.w, width / ratio + FRAME.h, box.width, box.height);
-    setZoom({ name, label, left: box.left + left, top: box.top + top, width });
-  };
-  const hide = () => setZoom(null);
-  const url = zoom && thumbs[zoom.name]?.url;
-  return (
-    <Modal opens={opens} title="All styles" icon={<LayoutGrid />} wide onClose={() => { hide(); onClose(); }}>
-      <ul class="thumbs" onScroll={hide}>
-        {styles.map((s) => {
-          const t = thumbs[s.name];
-          return (
-            <li key={s.name}>
-              <button
-                type="button" title={s.description} aria-current={s.name === style ? "true" : undefined}
-                onClick={(e) => { onPick(s.name); e.currentTarget.closest("dialog")!.close(); }}
-                onPointerEnter={(e) => e.pointerType !== "touch" && show(s.name, s.label, e.currentTarget)}
-                onPointerLeave={hide}
-                onFocus={(e) => e.currentTarget.matches(":focus-visible") && show(s.name, s.label, e.currentTarget)}
-                onBlur={hide}
-              >
-                <span class="paper" style={{ aspectRatio: `${canvas.width_mm} / ${canvas.height_mm}`, background: paper, color: onPaper(paper) }}>
-                  {t?.url ? <img src={t.url} alt="" /> : <span>{t?.error ?? "Drawing…"}</span>}
-                </span>
-                {s.label}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      {zoom && url && (
-        <figure class="zoom" style={{ left: zoom.left, top: zoom.top, width: zoom.width }} aria-hidden="true">
-          <img src={url} alt="" style={{ aspectRatio: `${canvas.width_mm} / ${canvas.height_mm}` }} />
-          <figcaption>{zoom.label}</figcaption>
-        </figure>
-      )}
-    </Modal>
   );
 }
 
@@ -457,11 +393,16 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
     const at = (v: unknown) => `${String(v)}${c && "unit" in c && c.unit ? ` ${c.unit}` : ""}`;
     const within = o.budget ? ` within ${o.budget.target} ${unit(o.budget.metric)}` : "";
     const time = (minutes: number) => `${minutes.toFixed(1)} min`;
-    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best${within}, with a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot.`;
+    const b = o.beyond;
+    // A value the time limit left out that would have followed the tones more closely, and how to allow it.
+    const beyond = b && b.error !== null && b.minutes !== null && o.limit_minutes !== null
+      ? ` ${label} at ${at(b.value)} follows them more closely, with a tone error of ${b.error.toFixed(3)}, but takes ${time(b.minutes)} to plot, over the limit of ${time(o.limit_minutes)}: type a target in minutes to allow it.`
+      : "";
+    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best for its plot time${within}, with a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot.${beyond}`;
     const against = o.current_error === null
       ? `${at(o.current)} goes over the target in ${time(o.current_minutes)}`
       : `against ${o.current_error.toFixed(3)} and ${time(o.current_minutes)} at ${at(o.current)}`;
-    return `${label} at ${at(o.value)} follows the image's tones best${within}: a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot, ${against}.`;
+    return `${label} at ${at(o.value)} follows the image's tones best for its plot time${within}: a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot, ${against}.${beyond}`;
   };
   return (
     <details class="fit-panel" data-tour="fit" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
@@ -482,7 +423,7 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
         </button>
         <button
           type="button" disabled={disabled}
-          title="Reruns the style up to nine times with its density setting from a quarter to four times its value, and suggests the value whose drawing's tones follow the image best. It leaves out values that plot for over twice as long, or an hour if that is more, or that the plot lint warns about, and keeps within the target if one is typed. Nothing changes until you apply it."
+          title="Reruns the style up to nine times with its density setting from a quarter to four times its value, and suggests the quickest value whose drawing's tones follow the image within a tenth of the best. It leaves out values that plot for over twice as long, or an hour if that is more, or that the plot lint warns about, keeps within the target if one is typed, and says when a value left out for its time would follow the tones more closely. Nothing changes until you apply it."
           onClick={() => (Number(target) > 0 ? onOptimize(metric, Number(target)) : onOptimize())}
         >
           <Wand /> Optimize

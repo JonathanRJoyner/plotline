@@ -113,9 +113,11 @@ class RunHandle:
     @property
     def optimum(self) -> dict[str, Any] | None:
         """``{stage, key, value, error, minutes, current, current_error, current_minutes, budget,
-        trials, reason, patch}``: the best value found with its tone error and plot time, the
-        current value with its own, ``trials`` as ``{value, error, minutes, metric, over, slow,
-        warnings, failed}`` in order, a sentence, and ``patch``, which
+        limit_minutes, beyond, trials, reason, patch}``: the best value found with its tone error
+        and plot time, the current value with its own, the time limit in minutes (``None`` when a
+        minutes target replaced it), the trial left out for its time that follows the tones more
+        than a tenth more closely, if any, ``trials`` as ``{value, error, minutes, metric, over,
+        slow, warnings, failed}`` in order, a sentence, and ``patch``, which
         ``{"settings": {stage: {key: value}}}`` applies, or ``None`` when the current value is
         best. Nothing is applied."""
         return self._optimum
@@ -412,10 +414,12 @@ class Session:
 
     def optimize(self, metric: str | None = None, target: float | None = None) -> RunHandle:
         """Search the style's density setting for the value whose drawing follows the tone map
-        most closely, on a worker thread as ``run`` does, and return its handle at once.
+        most closely for its plot time, on a worker thread as ``run`` does, and return its handle
+        at once.
 
         It runs the style up to nine times: at the current value, then at half-octave steps from
-        a quarter to four times it. A trial does not count when its run fails, or when its drawing
+        a quarter to four times it, and suggests the quickest trial whose tone error is within a
+        tenth of the lowest. A trial does not count when its run fails, or when its drawing
         plots for over twice the current value's time, or an hour if that is more, or has a plot
         lint warning or error the current value's drawing does not. Given ``metric`` and
         ``target``, as for ``fit``, a trial whose drawing goes over the target does not count

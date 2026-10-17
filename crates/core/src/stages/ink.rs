@@ -4,9 +4,14 @@
 //!
 //! The tone map is resampled bilinearly onto a finer working grid, so edges fall between pixels
 //! and the rings come out smooth, softened by half a tone pixel of Gaussian blur against pixel
-//! steps and compression noise, and thresholded into a mask. The rings are iso-lines of the
-//! mask's distance transform; the ink no ring covers is thinned to a skeleton and walked into
-//! centrelines. The algorithms are cited in [`crate::raster`].
+//! steps and compression noise, and thresholded into a mask. The outer ring is an iso-line of the
+//! mask's distance transform, smoothed once; the inner rings are iso-lines of the distance
+//! transform of the area it encloses. Those are its offset curves (R. T. Farouki and C. A. Neff,
+//! "Analytic properties of plane offset curves", *Computer Aided Geometric Design* 7, 1990,
+//! pp. 83-99), so neighbouring rings stay a spacing apart through every corner, where rings
+//! smoothed one by one would each round the corner alike and part along its bisector. The ink no
+//! ring covers is thinned to a skeleton and walked into centrelines. The algorithms are cited in
+//! [`crate::raster`].
 
 use std::sync::Arc;
 
@@ -72,9 +77,12 @@ const CELLS_PER_PEN: f64 = 6.0;
 const OVERHANG: f64 = 0.25;
 /// The blur before thresholding, in tone pixels.
 const SOFTEN: f64 = 0.5;
-/// Rings are smoothed along a Gaussian of this many pen widths: neighbouring rings then follow
-/// each other instead of wobbling apart on the grid's steps and leaving gaps in a fill.
+/// The outer ring is smoothed along a Gaussian of at most this many pen widths, so it does not
+/// wobble on the tone map's pixel steps; the inner rings follow it.
 const RING_BLUR: f64 = 1.0;
+/// Two tone pixels of that smoothing already iron out the pixel steps, so on a fine map the
+/// smoothing stops there and the rings keep the shape's corners.
+const PIXEL_BLUR: f64 = 2.0;
 /// Centrelines are smoothed less, so the turns of a stroke stay sharp.
 const LINE_BLUR: f64 = 0.6;
 /// Missed ink inside a square this many pens wide is left to the rings around it.
@@ -93,7 +101,7 @@ impl Stage for InkStage {
         "Ink"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone, Kind::Pens]
@@ -246,20 +254,29 @@ impl StageRun for InkRun {
                 if self.s.mode != InkMode::Centreline {
                     let g = self.grid.as_ref().unwrap();
                     let pen_cells = self.pen / g.cell_mm;
-                    let depth = raster::distance(&g.mask, g.w, g.h);
                     // The distance is 1 at an edge cell, whose centre is half a cell inside.
                     let first = 0.5 + (0.5 - OVERHANG) * pen_cells;
-                    let last = if self.s.mode == InkMode::Outline {
-                        first
-                    } else {
-                        f64::INFINITY
+                    let outer = {
+                        let depth = raster::distance(&g.mask, g.w, g.h);
+                        raster::iso_lines(&depth, g.w, g.h, first, 1.0, first)
                     };
-                    let step = self.s.spacing * pen_cells;
-                    let rings = raster::iso_lines(&depth, g.w, g.h, first, step, last);
                     // Smoothed before the coverage test, so it judges the rings that get drawn.
-                    self.rings =
-                        self.polish(rings.into_iter().map(|r| (r, true)).collect(), RING_BLUR);
-                    let rings = std::mem::take(&mut self.rings);
+                    let blur = RING_BLUR.min(PIXEL_BLUR * g.k as f64 / pen_cells);
+                    let mut rings =
+                        self.polish(outer.into_iter().map(|r| (r, true)).collect(), blur);
+                    if self.s.mode == InkMode::Fill {
+                        // Inner rings are offsets of the smoothed outer ring, so each stays a
+                        // spacing from the next through the corners; a smooth loop's distance
+                        // transform needs only the least smoothing. A cell's distance to the
+                        // nearest cell outside the ring is never less than its distance to the
+                        // ring, so the first inner ring is at most a spacing in.
+                        let inside = raster::distance(&raster::fill(&rings, g.w, g.h), g.w, g.h);
+                        let step = self.s.spacing * pen_cells;
+                        let inner = raster::iso_lines(&inside, g.w, g.h, step, step, f64::INFINITY);
+                        rings.extend(
+                            self.polish(inner.into_iter().map(|r| (r, true)).collect(), 0.0),
+                        );
+                    }
                     self.add(&rings);
                     self.rings = rings;
                 }
@@ -420,6 +437,41 @@ mod tests {
         }
         assert_eq!(frames.len(), 3);
         assert_inside(&paths, [10.0, 10.0, 8.0, 8.0]);
+    }
+
+    #[test]
+    fn a_square_fills_solid_into_its_corners() {
+        // An 8 mm square on a 0.05 mm grid, from (11, 11) to (19, 19) mm on the page. Where fill
+        // rings from two sides meet along a diagonal, each ring must stay within a pen of the next.
+        let square = map(200, 200, 0.05, |x, y| {
+            (1.0..9.0).contains(&x) && (1.0..9.0).contains(&y)
+        });
+        let (_, paths) = run(square, 0.5, json!({}));
+        let segs: Vec<([f64; 2], [f64; 2])> = paths
+            .iter()
+            .flat_map(|p| p.windows(2).map(|s| (s[0], s[1])).collect::<Vec<_>>())
+            .collect();
+        let mut gaps = Vec::new();
+        for i in 0..160 {
+            for j in 0..160 {
+                let q = [11.025 + f64::from(i) * 0.05, 11.025 + f64::from(j) * 0.05];
+                let near = segs
+                    .iter()
+                    .map(|&(a, b)| seg_dist(q, a, b))
+                    .fold(9.0, f64::min);
+                if near > 0.25 {
+                    gaps.push((q, near));
+                }
+            }
+        }
+        let worst = gaps.iter().map(|g| g.1).fold(0.0, f64::max);
+        assert!(
+            gaps.is_empty(),
+            "{} gaps, worst {worst}: {:?}",
+            gaps.len(),
+            &gaps[..gaps.len().min(8)]
+        );
+        assert!(paths.len() <= 12, "{} paths", paths.len());
     }
 
     #[test]

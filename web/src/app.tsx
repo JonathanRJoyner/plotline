@@ -11,14 +11,15 @@ import { ACCEPT, download, imageFile } from "./files";
 import { History, setupOf } from "./history";
 import { loadLibrary, saveLibrary } from "./library";
 import { restoreModels } from "./models";
-import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, StylesDialog, SuggestionsPanel, type Thumb } from "./panels";
+import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
+import { type Entry, groupStyles, StylePicker, type Thumb } from "./picker";
 import { Preview } from "./preview";
 import type { Patch, State } from "./protocol";
 import { Settings } from "./settings";
 import { firstVisit, Tour } from "./tour";
 import { zoomPercent, type View } from "./view";
 
-type Style = { name: string; label: string; description: string };
+type Style = Entry;
 type Stage = { name: string; label: string; schema: Record<string, unknown> };
 type Look = { name: string; label: string; description: string };
 
@@ -33,7 +34,7 @@ const Mark = () => (
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-// The styles dialog's pictures are this many pixels wide: sharp when shown at two and a half
+// The style picker's pictures are this many pixels wide: sharp when shown at two and a half
 // times a cell's width, as pointing at a cell does. Every mark in them is at least THUMB_SHRINK
 // pixels wide, so the marks still show in a cell about a quarter as wide; at one pixel, a dot
 // style's sparse dots averaged to a blank cell. crates/core/tests/laws.rs checks every style.
@@ -347,7 +348,10 @@ export function App() {
   const restoring = useRef(false);
   const [stylesOpens, setStylesOpens] = useState(0);
   const [thumbs, setThumbs] = useState<Record<string, Thumb>>({});
-  const thumbsFor = useRef(0); // the id of the pictures the styles dialog shows; 0 for none
+  const thumbsFor = useRef(0); // the id of the pictures the style picker shows; 0 for none
+  const pickerOpen = useRef(false);
+  // The latest drawThumbs, for the paste listener, which keeps the first render's functions.
+  const redraw = useRef<(image: boolean) => Promise<void>>(async () => {});
 
   // The focus points the page holds, as shares of the image: the last state's, or while edits are
   // on their way the list they will leave, so a quick second edit builds on the first.
@@ -436,15 +440,26 @@ export function App() {
     }
   }
 
-  async function tryStyles() {
+  // Opens the style picker and draws its pictures.
+  function openPicker() {
+    pickerOpen.current = true;
+    setStylesOpens((n) => n + 1);
+    void drawThumbs(state?.image ?? false);
+  }
+
+  // Draws the picker's pictures in its order, top first, after dropping the old ones; with no
+  // image there are none to draw.
+  async function drawThumbs(image: boolean) {
     setThumbs((old) => {
       for (const t of Object.values(old)) if (t.url) URL.revokeObjectURL(t.url);
       return {};
     });
     thumbsFor.current = 0;
-    setStylesOpens((n) => n + 1);
-    thumbsFor.current = (await call<number>("thumbs", [THUMB_PX, THUMB_SHRINK])) ?? 0;
+    if (!image || !styles) return;
+    const names = groupStyles(styles).flatMap(([, es]) => es.filter((e) => !e.picture).map((e) => e.name));
+    thumbsFor.current = (await call<number>("thumbs", [THUMB_PX, THUMB_SHRINK, names])) ?? 0;
   }
+  redraw.current = drawThumbs;
 
   const style = state?.style;
   useEffect(() => {
@@ -481,6 +496,9 @@ export function App() {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       await call("setImageBytes", [bytes], "image", [bytes.buffer]);
+      // An image dropped or pasted with the picker open redraws its pictures; after a refusal the
+      // previous image's come back, or with none each card's error, which no card shows.
+      if (pickerOpen.current) await redraw.current(true);
     } catch (e) {
       setErrors((es) => ({ ...es, image: message(e) }));
     }
@@ -560,6 +578,7 @@ export function App() {
   if (fatal) return <p class="loading">{fatal}</p>;
   if (!styles || !state) return <p class="loading">Loading the engine</p>;
 
+  const current = styles.find((s) => s.name === state.style);
   const settings = { ...state.settings };
   for (const k in draft) settings[k] = { ...settings[k], ...draft[k] };
   const suggestions = state.suggestions.filter((s) => !dismissed.has(s.kind));
@@ -601,11 +620,11 @@ export function App() {
           <legend>Style</legend>
           <label>
             Style{" "}
-            <select value={state.style} onChange={(e) => call("setStyle", [e.currentTarget.value])}>
-              {styles.map((s) => <option value={s.name}>{s.label}</option>)}
-            </select>
+            <button type="button" class="pick" data-tour="styles" aria-haspopup="dialog" aria-label={`Style: ${current?.label ?? state.style}`} value={state.style} onClick={openPicker}>
+              <LayoutGrid /> <span>{current?.label ?? state.style}</span>
+            </button>
           </label>
-          <p class="help">{styles.find((s) => s.name === state.style)?.description}</p>
+          <p class="help">{current?.description}</p>
           {looks.length > 1 && (
             <>
               <label data-tour="look">
@@ -618,7 +637,6 @@ export function App() {
               <p class="help">{state.look === null ? "Not one of the looks: you changed a setting that the looks set." : looks.find((l) => l.name === state.look)?.description}</p>
             </>
           )}
-          <button type="button" data-tour="styles" disabled={!state.image} onClick={tryStyles}><LayoutGrid /> Try all styles</button>
           <button type="button" data-tour="reset" onClick={() => call("resetSettings")}><RotateCcw /> Reset to defaults</button>
         </fieldset>
         <div class="stages" data-tour="settings">
@@ -662,9 +680,10 @@ export function App() {
         opens={pensOpens} pens={state.pens} bank={bank} inks={inks} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
         library={library} onLibrary={(l) => { setLibrary(l); saveLibrary(l); void call("setPenLibrary", [l], "pens"); }}
       />
-      <StylesDialog
-        opens={stylesOpens} styles={styles} style={state.style} canvas={state.canvas} paper={state.paper} thumbs={thumbs}
-        onPick={(name) => call("setStyle", [name])} onClose={() => call("cancelThumbs")}
+      <StylePicker
+        opens={stylesOpens} styles={styles} style={state.style} canvas={state.canvas} paper={state.paper} hasImage={state.image} thumbs={thumbs}
+        onPick={(name) => name !== state.style && call("setStyle", [name])}
+        onClose={() => { pickerOpen.current = false; call("cancelThumbs"); }}
       />
       <Tour opens={tourOpens} />
     </div>

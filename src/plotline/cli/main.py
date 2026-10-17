@@ -420,10 +420,11 @@ def echo_stats(session: Session) -> None:
     "--optimize",
     is_flag=True,
     help=(
-        "Also search the style's density setting for the value whose drawing follows the "
-        "image's tones best, in up to nine runs, and print it and its plot time with the --set "
-        "option that applies it. Values that plot for over twice as long, or an hour if that is "
-        "more, or that the plot lint warns about, are left out. "
+        "Also search the style's density setting for the quickest value whose drawing follows "
+        "the image's tones within a tenth of the best, in up to nine runs, and print it and its "
+        "plot time with the --set option that applies it. Values that plot for over twice as "
+        "long, or an hour if that is more, or that the plot lint warns about, are left out, and "
+        "the sentence says when one left out for its time would follow the tones more closely. "
         "With a --fit option, every trial stays within its target instead of fitting it, and "
         "--fit-minutes replaces the time limit. "
         "The drawing written is the one the given settings make."

@@ -1344,7 +1344,7 @@ mod tests {
         drain(&mut s);
         let drawn = s.drawing().unwrap();
         assert_eq!(found.current, json!(1.0));
-        assert!(found.error <= found.current_error.unwrap());
+        assert!(found.error <= (1.0 + crate::optimize::CLOSE) * found.current_error.unwrap());
         assert_eq!(
             found.current_minutes,
             s.stats().unwrap().estimated_seconds / 60.0
@@ -1384,9 +1384,9 @@ mod tests {
         let auto = s.tone_match().unwrap();
         assert_eq!(
             (off.error, off.ssim),
-            (0.08399718265758667, 0.730502253480983)
+            (0.08197368769144689, 0.7488977156057808)
         );
-        assert_eq!(auto.error, 0.09068600548308096);
+        assert_eq!(auto.error, 0.08880655753709105);
     }
 
     #[test]

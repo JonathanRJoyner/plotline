@@ -263,13 +263,13 @@ def test_tone_match_and_auto_response():
     s.run_blocking()
     # The engine's pinned values, since the image, page and style are the same.
     match = s.tone_match()
-    assert (match["error"], match["ssim"]) == (0.08399718265758667, 0.730502253480983)
+    assert (match["error"], match["ssim"]) == (0.08197368769144689, 0.7488977156057808)
     assert set(match) == {"error", "ssim", "floor", "reach"}
     s.update("tone", response="auto")
     frames = []
     s.subscribe(frames.append)
     s.run_blocking()
-    assert s.tone_match()["error"] == 0.09068600548308096
+    assert s.tone_match()["error"] == 0.08880655753709105
     assert any(f.stage == "tone" and f.label.startswith("response: ") for f in frames)
 
 
@@ -285,8 +285,11 @@ def test_optimize_suggests_and_applies_nothing():
     found = handle.optimum
     assert found is not None and handle.fit is None
     assert (found["stage"], found["key"], found["current"]) == ("hatch", "spacing_mm", 1.0)
-    assert len(found["trials"]) == 9 and found["error"] <= found["current_error"]
+    # The quickest within a tenth of the lowest tone error, which is at most the current one's.
+    assert len(found["trials"]) == 9 and found["error"] <= 1.1 * found["current_error"]
     assert found["current_minutes"] == s.stats().estimated_seconds / 60
+    assert found["limit_minutes"] == max(2 * found["current_minutes"], 60)
+    assert found["beyond"] is None or found["beyond"]["slow"]
     assert "min to plot" in found["reason"]
     assert s.settings == before and s.result is handle.result
     if found["patch"] is not None:

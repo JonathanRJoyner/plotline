@@ -265,7 +265,7 @@ fn golden_grid_lint_matches_native() {
     while run.next_frame().is_some() {}
     let all = s.lint().unwrap();
     let dark = all.iter().find(|f| f.code == "dark").unwrap();
-    assert_eq!(dark.value, 0.015042735042735043);
+    assert_eq!(dark.value, 0.017834757834757835);
 }
 #[wasm_bindgen_test]
 fn the_tone_match_and_the_response_match_native() {
@@ -285,11 +285,11 @@ fn the_tone_match_and_the_response_match_native() {
     let off = s.tone_match().unwrap();
     assert_eq!(
         (off.error, off.ssim),
-        (0.08399718265758667, 0.730502253480983)
+        (0.08197368769144689, 0.7488977156057808)
     );
     s.update("tone", &json!({"response": "auto"})).unwrap();
     drain(&mut s);
-    assert_eq!(s.tone_match().unwrap().error, 0.09068600548308096);
+    assert_eq!(s.tone_match().unwrap().error, 0.08880655753709105);
 }
 #[wasm_bindgen_test]
 fn the_focus_map_matches_native() {

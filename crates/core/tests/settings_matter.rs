@@ -32,6 +32,12 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "contrast pivots on mid-grey, which is where ink's default threshold sits",
     ),
     (
+        "ink",
+        "tone",
+        "response",
+        "ink fills every wedge patch fully or not at all, so the lookup turns about its threshold",
+    ),
+    (
         "waves",
         "order",
         "min_length_mm",
