@@ -40,7 +40,7 @@ use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
 use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::{
-    Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds, ToneMap,
+    Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds, ToneMap, Tones,
 };
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -1881,20 +1881,29 @@ fn run_stage(stage: &dyn Stage, inputs: Vec<Artifact>, patch: &Value) -> Artifac
     }
 }
 
-/// Each pen's map from the Pen use stage by colour, after the tone stage with `tone` over its
+/// The Pen use stage's maps and budgets in `mode`, after the tone stage with `tone` over its
 /// defaults.
-fn by_colour(image: &Image, canvas: &Canvas, pens: &[Pen], tone: &Value) -> Vec<Arc<ToneMap>> {
+fn split_in(image: &Image, canvas: &Canvas, pens: &[Pen], tone: &Value, mode: &Value) -> Tones {
     let (image, canvas) = (
         Artifact::Image(Arc::new(image.clone())),
         Artifact::Canvas(Arc::new(canvas.clone())),
     );
     let tone = run_stage(&ToneStage, vec![image.clone(), canvas.clone()], tone);
     let pens = Artifact::Pens(Arc::new(pens.to_vec()));
-    let mode = json!({"mode": "by_colour"});
-    match run_stage(&SplitStage, vec![image, canvas, pens, tone], &mode) {
-        Artifact::Tones(maps) => maps.to_vec(),
+    match run_stage(
+        &SplitStage,
+        vec![image, canvas, pens, tone],
+        &json!({ "mode": mode }),
+    ) {
+        Artifact::Tones(t) => Tones::clone(&t),
         a => panic!("expected tone maps, got {}", a.kind().name()),
     }
+}
+
+/// Each pen's map from the Pen use stage by colour, after the tone stage with `tone` over its
+/// defaults.
+fn by_colour(image: &Image, canvas: &Canvas, pens: &[Pen], tone: &Value) -> Vec<Arc<ToneMap>> {
+    split_in(image, canvas, pens, tone, &json!("by_colour")).maps
 }
 
 #[test]
@@ -1949,8 +1958,10 @@ fn counted_styles() -> Vec<String> {
 
 #[test]
 fn pens_share_a_point_count_between_them() {
-    // A style whose density setting is a number of points places at most that many in all, in
-    // every Pen use mode: the pens share it by their ink rather than each placing all of it.
+    // A style whose density setting is a number of points places at most that many per pen. By
+    // colour the pens share those budgets by ink: their parts run from 0 to the number of pens,
+    // each as wide as its share of the ink times the pens; in the other modes each pen has a
+    // whole budget of its own.
     let first = &list_styles()[0];
     let split = first.stages[first.stage_index("split").unwrap()].schema();
     let modes = choices(&split["properties"]["mode"], &split["$defs"]).unwrap();
@@ -1967,10 +1978,42 @@ fn pens_share_a_point_count_between_them() {
             let mut r = s.start().unwrap();
             drain(&mut r)?;
             if r.state() == RunState::Done {
+                let pens = s.drawing().unwrap().layers.len() as f64;
                 let placed = r.point_count().unwrap_or(0);
                 prop_assert!(
-                    placed as f64 <= count,
-                    "{placed} points for a count of {count}"
+                    placed as f64 <= count * pens,
+                    "{placed} points for a count of {count} and {pens} pens"
+                );
+            }
+            let (image, canvas) = (c.picture.image(), c.page.canvas());
+            let tones = split_in(
+                &image,
+                &canvas,
+                &c.pens(),
+                &json!({"resolution": 64}),
+                &mode,
+            );
+            let ink: Vec<f64> = (tones.maps.iter())
+                .map(|m| m.ink.iter().map(|&v| f64::from(v)).sum())
+                .collect();
+            let (n, all) = (ink.len() as f64, ink.iter().sum::<f64>());
+            if mode == "by_colour" && all > 0.0 {
+                let [first, last] = [tones.budgets[0][0], tones.budgets.last().unwrap()[1]];
+                prop_assert_eq!((first, last), (0.0, n));
+                for (k, (b, i)) in tones.budgets.iter().zip(&ink).enumerate() {
+                    let next = tones.budgets.get(k + 1).map_or(n, |b| b[0]);
+                    prop_assert_eq!(b[1], next, "pen {} does not meet the next", k);
+                    let want = n * i / all;
+                    prop_assert!(
+                        (b[1] - b[0] - want).abs() < 1e-9,
+                        "pen {k}: {b:?}, want {want}"
+                    );
+                }
+            } else {
+                prop_assert!(
+                    tones.budgets.iter().all(|b| *b == [0.0, 1.0]),
+                    "{:?}",
+                    tones.budgets
                 );
             }
             Ok(())

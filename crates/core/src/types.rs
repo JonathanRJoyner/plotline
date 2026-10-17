@@ -315,6 +315,25 @@ impl ToneMap {
     }
 }
 
+/// One tone map per pen that draws, from the stage that splits the drawing between the pens, with
+/// each map's part of a budget that a later stage spends per pen, such as the Voronoi placer's
+/// points (see [`crate::stage::RunContext::budget`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tones {
+    /// The maps, in the pens' order.
+    pub maps: Vec<Arc<ToneMap>>,
+    /// Each map's part of the pens' budgets, `[start, end]` counted in whole budgets.
+    pub budgets: Vec<[f64; 2]>,
+}
+
+impl Tones {
+    /// `maps` that each spend a whole budget of their own, `[0, 1]`.
+    pub fn each_whole(maps: Vec<Arc<ToneMap>>) -> Tones {
+        let budgets = vec![[0.0, 1.0]; maps.len()];
+        Tones { maps, budgets }
+    }
+}
+
 /// A list of points in mm.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Points(pub Vec<[f64; 2]>);

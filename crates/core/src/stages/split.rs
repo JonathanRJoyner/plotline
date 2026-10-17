@@ -56,7 +56,7 @@ use crate::preview::rgb;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
 use crate::stages::tone::{crop_to_source, resize};
-use crate::types::{Canvas, Image, Pen, ToneMap};
+use crate::types::{Canvas, Image, Pen, ToneMap, Tones};
 
 /// How the pens share the drawing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -125,7 +125,7 @@ impl Stage for SplitStage {
         Ok(Box::new(SplitRun {
             input: Some((inputs, settings.mode)),
             colour: None,
-            maps: None,
+            tones: None,
         }))
     }
 }
@@ -135,16 +135,17 @@ impl Stage for SplitStage {
 const PIXELS_PER_STEP: usize = 200_000;
 
 /// `one_pen` and `light_to_dark` do their work in the first step, which reports one frame; the
-/// second gives the maps. `by_colour` spends its first steps on preparation, one piece each: a
+/// second gives the maps, each with a whole budget of its own. `by_colour` spends its first steps on preparation, one piece each: a
 /// colour plane, then the next, then the third, then the table. Then each step looks up a band of
-/// rows and reports how many are done, and the step after the last band gives the maps.
+/// rows and reports how many are done, and the step after the last band gives the maps, sharing
+/// the pens' budgets by ink ([`shared_by_ink`]).
 struct SplitRun {
     /// What the first step reads: the inputs and the mode; `None` once it has run.
     input: Option<(Inputs, SplitMode)>,
     /// The colour lookup in progress, from the first step to the last band.
     colour: Option<ColourSplit>,
-    /// The finished maps, before the step that gives them.
-    maps: Option<Vec<Arc<ToneMap>>>,
+    /// The finished maps and their budgets, before the step that gives them.
+    tones: Option<Tones>,
 }
 
 /// A frame with no points or paths to show.
@@ -164,17 +165,17 @@ impl StageRun for SplitRun {
         if let Some((inputs, mode)) = self.input.take() {
             let (tone, pens) = (inputs.tone(), inputs.pens());
             match mode {
-                SplitMode::OnePen => self.maps = Some(vec![tone.clone()]),
+                SplitMode::OnePen => self.tones = Some(Tones::each_whole(vec![tone.clone()])),
                 SplitMode::LightToDark => {
-                    let maps = bands(tone, pens.len());
-                    self.maps = Some(maps.into_iter().map(Arc::new).collect());
+                    let maps = bands(tone, pens.len()).into_iter().map(Arc::new);
+                    self.tones = Some(Tones::each_whole(maps.collect()));
                 }
                 SplitMode::ByColour => {
                     let (image, canvas) = (inputs.image(), inputs.canvas());
                     self.colour = Some(ColourSplit::new(image, canvas, pens, tone));
                 }
             }
-            if self.maps.is_some() {
+            if self.tones.is_some() {
                 return Ok(Step::Frame(frame(1.0, "pen use")));
             }
         }
@@ -194,16 +195,41 @@ impl StageRun for SplitRun {
             let label = format!("pen use: {done}/{h} rows");
             if done == h {
                 let split = self.colour.take().expect("the colour lookup is running");
-                self.maps = Some(split.into_maps().into_iter().map(Arc::new).collect());
+                let maps = split.into_maps().into_iter().map(Arc::new).collect();
+                self.tones = Some(shared_by_ink(maps));
             }
             return Ok(Step::Frame(frame(progress, label)));
         }
-        let maps = self
-            .maps
+        let tones = self
+            .tones
             .take()
             .expect("the split run has already finished");
-        Ok(Step::Done(Artifact::Tones(Arc::new(maps))))
+        Ok(Step::Done(Artifact::Tones(Arc::new(tones))))
     }
+}
+
+/// The pens' maps by colour, sharing the pens' budgets by ink: together they spend one budget per
+/// pen, cut in pen order in proportion to each map's total ink, as running totals so that the parts
+/// meet and the last ends at exactly the number of pens. A pen whose colour makes up a tenth of the
+/// ink then spends a tenth of the budgets, rather than a whole one crowded into a tenth of the
+/// image. Maps with no ink at all each keep a whole budget.
+pub(crate) fn shared_by_ink(maps: Vec<Arc<ToneMap>>) -> Tones {
+    let ink = |m: &Arc<ToneMap>| m.ink.iter().map(|&v| f64::from(v)).sum::<f64>();
+    let totals: Vec<f64> = maps.iter().map(ink).collect();
+    let all: f64 = totals.iter().sum();
+    if all <= 0.0 {
+        return Tones::each_whole(maps);
+    }
+    let n = maps.len() as f64;
+    let mut upto = 0.0;
+    let budgets = (totals.iter())
+        .map(|&t| {
+            let start = upto;
+            upto += t;
+            [n * start / all, n * upto / all]
+        })
+        .collect();
+    Tones { maps, budgets }
 }
 
 /// `n` maps that cut `tone`'s ink range into equal bands: map `k` has ink
@@ -516,6 +542,18 @@ mod tests {
         tone: ToneMap,
         patch: Value,
     ) -> Result<(Vec<Frame>, Vec<Arc<ToneMap>>), StageError> {
+        let (frames, tones) = run_split_tones(image, canvas, pens, tone, patch)?;
+        Ok((frames, tones.maps))
+    }
+
+    /// [`run_split`], giving the maps with their budgets.
+    fn run_split_tones(
+        image: Image,
+        canvas: Canvas,
+        pens: Vec<Pen>,
+        tone: ToneMap,
+        patch: Value,
+    ) -> Result<(Vec<Frame>, Tones), StageError> {
         let settings = merge(&SplitStage.defaults(), &patch);
         let inputs = Inputs::new(HashMap::from([
             (Kind::Image, Artifact::Image(Arc::new(image))),
@@ -528,7 +566,7 @@ mod tests {
         loop {
             match run.step()? {
                 Step::Frame(f) => frames.push(f),
-                Step::Done(Artifact::Tones(maps)) => return Ok((frames, maps.to_vec())),
+                Step::Done(Artifact::Tones(t)) => return Ok((frames, Tones::clone(&t))),
                 Step::Done(a) => panic!("expected tone maps, got {}", a.kind().name()),
             }
         }
@@ -727,6 +765,44 @@ mod tests {
         }
         // Above 1 the curve darkens, as the tone stage's gamma does.
         assert!(curve(0.5, 1.9) > 0.5 && curve(0.5, 0.5) < 0.5);
+    }
+
+    #[test]
+    fn by_colour_the_pens_share_their_budgets_by_ink() {
+        let canvas = Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap();
+        let image = color_bars(64, 48);
+        let tone = tone_of(&image, &canvas, 64);
+        let by = |mode: &str| {
+            let patch = json!({ "mode": mode });
+            let pens = pens(&CMYK);
+            run_split_tones(image.clone(), canvas.clone(), pens, (*tone).clone(), patch)
+                .unwrap()
+                .1
+        };
+        // By colour four pens spend four budgets, each its share of the ink, in pen order.
+        let shared = by("by_colour");
+        let ink: Vec<f64> = (shared.maps.iter())
+            .map(|m| m.ink.iter().map(|&v| f64::from(v)).sum())
+            .collect();
+        let all: f64 = ink.iter().sum();
+        assert_eq!(shared.budgets[0][0], 0.0);
+        assert_eq!(shared.budgets[3][1], 4.0);
+        for (k, (b, i)) in shared.budgets.iter().zip(&ink).enumerate() {
+            assert!(
+                (b[1] - b[0] - 4.0 * i / all).abs() < 1e-12,
+                "pen {k}: {b:?}"
+            );
+            if k < 3 {
+                assert_eq!(b[1], shared.budgets[k + 1][0]);
+            }
+        }
+        // Light to dark and one pen keep a whole budget for each map.
+        assert_eq!(by("light_to_dark").budgets, vec![[0.0, 1.0]; 4]);
+        assert_eq!(by("one_pen").budgets, vec![[0.0, 1.0]]);
+        // A white page by colour has no ink to share, so each pen keeps its own.
+        let white = tone_map(4, 4, |_, _| 0.0);
+        let maps = vec![Arc::new(white.clone()), Arc::new(white)];
+        assert_eq!(shared_by_ink(maps).budgets, vec![[0.0, 1.0]; 2]);
     }
 
     #[test]

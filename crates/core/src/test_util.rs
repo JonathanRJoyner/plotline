@@ -17,7 +17,7 @@ use crate::stage::{
 };
 use crate::stats::DEFAULT_ACCEL_MM_S2;
 use crate::style::Style;
-use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap};
+use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap, Tones};
 
 /// `n` points at the origin.
 pub(crate) fn points(n: usize) -> Artifact {
@@ -58,7 +58,7 @@ pub(crate) fn tones(inks: &[f32]) -> Artifact {
             gamma: 1.0,
         })
     };
-    Artifact::Tones(Arc::new(inks.iter().map(map).collect()))
+    Artifact::Tones(Arc::new(Tones::each_whole(inks.iter().map(map).collect())))
 }
 
 /// Run roots: a 4 by 4 flat grey image, a 100 mm square page with no margin, and one black pen.

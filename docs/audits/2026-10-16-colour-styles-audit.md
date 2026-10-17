@@ -154,7 +154,7 @@ Also cap or hide the tone error when the gain is small: `contours` reports tone 
 
 ### F5. Line styles ink areas that should stay white, worst with several pens (confirmed)
 
-**Status:** the lane rule fixed on 2026-10-17, lifting below half of a bare line's cover rather than all of it ([decision](../decisions/2026-10-17-colour-lanes.md)); one pen and the backgrounds are open.
+**Status:** the lane rule fixed on 2026-10-17 for Waves, Spiral and Hilbert, lifting below half of a bare line's cover rather than all of it ([decision](../decisions/2026-10-17-colour-lanes.md)); Flow keeps 2 % until it inks in proportion, and one pen and the backgrounds are open.
 
 **What a person sees.** Waves and Spiral cover the whole page, white areas included, with a 15 % grey of straight lines; with several pens, every pen draws its own lines over every area that has 2 % of its ink, so colours mix where the image has one colour. Halftone draws an even field of pen-wide dots over the fox's light grey background (ink about 0.06): true to the grey, but it reads as texture where the artist meant white.
 
@@ -169,7 +169,7 @@ Also cap or hide the tone error when the gain is small: `contours` reports tone 
 
 ### F6. Every pen gets the same point budget, whatever share of the colour it draws (confirmed)
 
-**Status:** fixed on 2026-10-17 as recommended ([decision](../decisions/2026-10-17-colour-lanes.md)); with the total equal to `count`, a by-colour drawing at the default count is lighter until F7 is fixed.
+**Status:** fixed on 2026-10-17 by colour, keeping `count` per pen so the total stays as before ([decision](../decisions/2026-10-17-colour-lanes.md)); light to dark keeps a whole budget per pen, which measured better there.
 
 **What a person sees.** By colour, Stipple, Single line, Dashes, Tree, Mesh, Cells and Scribble draw 5,000 points for each pen. A pen whose colour covers a tenth of the image crowds 5,000 dots into it, so minor colours come out too strong, and the pen that carries most of the picture is too sparse.
 
