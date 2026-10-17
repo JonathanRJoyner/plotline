@@ -3,7 +3,8 @@
 //! The engine's tests need a [`ModelRuntime`] whose answer they can compute another way. The
 //! stand-in "loads" two fixed byte strings and answers with the 3 x 3 Sobel gradient magnitude of
 //! the picture's luminance (I. Sobel and G. Feldman, "A 3x3 isotropic gradient operator for image
-//! processing", 1968), clamped to 0 to 1, or half of that for the second string.
+//! processing", 1968), clamped to 0 to 1, or half of that for the second string. A third string
+//! answers with a floor: 0.5 on blank paper, rising to 1 at a full edge.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -14,12 +15,15 @@ use super::{ModelError, ModelRuntime};
 pub const STANDIN_BYTES: &[u8] = b"STANDIN";
 /// The bytes of a stand-in model that answers with half the Sobel magnitude.
 pub const STANDIN_HALF_BYTES: &[u8] = b"STANDIN-HALF";
+/// The bytes of a stand-in model whose answer never falls below 0.5, as a model does that does not
+/// put blank paper at 0.
+pub const STANDIN_FLOOR_BYTES: &[u8] = b"STANDIN-FLOOR";
 
 /// The stand-in runtime; it also remembers which models were unloaded.
 #[derive(Default)]
 pub struct StandIn {
-    /// Tile side and answer scale of each loaded model.
-    loaded: Mutex<HashMap<String, (usize, f32)>>,
+    /// Tile side, answer scale and answer floor of each loaded model.
+    loaded: Mutex<HashMap<String, (usize, f32, f32)>>,
     unloaded: Mutex<Vec<String>>,
 }
 
@@ -36,22 +40,24 @@ impl StandIn {
 
 impl ModelRuntime for StandIn {
     fn load(&self, id: &str, bytes: &[u8], side: usize) -> Result<(), ModelError> {
-        let scale = if bytes == STANDIN_BYTES {
-            1.0
+        let (scale, floor) = if bytes == STANDIN_BYTES {
+            (1.0, 0.0)
         } else if bytes == STANDIN_HALF_BYTES {
-            0.5
+            (0.5, 0.0)
+        } else if bytes == STANDIN_FLOOR_BYTES {
+            (1.0, 0.5)
         } else {
             return Err(ModelError::Invalid("not a stand-in model".into()));
         };
         self.loaded
             .lock()
             .unwrap()
-            .insert(id.to_string(), (side, scale));
+            .insert(id.to_string(), (side, scale, floor));
         Ok(())
     }
 
     fn infer(&self, id: &str, rgb: &[f32]) -> Result<Vec<f32>, ModelError> {
-        let (side, scale) = *self
+        let (side, scale, floor) = *self
             .loaded
             .lock()
             .unwrap()
@@ -80,7 +86,8 @@ impl ModelRuntime for StandIn {
                     - (at(x - 1, y - 1) + 2.0 * at(x - 1, y) + at(x - 1, y + 1));
                 let gy = (at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1))
                     - (at(x - 1, y - 1) + 2.0 * at(x, y - 1) + at(x + 1, y - 1));
-                out.push((gx * gx + gy * gy).sqrt().clamp(0.0, 1.0) * scale);
+                let sobel = (gx * gx + gy * gy).sqrt().clamp(0.0, 1.0);
+                out.push(floor + (1.0 - floor) * sobel * scale);
             }
         }
         Ok(out)

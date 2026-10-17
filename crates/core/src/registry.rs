@@ -452,7 +452,7 @@ pub fn get_style(name: &str) -> Option<Arc<Style>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{StandIn, STANDIN_BYTES, STANDIN_HALF_BYTES};
+    use crate::models::{StandIn, STANDIN_BYTES, STANDIN_FLOOR_BYTES, STANDIN_HALF_BYTES};
     use crate::session::Session;
     use crate::stage::{Artifact, Kind, Lane};
     use crate::synthetic::{flat, gradient, radial, scene};
@@ -638,6 +638,29 @@ mod tests {
         assert!(!sobel.is_empty());
         // The setting picks the model: half the answer draws other lines.
         assert_ne!(paths(standin_half_id()), sobel);
+    }
+    #[test]
+    fn learned_draws_nothing_on_blank_paper() {
+        // The core passes a model's answer through, so blank paper gives no paths only when the
+        // model answers 0 there. A model with a floor of 0.5 shows what that costs.
+        let paths = |bytes: &'static [u8], value: f32| {
+            let mut s = Session::new(64 << 20);
+            s.set_model_runtime(Arc::new(StandIn::default()));
+            let id = s.add_model(None, bytes).unwrap().id;
+            s.set_image(flat(64, 48, value));
+            s.set_style("learned").unwrap();
+            s.update("model", &json!({"model": id, "resolution": 256}))
+                .unwrap();
+            s.update("ink", &json!({"threshold": 0.4})).unwrap();
+            let mut run = s.start().unwrap();
+            while run.next_frame().is_some() {}
+            assert_eq!(run.error(), None);
+            s.drawing().unwrap().layers[0].paths.len()
+        };
+        for value in [1.0, 0.5] {
+            assert_eq!(paths(STANDIN_BYTES, value), 0, "flat {value}");
+            assert!(paths(STANDIN_FLOOR_BYTES, value) > 0, "flat {value}");
+        }
     }
     #[test]
     fn rippling_styles_darken_their_midtones() {

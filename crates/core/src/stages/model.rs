@@ -249,13 +249,13 @@ impl StageRun for ModelRun {
 mod tests {
     use super::*;
     use crate::cache::StageCache;
-    use crate::models::{ModelStore, StandIn, STANDIN_BYTES};
+    use crate::models::{ModelStore, StandIn, STANDIN_BYTES, STANDIN_FLOOR_BYTES};
     use crate::runner::{Run, RunState, Shared};
     use crate::session::Session;
     use crate::stages::ink::InkStage;
     use crate::stages::tone::ToneStage;
     use crate::style::Style;
-    use crate::synthetic::{gradient, still_life};
+    use crate::synthetic::{flat, gradient, still_life};
     use crate::test_util::{black, drain};
     use crate::types::Fit;
     use serde_json::json;
@@ -439,6 +439,27 @@ mod tests {
             .iter()
             .zip(&flipped.ink)
             .all(|(a, b)| (a + b - 1.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn a_blank_answer_passes_through_unchanged() {
+        // The stage adds no floor and removes none: a flat picture maps to what the model says
+        // for blank paper, 0 for the plain stand-in and 0.5 for the one with a floor.
+        for (bytes, want) in [(STANDIN_BYTES, 0.0), (STANDIN_FLOOR_BYTES, 0.5)] {
+            let mut session = Session::new(1 << 20);
+            session.set_model_runtime(Arc::new(StandIn::default()));
+            let id = session.add_model(None, bytes).unwrap().id;
+            let settings = json!({"model": id, "resolution": 300});
+            let (_, map) = run_stage(
+                &ModelStage,
+                &flat(300, 200, 1.0),
+                &page(Fit::Fit),
+                settings,
+                session.model_store(),
+            )
+            .unwrap();
+            assert!(map.ink.iter().all(|&v| v == want), "floor {want}");
+        }
     }
 
     #[test]

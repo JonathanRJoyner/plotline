@@ -23,7 +23,7 @@ pub mod catalogue;
 pub mod standin;
 
 pub use catalogue::{catalogue, CatalogueEntry};
-pub use standin::{StandIn, STANDIN_BYTES, STANDIN_HALF_BYTES};
+pub use standin::{StandIn, STANDIN_BYTES, STANDIN_FLOOR_BYTES, STANDIN_HALF_BYTES};
 
 /// The side of a tile in pixels, margins included; the kept centre is `TILE - 2 * overlap`.
 pub const TILE: usize = 512;
