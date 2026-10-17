@@ -30,7 +30,14 @@ pub struct TractRuntime {
 impl ModelRuntime for TractRuntime {
     fn load(&self, id: &str, bytes: &[u8], side: usize) -> Result<(), ModelError> {
         let invalid = |e: TractError| ModelError::Invalid(format!("{e:#}"));
-        let parsed = onnx().model_for_read(&mut &bytes[..]).map_err(invalid)?;
+        // A file that does not decode, or decodes to no graph (an empty file does), is not ONNX at
+        // all. The decoder's own words say only where it gave up, so they are left out; what tract
+        // says about a graph it cannot translate does help, and `invalid` keeps it.
+        let onnx = onnx();
+        let proto = (onnx.proto_model_for_read(&mut &bytes[..]).ok())
+            .filter(|proto| proto.graph.is_some())
+            .ok_or_else(|| ModelError::Invalid("the file is not an ONNX model".into()))?;
+        let parsed = onnx.model_for_proto_model(&proto).map_err(invalid)?;
         // Checked before anything indexes input 0 or output 0, which panics on a graph without one.
         if parsed.inputs.len() != 1 || parsed.outputs.len() != 1 {
             return Err(ModelError::Invalid(format!(
@@ -195,17 +202,39 @@ mod tests {
         assert!(matches!(r, Err(ModelError::Invalid(_))), "{r:?}");
     }
 
+    /// What a person is told when the file does not parse as ONNX, with none of tract's wording.
+    const NOT_ONNX: &str = "the file is not an ONNX model";
+
     #[test]
-    fn a_file_that_is_not_onnx_is_refused() {
-        let r = TractRuntime::default().load("x", b"not a model", TILE);
-        assert!(matches!(r, Err(ModelError::Invalid(_))), "{r:?}");
+    fn a_file_that_is_not_onnx_is_refused_in_plain_words() {
+        let tiny = tiny_conv_onnx();
+        let cases: [(&str, &[u8]); 4] = [
+            ("text", b"not a model"),
+            ("empty", b""),
+            // The start of a zip file, which is what a PyTorch `.pth` is.
+            ("pth", b"PK\x03\x04\x00\x00\x08\x08\x08\x00archive/data.pkl"),
+            ("truncated", &tiny[..tiny.len() / 2]),
+        ];
+        for (name, bytes) in cases {
+            let r = TractRuntime::default().load("x", bytes, TILE);
+            assert!(
+                matches!(&r, Err(ModelError::Invalid(m)) if m == NOT_ONNX),
+                "{name}: {r:?}"
+            );
+        }
     }
 
     #[test]
-    fn a_truncated_file_is_refused() {
-        let bytes = tiny_conv_onnx();
-        let r = TractRuntime::default().load("x", &bytes[..bytes.len() / 2], TILE);
-        assert!(matches!(r, Err(ModelError::Invalid(_))), "{r:?}");
+    fn a_graph_tract_cannot_translate_keeps_its_own_reason() {
+        // Valid ONNX that uses an operator no runtime knows: the reason is worth showing.
+        let bytes = tiny_edited(|g| {
+            g.node[0].op_type = "NoSuchOperator".into();
+        });
+        let r = TractRuntime::default().load("x", &bytes, TILE);
+        assert!(
+            matches!(&r, Err(ModelError::Invalid(m)) if m != NOT_ONNX),
+            "{r:?}"
+        );
     }
 
     /// The tiny model with its graph changed by `edit`, encoded again.

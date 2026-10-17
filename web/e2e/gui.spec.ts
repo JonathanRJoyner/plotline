@@ -836,6 +836,17 @@ test("a model of your own stays after a reload, and Remove forgets it", async ({
   await expect(card(page, "learned")).toContainText("needs a model");
 });
 
+test("a file that is not a model is refused in plain words", async ({ page }) => {
+  await open(page);
+  await styleButton(page).click();
+  await tab(page, "Load your own").click();
+  const file = { name: "notes.onnx", mimeType: "application/octet-stream", buffer: Buffer.from("not a model") };
+  await picker(page).locator('input[type=file][accept=".onnx"]').setInputFiles(file);
+  // Not tract's "failed to decode Protobuf message", which says nothing a person can act on.
+  await expect(picker(page).locator("p.error")).toHaveText("not a usable model: the file is not an ONNX model");
+  await expect(tab(page, "Load your own")).toHaveAttribute("aria-current", "true");
+});
+
 test("Get models shows the licence before any download", async ({ page }) => {
   // Every request off the page's own server is recorded and answered with a file of the wrong size.
   const requests: string[] = [];
