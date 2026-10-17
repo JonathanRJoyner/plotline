@@ -31,14 +31,18 @@ use plotline_core::preview::{render_png_shrunk, render_rgba};
 use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
-use plotline_core::stage::Artifact;
+use plotline_core::settings::merge;
+use plotline_core::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
 use plotline_core::stages::join::join;
-use plotline_core::stages::tone::{flatten, guided};
+use plotline_core::stages::split::SplitStage;
+use plotline_core::stages::tone::{flatten, guided, ToneStage};
 use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
 use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::tone_match;
-use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds};
+use plotline_core::{
+    Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds, ToneMap, Tones,
+};
 use proptest::prelude::*;
 use proptest::sample::select;
 use proptest::test_runner::{Config, RngSeed, TestCaseError, TestRunner};
@@ -451,14 +455,19 @@ fn case(names: Vec<String>) -> impl Strategy<Value = Case> {
     )
 }
 
+/// The pens of widths and colours `pens`.
+fn pens_of(pens: &[(f64, [u8; 3])]) -> Vec<Pen> {
+    (pens.iter().enumerate())
+        .map(|(i, (width, [r, g, b]))| {
+            let colour = format!("#{r:02x}{g:02x}{b:02x}");
+            Pen::new(&format!("Pen {i}"), *width, &colour).unwrap()
+        })
+        .collect()
+}
+
 impl Case {
     fn pens(&self) -> Vec<Pen> {
-        (self.pens.iter().enumerate())
-            .map(|(i, (width, [r, g, b]))| {
-                let colour = format!("#{r:02x}{g:02x}{b:02x}");
-                Pen::new(&format!("Pen {i}"), *width, &colour).unwrap()
-            })
-            .collect()
+        pens_of(&self.pens)
     }
 
     /// A fresh session, with its own cache, set up for this case.
@@ -1929,4 +1938,156 @@ fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_gri
             );
         }
     }
+}
+
+/// Run `stage` on `inputs` with `patch` over its defaults to its output.
+fn run_stage(stage: &dyn Stage, inputs: Vec<Artifact>, patch: &Value) -> Artifact {
+    let settings = merge(&stage.defaults(), patch);
+    let inputs = Inputs::new(inputs.into_iter().map(|a| (a.kind(), a)).collect());
+    let mut run = (stage.start(inputs, &settings, RunContext::new(Arc::default()))).unwrap();
+    loop {
+        if let Step::Done(a) = run.step().unwrap() {
+            return a;
+        }
+    }
+}
+
+/// The Pen use stage's maps and budgets in `mode`, after the tone stage with `tone` over its
+/// defaults.
+fn split_in(image: &Image, canvas: &Canvas, pens: &[Pen], tone: &Value, mode: &Value) -> Tones {
+    let (image, canvas) = (
+        Artifact::Image(Arc::new(image.clone())),
+        Artifact::Canvas(Arc::new(canvas.clone())),
+    );
+    let tone = run_stage(&ToneStage, vec![image.clone(), canvas.clone()], tone);
+    let pens = Artifact::Pens(Arc::new(pens.to_vec()));
+    match run_stage(
+        &SplitStage,
+        vec![image, canvas, pens, tone],
+        &json!({ "mode": mode }),
+    ) {
+        Artifact::Tones(t) => Tones::clone(&t),
+        a => panic!("expected tone maps, got {}", a.kind().name()),
+    }
+}
+
+/// Each pen's map from the Pen use stage by colour, after the tone stage with `tone` over its
+/// defaults.
+fn by_colour(image: &Image, canvas: &Canvas, pens: &[Pen], tone: &Value) -> Vec<Arc<ToneMap>> {
+    split_in(image, canvas, pens, tone, &json!("by_colour")).maps
+}
+
+#[test]
+fn by_colour_a_gamma_bends_each_pens_share_and_adds_no_grey() {
+    // With nothing after it in the tone stage, a gamma gives each pen `1 - (1 - a)^gamma` of the
+    // share `a` of a colour it has at a gamma of 1, so a pen draws only where it draws at 1: a
+    // darker gamma no longer turns into grey that the black pen draws over every colour.
+    let strategy = (picture(), page(), pens(), 0.1..=5.0f64, any::<bool>());
+    check(
+        "gamma by colour",
+        24,
+        strategy,
+        |(picture, page, pens, gamma, auto)| {
+            let (image, canvas, pens) = (picture.image(), page.canvas(), pens_of(&pens));
+            let levels = if auto { "auto" } else { "manual" };
+            let at = |g: f64| {
+                by_colour(
+                    &image,
+                    &canvas,
+                    &pens,
+                    &json!({"resolution": 64, "gamma": g, "levels": levels}),
+                )
+            };
+            let (flat, bent) = (at(1.0), at(gamma));
+            for (k, (a, b)) in flat.iter().zip(&bent).enumerate() {
+                for (p, (&a, &b)) in a.ink.iter().zip(&b.ink).enumerate() {
+                    let want = 1.0 - (1.0 - f64::from(a)).powf(gamma);
+                    prop_assert!(
+                        (f64::from(b) - want).abs() < 1e-3,
+                        "pen {k}, pixel {p}: {b} at gamma {gamma}, want {want} from {a}"
+                    );
+                }
+            }
+            Ok(())
+        },
+    );
+}
+
+/// The styles whose density setting is the number of points their placer places.
+fn counted_styles() -> Vec<String> {
+    let counted = |style: &Style| {
+        Density::of(style).is_some_and(|d| {
+            let stage = style.stages.iter().find(|s| s.name() == d.stage).unwrap();
+            d.direct && d.integer && stage.provides() == Kind::Points
+        })
+    };
+    (list_styles().iter())
+        .filter(|s| counted(s))
+        .map(|s| s.name.clone())
+        .collect()
+}
+
+#[test]
+fn pens_share_a_point_count_between_them() {
+    // A style whose density setting is a number of points places at most that many per pen. By
+    // colour the pens share those budgets by ink: their parts run from 0 to the number of pens,
+    // each as wide as its share of the ink times the pens; in the other modes each pen has a
+    // whole budget of its own.
+    let first = &list_styles()[0];
+    let split = first.stages[first.stage_index("split").unwrap()].schema();
+    let modes = choices(&split["properties"]["mode"], &split["$defs"]).unwrap();
+    check(
+        "shared count",
+        16,
+        (case(counted_styles()), select(modes)),
+        |(c, mode)| {
+            let style = get_style(&c.style).unwrap();
+            let d = Density::of(&style).unwrap();
+            let count = c.settings.0[&d.stage][&d.key].as_f64().unwrap();
+            let mut s = c.session();
+            s.update("split", &json!({ "mode": mode })).unwrap();
+            let mut r = s.start().unwrap();
+            drain(&mut r)?;
+            if r.state() == RunState::Done {
+                let pens = s.drawing().unwrap().layers.len() as f64;
+                let placed = r.point_count().unwrap_or(0);
+                prop_assert!(
+                    placed as f64 <= count * pens,
+                    "{placed} points for a count of {count} and {pens} pens"
+                );
+            }
+            let (image, canvas) = (c.picture.image(), c.page.canvas());
+            let tones = split_in(
+                &image,
+                &canvas,
+                &c.pens(),
+                &json!({"resolution": 64}),
+                &mode,
+            );
+            let ink: Vec<f64> = (tones.maps.iter())
+                .map(|m| m.ink.iter().map(|&v| f64::from(v)).sum())
+                .collect();
+            let (n, all) = (ink.len() as f64, ink.iter().sum::<f64>());
+            if mode == "by_colour" && all > 0.0 {
+                let [first, last] = [tones.budgets[0][0], tones.budgets.last().unwrap()[1]];
+                prop_assert_eq!((first, last), (0.0, n));
+                for (k, (b, i)) in tones.budgets.iter().zip(&ink).enumerate() {
+                    let next = tones.budgets.get(k + 1).map_or(n, |b| b[0]);
+                    prop_assert_eq!(b[1], next, "pen {} does not meet the next", k);
+                    let want = n * i / all;
+                    prop_assert!(
+                        (b[1] - b[0] - want).abs() < 1e-9,
+                        "pen {k}: {b:?}, want {want}"
+                    );
+                }
+            } else {
+                prop_assert!(
+                    tones.budgets.iter().all(|b| *b == [0.0, 1.0]),
+                    "{:?}",
+                    tones.budgets
+                );
+            }
+            Ok(())
+        },
+    );
 }

@@ -151,11 +151,12 @@ pub struct Run {
     error: Option<String>,
 }
 
-/// One pen's lane once the split has run: its map and pen list with their keys, and the output and
-/// key of each finished stage after the split.
+/// One pen's lane once the split has run: its map and pen list with their keys, its part of a
+/// per-pen budget, and the output and key of each finished stage after the split.
 struct LaneState {
     tone: (Artifact, String),
     pens: (Artifact, String),
+    budget: [f64; 2],
     done: Vec<(Artifact, String)>,
 }
 
@@ -295,8 +296,10 @@ impl Run {
                     inputs.insert(kind, artifact.clone());
                     keys.insert(kind.name(), key.as_str());
                 }
-                // A stage may read its lane, so the lane is part of its key.
-                let tag = lane.map(|l| format!("{}/{}", l.index, l.count));
+                // A stage may read its lane and its budget, so they are part of its key.
+                let budget = lane.map_or([0.0, 1.0], |l| self.lanes[l.index].budget);
+                let [from, to] = budget;
+                let tag = lane.map(|l| format!("{}/{} {from}-{to}", l.index, l.count));
                 if let Some(tag) = &tag {
                     keys.insert("lane", tag);
                 }
@@ -325,8 +328,9 @@ impl Run {
                         pen,
                     });
                 }
-                let ctx =
-                    RunContext::new(self.cancel.clone()).in_lane(lane.unwrap_or(Lane::SINGLE));
+                let ctx = RunContext::new(self.cancel.clone())
+                    .in_lane(lane.unwrap_or(Lane::SINGLE))
+                    .with_budget(budget);
                 match stage.start(Inputs::new(inputs), &settings, ctx) {
                     Ok(run) => self.active = Some((run, key)),
                     Err(e) => {
@@ -449,12 +453,13 @@ impl Run {
             _ => (artifact, key),
         };
         if self.style.split() == Some(index) {
-            let Artifact::Tones(maps) = &artifact else {
+            let Artifact::Tones(tones) = &artifact else {
                 panic!("the split stage gave {}, not tones", artifact.kind().name());
             };
             let (Artifact::Pens(pens), _) = &self.roots[&Kind::Pens] else {
                 unreachable!("roots are filed by kind");
             };
+            let maps = &tones.maps;
             let (n, m) = (maps.len(), pens.len());
             if n == 0 || n > m {
                 let name = self.style.stages[index].name();
@@ -462,16 +467,18 @@ impl Run {
                 let message = format!("stage {name:?} gave {n} tone maps for {m} pen{s}");
                 return Err(StageError::Failed(message));
             }
-            let open = |(map, pen): (&Arc<ToneMap>, &Pen)| {
+            let open = |((map, pen), &budget): ((&Arc<ToneMap>, &Pen), &[f64; 2])| {
                 let pens = Artifact::Pens(Arc::new(vec![pen.clone()]));
                 let pens_key = root_key(Kind::Pens, &pens);
                 LaneState {
                     tone: (Artifact::Tone(map.clone()), tone_key(map)),
                     pens: (pens, pens_key),
+                    budget,
                     done: Vec::new(),
                 }
             };
-            self.lanes = maps.iter().zip(pens.iter()).map(open).collect();
+            let lanes = maps.iter().zip(pens.iter()).zip(&tones.budgets);
+            self.lanes = lanes.map(open).collect();
         }
         self.done.push((artifact, key));
         Ok(())
@@ -570,14 +577,14 @@ mod tests {
     use crate::test_util::{
         black, drain, paths, points, roots, roots_with, tone, tone_map, tones, Spy, SpySettings,
     };
-    use crate::types::Pen;
+    use crate::types::{Pen, Tones};
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     /// A lane stage named "e" that reports one frame labelled "echo", then gives one path: its
-    /// map's first ink and its pen's width, then its lane's index and count.
+    /// map's first ink and its pen's width, its lane's index and count, then its budget.
     struct Echo;
 
     impl Stage for Echo {
@@ -613,6 +620,7 @@ mod tests {
             paths.push(&[
                 [inputs.tone().ink[0] as f64, inputs.pens()[0].width_mm],
                 [lane.index as f64, lane.count as f64],
+                ctx.budget(),
             ]);
             Ok(Box::new(EchoRun {
                 paths,
@@ -683,11 +691,19 @@ mod tests {
     #[test]
     fn a_split_runs_the_rest_once_per_pen_and_makes_a_layer_each() {
         let t = Arc::new(Spy::new("t", &[Kind::Image], Kind::Tone, tone()));
+        // Maps with budgets as by colour: two budgets cut by ink.
+        let Artifact::Tones(maps) = tones(&[0.25, 0.75]) else {
+            unreachable!("tones gives tone maps")
+        };
+        let shared = Tones {
+            budgets: vec![[0.0, 0.5], [0.5, 2.0]],
+            ..Tones::clone(&maps)
+        };
         let s = Arc::new(Spy::new(
             "s",
             &[Kind::Tone, Kind::Pens],
             Kind::Tones,
-            tones(&[0.25, 0.75]),
+            Artifact::Tones(Arc::new(shared)),
         ));
         let style =
             Arc::new(Style::new("x", "X", "d", vec![t.clone(), s, Arc::new(Echo)]).unwrap());
@@ -706,8 +722,11 @@ mod tests {
         let d = d.unwrap();
         let pens: Vec<_> = d.layers.iter().map(|l| l.pen.name.as_str()).collect();
         assert_eq!(pens, ["A", "B"]);
-        assert_eq!(d.layers[0].paths.coords(), [[0.25, 0.3], [0.0, 2.0]]);
-        assert_eq!(d.layers[1].paths.coords(), [[0.75, 0.5], [1.0, 2.0]]);
+        // Each lane spends the budget its map came with.
+        let first = [[0.25, 0.3], [0.0, 2.0], [0.0, 0.5]];
+        assert_eq!(d.layers[0].paths.coords(), first);
+        let second = [[0.75, 0.5], [1.0, 2.0], [0.5, 2.0]];
+        assert_eq!(d.layers[1].paths.coords(), second);
         // The tone map is t's, from before the split.
         assert_eq!(d.tone.as_ref().unwrap().ink, [0.5]);
         // Lanes with equal maps and equal pens are still keyed apart by their lane.
@@ -717,13 +736,14 @@ mod tests {
             Kind::Tones,
             tones(&[0.5, 0.5]),
         ));
-        let style = Arc::new(Style::new("x", "X", "d", vec![t, same, Arc::new(Echo)]).unwrap());
+        let style =
+            Arc::new(Style::new("x", "X", "d", vec![t.clone(), same, Arc::new(Echo)]).unwrap());
         let a = two_pens()[0].clone();
         let (_, frames, d) = run_pens(&style, &style.defaults(), vec![a.clone(), a], &cache);
         assert_eq!(seen(&frames)[3], ("e", 1, "echo"));
         assert_eq!(
             d.unwrap().layers[1].paths.coords(),
-            [[0.5, 0.3], [1.0, 2.0]]
+            [[0.5, 0.3], [1.0, 2.0], [0.0, 1.0]]
         );
     }
 
@@ -817,11 +837,11 @@ mod tests {
         }
         assert_eq!(
             frames[3].paths.as_ref().unwrap().coords(),
-            [[0.25, 0.3], [0.0, 2.0]]
+            [[0.25, 0.3], [0.0, 2.0], [0.0, 1.0]]
         );
         assert_eq!(
             frames[5].paths.as_ref().unwrap().coords(),
-            [[0.75, 0.5], [1.0, 2.0]]
+            [[0.75, 0.5], [1.0, 2.0], [0.0, 1.0]]
         );
     }
 

@@ -40,7 +40,8 @@ pub use session::{Session, SessionError};
 pub use stage::Frame;
 pub use stats::{Speeds, Stats};
 pub use types::{
-    Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap, TypeError, DEFAULT_PAPER,
+    Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap, Tones, TypeError,
+    DEFAULT_PAPER,
 };
 
 #[cfg(test)]

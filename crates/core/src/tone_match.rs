@@ -336,6 +336,7 @@ mod tests {
             ink,
             mm_per_px: 0.5,
             origin_mm: [0.0, 0.0],
+            gamma: 1.0,
         }
     }
 
