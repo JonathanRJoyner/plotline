@@ -368,7 +368,7 @@ git commit -m "Build the model runtime as its own WebAssembly module and bridge 
 
 - [ ] **Step 1: Write `convert.py`** — downloads each original into its own new, empty directory; loads `.pth` only with `torch.load(path, weights_only=True)` and the contour weights from safetensors where offered; uses the model definitions from the two MIT repositories (read first); wraps each in a module that takes RGB in 0 to 1 and returns one channel in 0 to 1 where 1 is a line (contour: `1 - output`; TEED: its own BGR mean subtraction on 0 to 255, then the fused output's sigmoid); exports ONNX at `1 × 3 × 512 × 512`.
 - [ ] **Step 2: Pick each overlap** — starting at 32 (TEED) and 64 (contour), raise in steps of 16 until a tiled run of the 1024 × 768 still life is within 1/255 of a whole-image run; record the result in the model card.
-- [ ] **Step 3: Write `NOTICE` and the model cards** — each with the licence text, the attribution (the CC BY 3.0 credit to the Contour Drawings dataset for contour), the training note and the paper.
+- [ ] **Step 3: Write `NOTICE` and the model cards** — each with the licence text, the attribution (contour-1 was later not hosted: [contour-1 not hosted](../../decisions/2026-10-17-contour-1-not-hosted.md)), the training note and the paper.
 - [ ] **Step 4: Push, then record each file's raw URL at the pushed commit, its size and its SHA-256.**
   Run: `curl -sI -H "Origin: https://example.org" <url> | grep -i access-control-allow-origin` (expected: a header for each file).
 
