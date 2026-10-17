@@ -107,21 +107,23 @@ test("splitStages sets the pen use stage apart", () => {
 const modelStage = { name: "model", label: "Model", schema: { properties: { model: { type: "string", default: "" }, invert: { type: "boolean" } } } };
 const loaded = [{ id: "file-0123456789ab", label: "file-0123456789ab" }, { id: "teed-1", label: "Edges (TEED)" }];
 
-test("the model setting is a choice of the loaded models, by label", () => {
+test("the model setting is a choice of the built-in model, then the loaded ones, by label", () => {
   const [stage] = withModelChoice([modelStage], loaded, "teed-1");
   const control = controlsFor(stage.schema)[0];
   expect(control).toMatchObject({ kind: "select", default: "" });
-  expect(control.kind === "select" && control.options.map((o) => [o.value, o.label])).toEqual([["file-0123456789ab", "file-0123456789ab"], ["teed-1", "Edges (TEED)"]]);
+  expect(control.kind === "select" && control.options.map((o) => [o.value, o.label])).toEqual([["xdog", "Lines (XDoG)"], ["file-0123456789ab", "file-0123456789ab"], ["teed-1", "Edges (TEED)"]]);
   expect(controlsFor(stage.schema)[1]).toMatchObject({ kind: "checkbox" });
 });
 
-test("a model setting no loaded model has stays a choice of its own", () => {
+test("a model setting none of the choices has stays a choice of its own", () => {
   const options = (current: string) => {
     const control = controlsFor(withModelChoice([modelStage], loaded.slice(1), current)[0].schema)[0];
     return control.kind === "select" ? control.options.map((o) => [o.value, o.label]) : null;
   };
-  expect(options("")).toEqual([["", "None"], ["teed-1", "Edges (TEED)"]]);
-  expect(options("contour-1")).toEqual([["contour-1", "contour-1 (not loaded)"], ["teed-1", "Edges (TEED)"]]);
+  const built = ["xdog", "Lines (XDoG)"];
+  expect(options("xdog")).toEqual([built, ["teed-1", "Edges (TEED)"]]);
+  expect(options("")).toEqual([["", "None"], built, ["teed-1", "Edges (TEED)"]]);
+  expect(options("contour-1")).toEqual([["contour-1", "contour-1 (not loaded)"], built, ["teed-1", "Edges (TEED)"]]);
 });
 
 test("stages other than the model stage are left alone", () => {

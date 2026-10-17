@@ -34,10 +34,9 @@ const STYLES: [&str; 8] = [
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let guide = std::env::args().any(|a| a == "--guide");
     let (out, width, names) = if guide {
-        // `learned` needs a model file, and the models are not in the repository.
         let names = (list_styles().iter())
             .map(|s| s.name.clone())
-            .filter(|n| !STYLES.contains(&n.as_str()) && n != "learned")
+            .filter(|n| !STYLES.contains(&n.as_str()))
             .collect();
         (Path::new("docs/images/styles"), GUIDE_WIDTH_PX, names)
     } else {

@@ -821,8 +821,14 @@ def run_learned(image, tmp_path, *sets):
     return run(*args, *(f"--set={s}" for s in sets))
 
 
-def test_run_learned_without_a_model_is_a_plain_error(image, tmp_path):
+def test_run_learned_draws_with_the_built_in_model(image, tmp_path):
     r = run_learned(image, tmp_path)
+    assert r.exit_code == 0, r.output
+    assert (tmp_path / "o.svg").exists()
+
+
+def test_run_learned_without_a_model_is_a_plain_error(image, tmp_path):
+    r = run_learned(image, tmp_path, "model.model=")
     assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
     assert r.stderr.startswith("Error: ")
     assert "choose a model; run `plotline models list`" in r.stderr
