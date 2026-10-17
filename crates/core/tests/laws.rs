@@ -24,7 +24,7 @@ use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
 use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
-use plotline_core::optimize::{LONGEST, SLOWER, TRIALS};
+use plotline_core::optimize::{CLOSE, LONGEST, SLOWER, TRIALS};
 use plotline_core::pens::INKS;
 use plotline_core::preview::{render_png_shrunk, render_rgba};
 use plotline_core::raster::simplify;
@@ -1185,6 +1185,24 @@ fn an_optimize_suggestion_keeps_the_limits() {
         };
         prop_assert!(found.trials.len() <= TRIALS);
         prop_assert_eq!(found.current_minutes, minutes);
+        // It is the quickest of the trials within the limits whose tone error is within a tenth
+        // of the lowest, and only a trial left out for its time beats it by more.
+        let kept: Vec<_> = (found.trials.iter())
+            .filter(|t| t.error.is_some() && !t.over && !t.slow && t.warnings.is_empty())
+            .collect();
+        let lowest = kept
+            .iter()
+            .filter_map(|t| t.error)
+            .fold(f64::INFINITY, f64::min);
+        prop_assert!(found.error <= (1.0 + CLOSE) * lowest);
+        prop_assert!(
+            kept.iter()
+                .all(|t| t.error.unwrap() > (1.0 + CLOSE) * lowest
+                    || t.minutes >= Some(found.minutes))
+        );
+        if let Some(b) = &found.beyond {
+            prop_assert!(b.slow && (1.0 + CLOSE) * b.error.unwrap() < lowest);
+        }
         // The suggestion, applied, plots in the time it reports, within the limit, and with no
         // warning the current settings' drawing does not have.
         s.update(&found.stage, &json!({ &found.key: found.value.clone() }))

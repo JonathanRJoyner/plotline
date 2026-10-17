@@ -1,5 +1,5 @@
 //! Optimize: the value of a style's density setting whose drawing follows its tone map most
-//! closely, within its limits, offered as a suggestion and never applied.
+//! closely for its plot time, within its limits, offered as a suggestion and never applied.
 //!
 //! The density setting is the one the budget solver fits ([`Density`]). Its tone error
 //! ([`crate::tone_match`]) has a low inside its range: lines too far apart cannot show the tones,
@@ -17,6 +17,11 @@
 //! defaults; a budget in minutes replaces the time limit. The current value is never too slow and
 //! never newly warned, so only a budget can leave it out. The stop rule counts trials, never
 //! time, so every target takes the same steps.
+//!
+//! The best trial is the quickest to plot of those whose tone error is within [`CLOSE`] of the
+//! lowest. Near its low the error is flat, and neighbouring values differ by up to a fifth as the
+//! marks fall differently on the image's detail, so the lowest error alone buys accidents with
+//! plot time (see `docs/decisions/2026-10-16-optimize-limits.md`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,6 +48,9 @@ const STEPS: i32 = 4;
 /// is more.
 pub const SLOWER: f64 = 2.0;
 pub const LONGEST: f64 = 60.0;
+/// A trial whose tone error is within this share of the lowest follows the tones as closely: a
+/// tenth, the margin by which a look must beat Balanced (`docs/decisions/2026-10-16-looks.md`).
+pub const CLOSE: f64 = 0.1;
 
 /// A budget the drawing must stay within: `metric` at most `target`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -96,6 +104,11 @@ pub struct Optimum {
     pub current_error: Option<f64>,
     pub current_minutes: f64,
     pub budget: Option<Budget>,
+    /// The time limit in minutes, `None` when a budget in minutes replaced it.
+    pub limit_minutes: Option<f64>,
+    /// The trial left out only for its plot time with the lowest tone error, when that error is
+    /// more than [`CLOSE`] under every trial's within the limits.
+    pub beyond: Option<Trial>,
     /// Every trial, in order.
     pub trials: Vec<Trial>,
     /// A sentence for people, and the patch that applies the best value, `{"settings": {stage:
@@ -150,9 +163,9 @@ impl Search {
     pub fn record(&mut self, mut trial: Trial) {
         match self.trials.first() {
             None => self.known = std::mem::take(&mut trial.warnings),
-            Some(first) => {
-                let limit = (SLOWER * first.minutes.unwrap_or(0.0)).max(LONGEST);
-                trial.slow = self.timed && trial.minutes.is_some_and(|m| m > limit);
+            Some(_) => {
+                let limit = self.limit();
+                trial.slow = (trial.minutes.zip(limit)).is_some_and(|(m, l)| m > l);
                 trial.warnings.retain(|w| !self.known.contains(w));
             }
         }
@@ -164,15 +177,44 @@ impl Search {
         &self.trials
     }
 
-    /// The trial with the lowest score, the earliest of equals; `None` when none has a score.
+    /// The time limit in minutes once the first trial has run, `None` without one.
+    pub fn limit(&self) -> Option<f64> {
+        let first = self.trials.first().filter(|_| self.timed)?;
+        Some((SLOWER * first.minutes.unwrap_or(0.0)).max(LONGEST))
+    }
+
+    /// The lowest score, infinite when no trial has one.
+    fn lowest(&self) -> f64 {
+        self.trials
+            .iter()
+            .map(Trial::score)
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// The quickest trial whose score is within [`CLOSE`] of the lowest, the earliest of equals;
+    /// `None` when none has a score.
     pub fn best(&self) -> Option<&Trial> {
-        self.trials.iter().filter(|t| t.score().is_finite()).fold(
-            None,
-            |best: Option<&Trial>, t| match best {
-                Some(b) if b.score() <= t.score() => Some(b),
+        let near = (1.0 + CLOSE) * self.lowest();
+        self.trials
+            .iter()
+            .filter(|t| t.score().is_finite() && t.score() <= near)
+            .fold(None, |best: Option<&Trial>, t| match best {
+                Some(b) if b.minutes <= t.minutes => Some(b),
                 _ => Some(t),
-            },
-        )
+            })
+    }
+
+    /// The trial left out only for its plot time with the lowest tone error, when that error is
+    /// more than [`CLOSE`] under the lowest score, so that it would have been best without the
+    /// limit; the earliest of equals.
+    pub fn beyond(&self) -> Option<&Trial> {
+        let slow = |t: &&Trial| t.slow && !t.over && t.warnings.is_empty() && t.error.is_some();
+        (self.trials.iter().filter(slow))
+            .fold(None, |best: Option<&Trial>, t| match best {
+                Some(b) if b.error <= t.error => Some(b),
+                _ => Some(t),
+            })
+            .filter(|t| t.error.is_some_and(|e| (1.0 + CLOSE) * e < self.lowest()))
     }
 }
 
@@ -428,10 +470,10 @@ impl OptimizeRun {
             None => String::new(),
         };
         let time = |m: f64| Metric::Minutes.show(m);
-        let (reason, patch) = if best.value == first.value {
+        let (mut reason, patch) = if best.value == first.value {
             let reason = format!(
-                "{} {}{unit} already follows the image's tones best{within}, with a tone error of \
-                 {error:.3} and {} to plot.",
+                "{} {}{unit} already follows the image's tones best for its plot time{within}, \
+                 with a tone error of {error:.3} and {} to plot.",
                 d.key,
                 first.value,
                 time(current_minutes)
@@ -451,8 +493,8 @@ impl OptimizeRun {
                 ),
             };
             let reason = format!(
-                "{} {}{unit} follows the image's tones best{within}: a tone error of {error:.3} \
-                 and {} to plot, {against}.",
+                "{} {}{unit} follows the image's tones best for its plot time{within}: a tone \
+                 error of {error:.3} and {} to plot, {against}.",
                 d.key,
                 best.value,
                 time(minutes)
@@ -460,6 +502,19 @@ impl OptimizeRun {
             let patch = json!({"settings": {d.stage.clone(): {d.key.clone(): value.clone()}}});
             (reason, Some(patch))
         };
+        let limit_minutes = self.search.limit();
+        let beyond = self.search.beyond().cloned();
+        if let (Some(b), Some(limit)) = (&beyond, limit_minutes) {
+            reason += &format!(
+                " {} {}{unit} follows them more closely, with a tone error of {:.3}, but takes {} \
+                 to plot, over the limit of {}; a budget in minutes replaces the limit.",
+                d.key,
+                b.value,
+                b.error.expect("a trial beyond the limit has a tone error"),
+                time(b.minutes.expect("a slow trial has a plot time")),
+                time(limit)
+            );
+        }
         Some(Optimum {
             stage: d.stage.clone(),
             key: d.key.clone(),
@@ -470,6 +525,8 @@ impl OptimizeRun {
             current_error,
             current_minutes,
             budget: self.budget,
+            limit_minutes,
+            beyond,
             trials: self.search.trials().to_vec(),
             reason,
             patch,
@@ -659,6 +716,48 @@ mod tests {
         while job.next_frame().is_some() {}
         assert_eq!(job.state(), RunState::Error);
         assert!(job.error().is_some());
+    }
+
+    #[test]
+    fn the_quickest_value_within_a_tenth_of_the_lowest_error_is_best() {
+        // Error falls as the spacing narrows, by under a tenth from 1 mm down, and time rises.
+        let at = |v: f64| Trial {
+            minutes: Some(40.0 / v),
+            ..trial(v, Some(if v < 1.5 { 0.08 + v / 100.0 } else { v / 10.0 }))
+        };
+        let s = scan(Search::new(spacing(), 2.0, false), at);
+        assert_eq!(s.best().unwrap().value, 1.0);
+        assert_eq!(s.beyond(), None);
+        // Equal times keep the earliest within the tenth.
+        let s = scan(Search::new(spacing(), 2.0, true), |v| {
+            trial(v, Some(if v <= 2.0 { 1.0 } else { 1.05 }))
+        });
+        assert_eq!(s.best().unwrap().value, 2.0);
+    }
+
+    #[test]
+    fn a_much_closer_value_left_out_for_time_is_beyond_the_limit() {
+        // The current value takes 20 minutes, so the limit is an hour: under 0.7 mm is too slow,
+        // and 0.5 mm follows the tones more than a tenth more closely than anything quicker.
+        let s = scan(Search::new(spacing(), 2.0, true), |v| Trial {
+            minutes: Some(40.0 / v),
+            ..trial(v, Some(v))
+        });
+        assert_eq!(s.limit(), Some(LONGEST));
+        assert_eq!(s.best().unwrap().value, 0.707);
+        assert_eq!(s.beyond().unwrap().value, 0.5);
+        // Within a tenth it is not.
+        let s = scan(Search::new(spacing(), 2.0, true), |v| Trial {
+            minutes: Some(40.0 / v),
+            ..trial(v, Some(1.0 + v / 100.0))
+        });
+        assert_eq!(s.beyond(), None);
+        // A budget in minutes replaces the limit, so nothing is beyond it.
+        let s = scan(Search::new(spacing(), 2.0, false), |v| Trial {
+            minutes: Some(40.0 / v),
+            ..trial(v, Some(v))
+        });
+        assert_eq!((s.limit(), s.beyond()), (None, None));
     }
 
     #[test]

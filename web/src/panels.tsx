@@ -457,11 +457,16 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
     const at = (v: unknown) => `${String(v)}${c && "unit" in c && c.unit ? ` ${c.unit}` : ""}`;
     const within = o.budget ? ` within ${o.budget.target} ${unit(o.budget.metric)}` : "";
     const time = (minutes: number) => `${minutes.toFixed(1)} min`;
-    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best${within}, with a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot.`;
+    const b = o.beyond;
+    // A value the time limit left out that would have followed the tones more closely, and how to allow it.
+    const beyond = b && b.error !== null && b.minutes !== null && o.limit_minutes !== null
+      ? ` ${label} at ${at(b.value)} follows them more closely, with a tone error of ${b.error.toFixed(3)}, but takes ${time(b.minutes)} to plot, over the limit of ${time(o.limit_minutes)}: type a target in minutes to allow it.`
+      : "";
+    if (!o.patch) return `${label} at ${at(o.current)} already follows the image's tones best for its plot time${within}, with a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot.${beyond}`;
     const against = o.current_error === null
       ? `${at(o.current)} goes over the target in ${time(o.current_minutes)}`
       : `against ${o.current_error.toFixed(3)} and ${time(o.current_minutes)} at ${at(o.current)}`;
-    return `${label} at ${at(o.value)} follows the image's tones best${within}: a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot, ${against}.`;
+    return `${label} at ${at(o.value)} follows the image's tones best for its plot time${within}: a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot, ${against}.${beyond}`;
   };
   return (
     <details class="fit-panel" data-tour="fit" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
@@ -482,7 +487,7 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
         </button>
         <button
           type="button" disabled={disabled}
-          title="Reruns the style up to nine times with its density setting from a quarter to four times its value, and suggests the value whose drawing's tones follow the image best. It leaves out values that plot for over twice as long, or an hour if that is more, or that the plot lint warns about, and keeps within the target if one is typed. Nothing changes until you apply it."
+          title="Reruns the style up to nine times with its density setting from a quarter to four times its value, and suggests the quickest value whose drawing's tones follow the image within a tenth of the best. It leaves out values that plot for over twice as long, or an hour if that is more, or that the plot lint warns about, keeps within the target if one is typed, and says when a value left out for its time would follow the tones more closely. Nothing changes until you apply it."
           onClick={() => (Number(target) > 0 ? onOptimize(metric, Number(target)) : onOptimize())}
         >
           <Wand /> Optimize

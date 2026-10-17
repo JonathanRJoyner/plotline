@@ -221,10 +221,10 @@ impl Session {
     }
 
     /// Cancel the latest run and start a search of the style's density setting for the value
-    /// whose drawing follows the tone map most closely, every trial within `target` of `metric`
-    /// when both are given. The settings are left as they are; once the run is done, `result()`
-    /// holds the suggestion. Raises `RuntimeError` when no image is set and `ValueError` for a
-    /// search the engine refuses or only one of `metric` and `target`.
+    /// whose drawing follows the tone map most closely for its plot time, every trial within
+    /// `target` of `metric` when both are given. The settings are left as they are; once the run
+    /// is done, `result()` holds the suggestion. Raises `RuntimeError` when no image is set and
+    /// `ValueError` for a search the engine refuses or only one of `metric` and `target`.
     #[pyo3(signature = (metric = None, target = None))]
     fn optimize(&mut self, metric: Option<&str>, target: Option<f64>) -> PyResult<Run> {
         let budget = match (metric, target) {

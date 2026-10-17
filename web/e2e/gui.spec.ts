@@ -353,6 +353,31 @@ test("Optimize suggests a spacing and changes nothing until Apply", async ({ pag
   await expect(spacing).toHaveValue(value);
 });
 
+test("Optimize names a closer spacing the time limit left out", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  // A slow pen lift puts the denser spacings over the hour.
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("button", { name: "Plot time", exact: true }).click();
+  const lift = dialog.getByRole("spinbutton", { name: /^Pen lift/ });
+  await lift.fill("40");
+  await lift.blur();
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Sample image", exact: true }).click();
+  const id = await pick(page, "hatch", await ran(page, 0));
+  const spacing = page.getByRole("spinbutton", { name: /^spacing( mm)?$/i });
+  await spacing.fill("8");
+  await spacing.blur();
+  const sparse = await ran(page, id);
+  await fitSummary(page).click();
+  await page.getByRole("button", { name: "Optimize" }).click();
+  await ran(page, sparse);
+  const found = page.locator("form.fit span");
+  await expect(found).toContainText("follows the image's tones best for its plot time");
+  await expect(found).toContainText(/Spacing at [\d.]+ mm follows them more closely, with a tone error of \d\.\d{3}, but takes [\d.]+ min to plot, over the limit of [\d.]+ min: type a target in minutes to allow it\./);
+});
+
 test("Response auto corrects the tone map for the style", async ({ page }) => {
   const id = await pick(page, "hatch", await sample(page));
   const stats = await page.locator(".stats").textContent();
