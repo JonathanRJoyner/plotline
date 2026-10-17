@@ -1566,7 +1566,10 @@ fn dots_sized_by_their_grid_ink_their_share_of_a_dark_page_at_any_spacing() {
     // `PI / 4 * (dot / spacing)^2` of its cell, and neighbours that overlap cover at least the
     // `PI / 4` of touching ones. Full ink puts a dot in every cell of a grid or of error
     // diffusion, so the grid's cells are inked that much whatever the spacing: a closer grid has
-    // smaller dots, not a lighter page. The raster may miss a few percent at a dot's rim.
+    // smaller dots, not a lighter page. A dot's rim is sampled at most a quarter pen apart, so a
+    // rim under `pen / (4 PI)` from the centre is drawn as a short stroke across it, which inks
+    // 89.5 % of the disc at worst (a 0.54 mm pen in a 0.61 mm dot inked 91 %), and the raster may
+    // miss a few percent more.
     let styles = shares_of_spacing();
     assert!(!styles.is_empty(), "no setting is marked x-share-of");
     let strategy = (select(styles), 0.0..1.0f64, 0.0..1.0f64, 0.1..1.0f64);
@@ -1611,7 +1614,7 @@ fn dots_sized_by_their_grid_ink_their_share_of_a_dark_page_at_any_spacing() {
             let dot = (share * spacing).max(pen) / spacing;
             let least = std::f64::consts::FRAC_PI_4 * dot.min(1.0).powi(2);
             prop_assert!(
-            inked >= 0.9 * least,
+            inked >= 0.85 * least,
             "{style} at {spacing} mm, share {share}, pen {pen}: inks {inked} of its cells, under {least}"
         );
             Ok(())
