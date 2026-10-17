@@ -356,10 +356,23 @@ mod tests {
         assert_eq!(open_at_edge(&inside, 3, 3), vec![inside.to_vec()]);
         // A loop through the padding on the left: the stretch inside keeps one padding vertex at
         // each end.
-        let line = [[0.5, 1.0], [1.5, 1.0], [2.0, 2.0], [1.5, 3.0], [0.5, 3.0], [0.5, 1.0]];
+        let line = [
+            [0.5, 1.0],
+            [1.5, 1.0],
+            [2.0, 2.0],
+            [1.5, 3.0],
+            [0.5, 3.0],
+            [0.5, 1.0],
+        ];
         assert_eq!(
             open_at_edge(&line, 3, 3),
-            vec![vec![[0.5, 1.0], [1.5, 1.0], [2.0, 2.0], [1.5, 3.0], [0.5, 3.0]]]
+            vec![vec![
+                [0.5, 1.0],
+                [1.5, 1.0],
+                [2.0, 2.0],
+                [1.5, 3.0],
+                [0.5, 3.0]
+            ]]
         );
     }
 
