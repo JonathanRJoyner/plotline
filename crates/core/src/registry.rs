@@ -150,8 +150,8 @@ pub fn learned_style() -> Style {
     Style::new(
         "learned",
         "Learned lines",
-        "Draws the lines a trained model finds in the image: outlines and creases, as a person \
-         would draw them. Needs a model from Get models.",
+        "Draws the lines a trained line-drawing model finds in the image, each once down its \
+         middle. It needs a model: get one in the style picker or with `plotline models get`.",
         vec![
             Arc::new(ModelStage),
             Arc::new(SplitStage),
