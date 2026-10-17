@@ -20,7 +20,7 @@ from looks import off_look, style_with_looks
 from machines import MACHINE
 from pngs import decode_png, write_png
 
-from plotline import Pen, _core, get_style, inks, list_styles, models
+from plotline import Pen, Session, _core, get_style, inks, list_styles, models
 from plotline.cli.main import main, parse_pen, parse_set
 
 
@@ -718,3 +718,65 @@ def test_models_remove_deletes_the_file():
     assert r.exit_code == 0 and models.kept() == []
     r = run("models", "remove", model_id)
     assert r.exit_code == 1 and "plotline models list" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("models", "list"),
+        ("models", "get", "demo-1", "--accept-licence"),
+        ("models", "add", str(TINY_MODEL)),
+        ("models", "remove", "demo-1"),
+    ],
+)
+def test_the_models_commands_without_a_home_folder_say_so(monkeypatch, args):
+    with_catalogue(monkeypatch)
+
+    def no_home():
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(models, "cache_dir", no_home)
+    r = run(*args)
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert r.stderr == "Error: Could not determine home directory.\n"
+
+
+def run_learned(image, tmp_path, *sets):
+    args = ["run", "learned", image, "--out", str(tmp_path / "o.svg")]
+    return run(*args, *(f"--set={s}" for s in sets))
+
+
+def test_run_learned_without_a_model_is_a_plain_error(image, tmp_path):
+    r = run_learned(image, tmp_path)
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert r.stderr.startswith("Error: ")
+    assert "choose a model; run `plotline models list`" in r.stderr
+    assert "Traceback" not in r.output and "Styles" not in r.stderr  # the GUI's path is no advice
+    assert not (tmp_path / "o.svg").exists()
+
+
+def test_run_learned_with_a_model_that_is_not_loaded_says_how_to_get_it(image, tmp_path):
+    r = run_learned(image, tmp_path, "model.model=teed-1")
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert "model teed-1 is not loaded; run `plotline models get teed-1`" in r.stderr
+    assert "Styles" not in r.stderr
+
+
+def test_a_preset_naming_a_model_that_is_not_loaded_is_a_plain_error(image, tmp_path):
+    preset = tmp_path / "p.json"
+    session = Session()
+    session.set_style("learned")
+    session.update("model", model="teed-1")
+    session.save_preset(preset)
+    r = run("run", "learned", image, "--out", str(tmp_path / "o.svg"), "--preset", str(preset))
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert "model teed-1 is not loaded; run `plotline models get teed-1`" in r.stderr
+
+
+def test_a_kept_file_that_cannot_load_leaves_a_plain_error(image, tmp_path):
+    models.cache_dir().mkdir(parents=True)
+    (models.cache_dir() / "file-0123456789ab.onnx").write_bytes(b"not a model")
+    with pytest.warns(UserWarning, match="file-0123456789ab"):
+        r = run_learned(image, tmp_path, "model.model=file-0123456789ab")
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert "model file-0123456789ab is not loaded" in r.stderr

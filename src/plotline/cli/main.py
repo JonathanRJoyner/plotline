@@ -14,6 +14,7 @@ layer, so this module holds no algorithm code.
 import http.server
 import importlib.util
 import json
+import re
 import sys
 import webbrowser
 from collections.abc import Callable, Iterator
@@ -86,15 +87,22 @@ def parse_pen(value: str) -> Pen:
         raise click.BadParameter(f"{value!r}: {error}") from error
 
 
+# The engine's advice for a model that is missing names the browser's menus before the command, and
+# a command line has only the command.
+_BROWSER_ADVICE = re.compile(
+    r"(?:get (?:it|one) from Styles, then Get models|load it again with Load your own), or run "
+)
+
+
 @contextmanager
 def _errors() -> Iterator[None]:
     """Turn the errors that bad input causes in the session into a one-line CLI error. The engine
-    reports a refused value as ``ValueError``, and a file that cannot be read is an
-    ``OSError``."""
+    reports a refused value as ``ValueError``, and a file that cannot be read is an ``OSError``.
+    A failed run, a model that is not loaded and a missing home folder are ``RuntimeError``."""
     try:
         yield
-    except (ValueError, OSError) as error:
-        raise click.ClickException(str(error)) from error
+    except (ValueError, OSError, RuntimeError) as error:
+        raise click.ClickException(_BROWSER_ADVICE.sub("run ", str(error))) from error
 
 
 @click.group()
@@ -653,8 +661,10 @@ def models_get(id: str, accept_licence: bool) -> None:
         "Provided as is, without warranty of any kind.",
     ):
         click.echo(line)
-    # A licence accepted before is not asked again; a changed one is (models.accepted).
-    if not (accept_licence or models.accepted(entry)):
+    with _errors():
+        # A licence accepted before is not asked again; a changed one is (models.accepted).
+        asked = not (accept_licence or models.accepted(entry))
+    if asked:  # outside `_errors`, because the abort of a "no" is a RuntimeError too
         click.confirm("Accept this licence and download?", abort=True)
     with _errors():
         path = models.download(entry)
