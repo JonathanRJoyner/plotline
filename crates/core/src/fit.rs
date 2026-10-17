@@ -2,9 +2,14 @@
 //!
 //! A stage marks its density setting in its schema with `"x-density"`: `"inverse"` when the
 //! drawing gets sparser as the value rises, as with a spacing, and `"direct"` when it gets denser,
-//! as with a count. A [`FitRun`] reruns the style with that setting changed, up to [`MAX_TRIALS`]
-//! times, until a [`Metric`] of the drawing is within [`TOLERANCE`] of a target, and keeps the
-//! trial nearest the target.
+//! as with a count. The setting may also carry `"x-density-of"`: `"points"`, `"lines"` or
+//! `"length"`, the measure that its value drives (the points placed, the path count or the
+//! pen-down length), where that is not the default of points for a style that places points and
+//! length for any other. Only the property laws read it.
+//!
+//! A [`FitRun`] reruns the style with that setting changed, up to [`MAX_TRIALS`] times, until a
+//! [`Metric`] of the drawing is within [`TOLERANCE`] of a target, and keeps the trial nearest the
+//! target.
 //!
 //! The search works on `u = ln(value)` and `f(u) = ln(metric / target)`, which is close to a
 //! straight line because the metrics follow powers of the density settings. It starts at the
@@ -835,6 +840,16 @@ mod tests {
         }
         assert!(labels.iter().all(|l| l == "cached"), "{labels:?}");
         assert_eq!(s.stats().unwrap().estimated_seconds / 60.0, r.achieved);
+    }
+
+    #[test]
+    fn the_kept_drawing_carries_the_fitted_value_in_its_preset() {
+        let mut s = session("hatch", &[]);
+        let (r, _) = fit(&mut s, "minutes", 5.0);
+        let loaded = crate::presets::from_text(&s.svg().unwrap()).unwrap();
+        assert_eq!(loaded["settings"][&r.stage][&r.key], r.value);
+        // The fit left the session's own setting alone.
+        assert_ne!(s.settings()[&r.stage][&r.key], r.value);
     }
 
     #[test]

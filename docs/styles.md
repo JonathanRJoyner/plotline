@@ -13,13 +13,15 @@ Each picture is the code-rendered still life from the README, drawn on A4 with a
 
 ## Settings every style shares
 
-**Image** (the `tone` stage) turns the picture into the map of ink the style draws from. `resolution` is the map's longer side in pixels; more follows the image more closely and runs slower. `black` and `white` clip the ends of the tone range, or `levels` set to `auto` picks them from the image itself. `gamma` above 1 darkens the midtones: `waves`, `spiral` and `mosaic` start at 1.9, because they ink in proportion to the tone and would draw the midtones too light at 1. `contrast` pushes tones away from mid-grey, `blur_mm` smooths away noise and fine texture, and `invert` swaps light and dark. `learned` has a Model stage in its place, which places the image on the page the same way.
+**Image** (the `tone` stage) turns the picture into the map of ink the style draws from. `resolution` is the map's longer side in pixels; more follows the image more closely and runs slower. `black` and `white` clip the ends of the tone range, or `levels` set to `auto` picks them from the image itself. `gamma` above 1 darkens the midtones: `waves`, `spiral` and `mosaic` start at 1.9, because they ink in proportion to the tone and would draw the midtones too light at 1. `contrast` pushes tones away from mid-grey, `blur_mm` smooths away noise and fine texture, and `invert` swaps light and dark. `focus` is a list of points, `[x, y]` as shares of the image from its top-left corner and set in the GUI by turning on Focus and clicking the preview: the map keeps its detail within `focus_mm` of the nearest point and blurs more the further out it goes, up to `focus_blur_mm` from three radii out, so a style's marks spend their detail near the points. Without points nothing changes. `learned` has a Model stage in its place, which places the image on the page the same way.
 
 **Pen use** (the `split` stage) shares the drawing between the pens: the first pen alone, light to dark in list order, or each pen by its colour. With several pens, every style but `ink` and `learned` spreads its marks so that one pen does not draw on top of another.
 
-**Path order** (the `order` stage) reorders the paths to cut pen-up travel (`optimize`) and drops paths shorter than `min_length_mm`, which clears specks.
+**Path order** (the `order` stage) reorders the paths to cut pen-up travel (`optimize`), drops paths shorter than `min_length_mm`, which clears specks, and, with `simplify_mm` above 0, removes the vertices a pen cannot show (Ramer–Douglas–Peucker; see [the decision](decisions/2026-10-16-path-simplification.md)).
 
 **Density.** Every style but `ink` and `learned` has one density setting, named in its section. Fit to target in the GUI, the `--fit-minutes`, `--fit-paths`, `--fit-metres` and `--fit-dots` flags and the MCP `fit` tool change that setting until the drawing meets a plot time, a path count, metres of line or a dot count.
+
+**Looks.** Most styles offer a few starting points besides their defaults (Balanced), each chosen by measuring the still life, a landscape and a gradient on A4 with a 0.3 mm pen: Faithful follows the image's tones most closely, Quick plots in about half an hour, and Fine draws the densest marks that still plot cleanly. A look sets only its few settings, so Pen use and the image settings stay. Pick one with Look under the style in the GUI, `--look` on the command line or `look` on the MCP `run` tool; [the looks decision](decisions/2026-10-16-looks.md) has the rules and every measurement.
 
 **Pen lifts.** Each path costs one lift of the pen. On a plotter that lifts slowly, or on a pen-fitted 3D printer where every lift is a Z move, styles that draw a few long paths (`waves`, `spiral`, `line`, `scribble`, `hilbert`, `contours`, `flow`) plot faster and wear the machine less than styles of thousands of dots or strokes.
 
@@ -39,7 +41,7 @@ A dot at every point of a square grid where the ink reaches a threshold. Tone sh
 
 **Pens.** A dot is one touch of the pen, so the pen's width is the dot's size. A wide marker gives a strong pattern; a fine liner needs a fine spacing to show anything. Every dot is a pen lift.
 
-**Looks:** none yet.
+**Looks:** Quick (`points.spacing_mm` 1.8: about 30 minutes on the median test image, against 92) and Fine (0.8 mm).
 
 ### `hatch`
 
@@ -57,7 +59,7 @@ Straight parallel lines over the areas dark enough, the engraver's technique. Ea
 
 **Pens.** Fineliners from 0.1 to 0.3 mm. Where layers cross the pen passes a spot twice, which most papers take well. Keep the spacing above the pen width, or the lines merge into a smear.
 
-**Looks:** none yet.
+**Looks:** Fine (`hatch.spacing_mm` 0.7). Its best tone error comes within 10 % of the default's, so it has no Faithful.
 
 ### `waves`
 
@@ -75,7 +77,7 @@ Parallel lines that ripple more where the image is darker, each line one stroke.
 
 **Pens.** Any pen that draws a steady line, ballpoints and gel pens included, since each line is one long stroke. A fine pen keeps the ripples apart.
 
-**Looks:** none yet.
+**Looks:** Faithful (`waves.spacing_mm` 2.8: half the default's tone error in the same plot time) and Fine (1.0 mm).
 
 ### `spiral`
 
@@ -91,7 +93,7 @@ One spiral from the centre out, rippling more where the image is darker. It is `
 
 **Pens.** As for `waves`. The spiral is one long stroke, broken only where it leaves the image.
 
-**Looks:** none yet.
+**Looks:** Fine (`spiral.spacing_mm` 1.4).
 
 ### `truchet`
 
@@ -108,7 +110,7 @@ Square tiles in random turns, each holding quarter-circle arcs about two opposit
 
 **Pens.** Keep `spacing_mm` above the pen width, or the nested arcs merge into bands; plot lint warns about it.
 
-**Looks:** none yet.
+**Looks:** Faithful (`truchet.spacing_mm` 0.3, the default pen's width, so the arcs fill into bands).
 
 ### `ink`
 
@@ -126,7 +128,7 @@ Draws the marks of line art, lettering and inked drawings as they are. Every ink
 
 **Pens.** Set the pen you will plot with before running: the rings are spaced by its width. Large solid areas lay down a lot of ink, so use paper that takes it.
 
-**Looks:** none yet.
+**Looks:** Balanced only: it has no density setting.
 
 ### `learned`
 
@@ -148,7 +150,7 @@ The model's answer is cached like any stage's, so changing the threshold, the pe
 
 **Pens.** Any pen; a line is drawn at the pen's own width. Each line costs one pen lift, and a busy photograph gives many short ones, so raise `ink.threshold`, or `order.min_length_mm`, to drop the fainter and shorter ones.
 
-**Looks:** none yet.
+**Looks:** Balanced only: it has no density setting.
 
 ## The Voronoi point family
 
@@ -174,7 +176,7 @@ A dot at each point, sized by the ink under it.
 
 **Pens.** Every dot is a pen lift. A fine pen with `point` dots plots fastest; spiral-filled dots go over the same spot many times, so use a pen that does not flood the paper.
 
-**Looks:** none yet.
+**Looks:** Fine (`voronoi.count` 12,000).
 
 ### `line`
 
@@ -191,7 +193,7 @@ The points joined into one unbroken line that does not cross itself, a travellin
 
 **Pens.** Any pen that draws a steady line. With one stroke, the pen never lifts.
 
-**Looks:** none yet.
+**Looks:** Faithful (`tone.response` auto and `voronoi.count` 20,000: the tone error falls from 0.149 to 0.056).
 
 ### `dashes`
 
@@ -208,7 +210,7 @@ A short stroke at each point, laid along the image's edges, like quick pen strok
 
 **Pens.** Every dash is a pen lift. Fine and medium fineliners work well.
 
-**Looks:** none yet.
+**Looks:** Faithful (`voronoi.count` 12,000).
 
 ### `tree`
 
@@ -222,7 +224,7 @@ The points joined by the shortest tree, so every point is reached and no loop fo
 
 **Pens.** Fine pens. The tree is drawn as long branching strokes, so the pen lifts far less often than there are points.
 
-**Looks:** none yet.
+**Looks:** Faithful (`tone.response` auto and `voronoi.count` 20,000).
 
 ### `mesh`
 
@@ -237,7 +239,7 @@ A triangle mesh over the points (their Delaunay triangulation), dense and dark w
 
 **Pens.** A fine pen: the mesh draws a lot of line, and close edges merge under a wide pen.
 
-**Looks:** none yet.
+**Looks:** Faithful (`tone.response` auto and `voronoi.count` 6,000) and Fine (`voronoi.count` 20,000).
 
 ### `cells`
 
@@ -251,7 +253,7 @@ The outlines of the points' Voronoi cells: small cells where it is dark, large o
 
 **Pens.** A fine pen. The outlines are drawn in thousands of short pieces, so expect many pen lifts.
 
-**Looks:** none yet.
+**Looks:** Faithful (`tone.response` auto and `voronoi.count` 8,400) and Fine (`voronoi.count` 12,000).
 
 ### `scribble`
 
@@ -269,7 +271,7 @@ Loops traced along the same line `line` draws through the points: small and clos
 
 **Pens.** Loops cross each other all the time, so use a pen that does not bleed or pill the paper where it passes again. The whole drawing is one stroke.
 
-**Looks:** none yet.
+**Looks:** Faithful (`voronoi.count` 20,000).
 
 ## Sketch lines
 
@@ -291,7 +293,7 @@ Straight strokes chained from dark to dark. From the pen it tries many direction
 
 **Pens.** Fine pens give the pencil look. Strokes cross and retrace dark areas, so a wet pen can soak the paper there.
 
-**Looks:** none yet.
+**Looks:** Faithful (`tone.response` auto and `sketch.max_lines` 20,000) and Fine (`sketch.max_lines` 10,000).
 
 ## Other placers
 
@@ -312,7 +314,7 @@ Dots on a regular grid, each sized by the ink, like a printed halftone screen.
 
 **Pens.** Large dots are filled with spirals, so a wider pen fills them in fewer turns and plots faster. Every dot is a pen lift; this is one of the slowest styles to plot.
 
-**Looks:** none yet.
+**Looks:** Balanced only: with the 0.3 mm pen it leaves specks on light gradients at its default spacing and every finer one.
 
 ### `dither`
 
@@ -328,7 +330,7 @@ Dots where error diffusion puts them: each grid cell gets a dot or none, and the
 
 **Pens.** A dot is one touch of the pen, so the pen's width is the dot's size; match it to the spacing. Every dot is a pen lift.
 
-**Looks:** none yet.
+**Looks:** Faithful (`dither.spacing_mm` 0.8) and Quick (1.8 mm: about 30 minutes on the median test image, against 93).
 
 ### `circles`
 
@@ -347,7 +349,7 @@ Circles packed without overlapping, larger and closer where it is darker.
 
 **Pens.** Any pen; the circles are hollow, so they take little ink.
 
-**Looks:** none yet.
+**Looks:** Faithful (`poisson.spacing_mm` 1.5).
 
 ## Tone only
 
@@ -367,7 +369,7 @@ Level lines of the image, like a topographic map: each line follows one tone.
 
 **Pens.** Any pen. The lines are long, so the pen lifts rarely.
 
-**Looks:** none yet.
+**Looks:** Balanced only: its default levels already stack where the tone is steep.
 
 ### `flow`
 
@@ -385,7 +387,7 @@ Evenly spaced lines that follow the image's edges, closer together where it is d
 
 **Pens.** Any pen; the lines are long.
 
-**Looks:** none yet.
+**Looks:** Faithful (`tone.response` auto and `flow.min_spacing_mm` 0.3).
 
 ### `hilbert`
 
@@ -401,7 +403,7 @@ One space-filling curve over the whole page that folds tighter where it is darke
 
 **Pens.** Keep `cell_mm` above the pen width so the finest folds stay open.
 
-**Looks:** none yet.
+**Looks:** Faithful (`tone.response` auto and `hilbert.cell_mm` 0.3).
 
 ### `mosaic`
 
@@ -418,4 +420,4 @@ The image cut into patches that follow its shapes (SLIC superpixels), each fille
 
 **Pens.** Fineliners. Keep `spacing_mm` above the pen width.
 
-**Looks:** none yet.
+**Looks:** Faithful (`mosaic.spacing_mm` 0.3: the tone error falls from 0.044 to 0.017).

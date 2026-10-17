@@ -92,6 +92,7 @@ fn drawing_on(canvas: Canvas, pen: Pen, paths: Vec<Vec<[f64; 2]>>) -> Drawing {
             paths: layer_paths,
         }],
         tone: None,
+        preset: None,
     }
 }
 

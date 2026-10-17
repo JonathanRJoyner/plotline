@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping. Read the [design brief](docs/BRIEF.md) first: it holds the goals, the architecture, every decision so far with its reason, and the open questions. A change that settles an open question records the decision and the reason in the brief's decision log.
+Thanks for helping. Read the [design brief](docs/BRIEF.md) first: it holds the goals, the architecture, every decision so far with its reason, and the open questions. A change that settles an open question records the decision and the reason as a file in [docs/decisions/](docs/decisions/README.md); the brief's table holds the decisions made before 2026-10-16. A user-visible change adds an entry file in [changelog.d/](changelog.d/README.md) rather than editing `CHANGELOG.md`, so pull requests that land together don't conflict.
 
 ## Setup
 
@@ -54,6 +54,8 @@ The browser tests in `web/e2e` run in Chromium against the bundle `npm run build
 npx playwright install chromium
 npm run e2e
 ```
+
+The flows serve the bundle on a free port, or on `PLOTLINE_E2E_PORT` when it is set, so two worktrees can run them at once.
 
 ## Property laws
 

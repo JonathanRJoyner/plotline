@@ -26,6 +26,8 @@ pub mod stages;
 pub mod stats;
 pub mod style;
 pub mod synthetic;
+pub mod testchart;
+pub mod text;
 pub mod tone_match;
 pub mod types;
 
@@ -38,7 +40,9 @@ pub use runner::{Run, RunState};
 pub use session::{Session, SessionError};
 pub use stage::Frame;
 pub use stats::{Speeds, Stats};
-pub use types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap, TypeError};
+pub use types::{
+    Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap, TypeError, DEFAULT_PAPER,
+};
 
 #[cfg(test)]
 mod test_util;
@@ -50,6 +54,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod tests {
     #[test]
     fn version_is_the_release() {
-        assert_eq!(super::VERSION, "0.2.0-dev0");
+        assert_eq!(super::VERSION, "0.3.0-dev0");
     }
 }

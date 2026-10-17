@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, expect, test } from "vitest";
-import init, { Session, syntheticGradient } from "../pkg/plotline_wasm.js";
+import init, { listStyles, Session, syntheticGradient } from "../pkg/plotline_wasm.js";
 import { macrotask } from "./driver";
 import type { Finding, Ink, Machine, Pen } from "./events";
 import { History, setupOf } from "./history";
@@ -54,6 +54,33 @@ test("setImage starts a run", async () => {
   expect(posted.some((m) => m.type === "result" && m.id === 1)).toBe(true);
 });
 
+test("focus points: the engine places a page point in the image and the state says where each is drawn", async () => {
+  const { ok, ended } = setup();
+  expect(ok("imagePoint", 105, 148.5).value).toBeNull(); // no image yet
+  expect(ok("preset").state.focus).toEqual([]);
+  ok("setImage", ...image());
+  await ended(1);
+  // The 64 by 48 image fits the A4 drawing area 190 mm wide and sits centred on the page.
+  expect(ok("imagePoint", 105, 148.5).value).toEqual([0.5, 0.5]);
+  expect(ok("imagePoint", 10, 77.25).value).toEqual([0, 0]);
+  expect(ok("imagePoint", 105, 20).value).toBeNull();
+  const { state } = ok("update", "tone", { focus: [[0.5, 0.5], [0.25, 0.75]] });
+  expect(state.focus).toEqual([[105, 148.5], [57.5, 184.125]]);
+  await ended(2);
+  expect(ok("update", "tone", { focus: [] }).state.focus).toEqual([]);
+});
+
+test("a focus point outside 0 to 1 ends the run with a message naming it", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("update", "tone", { focus: [[0.5, 0.5], [2, 0]] });
+  await ended(2);
+  const end = posted.find((m) => m.type === "end" && m.id === 2) as { state: string; error: string };
+  expect(end.state).toBe("error");
+  expect(end.error).toContain("point 2 is [2.0, 0.0]");
+});
+
 test("bad image bytes are refused", () => {
   const { posted, call, ok } = setup();
   const reply = call("setImageBytes", new Uint8Array([1, 2, 3]));
@@ -102,6 +129,30 @@ test("a bad preset changes nothing", () => {
   expect(pick(ok("preset").state)).toEqual(pick(before));
 });
 
+test("loadPresetText reads a preset, an exported SVG and an exported JSON drawing, and redraws", async () => {
+  const { call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("setStyle", "hatch");
+  await ended(2);
+  ok("update", "hatch", { spacing_mm: 2.5 });
+  await ended(3);
+  const files = [JSON.stringify(ok("preset").value), ok("svg").value as string, ok("json").value as string];
+  let run = 3;
+  for (const text of files) {
+    ok("setStyle", "grid");
+    await ended(++run);
+    const reply = ok("loadPresetText", text);
+    expect(reply.state.style).toBe("hatch");
+    expect((reply.state.settings as { hatch: { spacing_mm: number } }).hatch.spacing_mm).toBe(2.5);
+    expect(reply.state.run.state).toBe("running");
+    await ended(++run);
+  }
+  const refusal = (text: string) => { const r = call("loadPresetText", text); return r.ok ? null : r.error; };
+  expect(refusal("plain words")).toBe("not a preset: it is neither JSON nor an SVG");
+  expect(refusal("<svg></svg>")).toBe("this SVG carries no plotline preset");
+});
+
 test("a bad pen is refused", () => {
   const { call, ok } = setup();
   const before = ok("preset").state.pens;
@@ -145,6 +196,46 @@ test("cancel stops the current run", async () => {
   ok("setImage", ...image());
   await ended(1);
   expect(posted.filter((m) => m.type === "end")).toEqual([expect.objectContaining({ id: 1, state: "cancelled" })]);
+});
+
+test("testchart posts the events of a finished run, and the next run replaces the chart", async () => {
+  const { posted, ok, ended } = setup();
+  const { state } = ok("testchart"); // no image is needed
+  expect(state.run).toEqual({ id: 1, state: "done", error: null });
+  expect(state.stats!.path_count).toBeGreaterThan(0);
+  expect(state.lint.map((f) => f.code)).toContain("overdraw");
+  expect(state.layers).toHaveLength(1);
+  await ended(1);
+  expect(posted.filter((m) => "type" in m).map((m) => m.type)).toEqual(["run", "result", "end"]);
+  expect(posted.find((m) => m.type === "end")).toEqual(expect.objectContaining({ id: 1, state: "done", fit: null }));
+  expect(ok("svg").value as string).toContain("<svg");
+  ok("setImage", ...image());
+  await ended(2);
+  expect(posted.some((m) => m.type === "result" && m.id === 2)).toBe(true);
+});
+
+test("a testchart in the middle of a run cancels it", async () => {
+  let sent = false;
+  const { posted, ok, ended } = setup((m, call) => { if (m.type === "frame" && !sent) { sent = true; expect(call("testchart").ok).toBe(true); } });
+  ok("setImage", ...image());
+  await ended(1);
+  expect(posted.find((m) => m.type === "end" && m.id === 1)).toEqual(expect.objectContaining({ state: "cancelled" }));
+  expect(posted.some((m) => m.type === "result" && m.id === 2)).toBe(true);
+  expect(posted.some((m) => m.type === "result" && m.id === 1)).toBe(false);
+});
+
+test("a test chart that does not fit is refused and the drawing stays", () => {
+  const { posted, call, ok } = setup();
+  ok("testchart");
+  const stats = ok("preset").state.stats;
+  ok("setCanvas", { width_mm: 74, height_mm: 105, margin_mm: 10, fit: "fit" });
+  ok("setPens", [{ name: "Fat", width_mm: 2, color: "#000000" }]);
+  const before = posted.length;
+  const refused = call("testchart");
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toContain("the page is too small for the test chart");
+  expect(posted.length).toBe(before + 1); // the refusal, and no run events
+  expect(ok("preset").state.stats).toEqual(stats);
 });
 
 test("listPens gives the bank", () => {
@@ -191,6 +282,20 @@ test("gcode needs a drawing, whose layers the state lists", async () => {
   expect(ok("gcode", 0).value as string).toContain("G1 Z4 F1200");
 });
 
+test("hpgl needs a drawing but no machine, and a resolution above 0", async () => {
+  const { call, ok, ended } = setup();
+  ok("setCanvas", { width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" });
+  expect(call("hpgl", 40).ok).toBe(false);
+  ok("update", "tone", { resolution: 64 });
+  ok("setImage", ...image());
+  await ended(1);
+  const text = ok("hpgl", 40).value as string;
+  expect(text.startsWith("IN;\nSP1;\nPU")).toBe(true);
+  expect(text.endsWith("PU;\nSP0;\n")).toBe(true);
+  expect(ok("hpgl", 10).value).not.toBe(text);
+  expect(call("hpgl", 0).ok).toBe(false);
+});
+
 test("the lint findings come with the end event and the state, and their patches apply", async () => {
   const { posted, ok, ended } = setup();
   expect(ok("preset").state.lint).toEqual([]);
@@ -217,6 +322,43 @@ test("suggestions come with the state", () => {
   expect(state.suggestions[0].patch).toEqual({ page: { width_mm: 297, height_mm: 210 } });
 });
 
+// Four saturated stripes, like the colour image of the browser flow.
+const stripes = (): [number, number, Float32Array] => {
+  const [w, h] = [64, 48];
+  const colours = [[0.88, 0, 0], [0, 0.69, 0], [0, 0, 0.88], [0.94, 0.88, 0]];
+  const rgb = new Float32Array(w * h * 3);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) rgb.set(colours[Math.floor(x / 16)], (y * w + x) * 3);
+  return [w, h, rgb];
+};
+const library: Pen[] = [{ name: "Ink", width_mm: 0.3, color: "#000000" }, { name: "Lemon", width_mm: 0.5, color: "#f5c400" }];
+const kinds = (state: State) => state.suggestions.map((s) => s.kind);
+
+test("setPenLibrary changes the suggestions without a run, and a bad pen is refused", async () => {
+  const { posted, call, ok, ended } = setup();
+  expect(kinds(ok("setImage", ...stripes()).state)).toContain("colour");
+  await ended(1);
+  const { state } = ok("setPenLibrary", library);
+  expect(kinds(state)).toContain("pens_to_add");
+  for (const s of state.suggestions) for (const p of s.patch?.pens ?? []) expect(library).toContainEqual(p);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+  expect(call("setPenLibrary", [{ name: "Bad", width_mm: 0.3, color: "red" }]).ok).toBe(false);
+  expect(kinds(ok("preset").state)).toContain("pens_to_add");
+  expect(kinds(ok("setPenLibrary", []).state)).not.toContain("pens_to_add");
+});
+
+test("a rebuilt session keeps the pen library", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setPenLibrary", library);
+  ok("setImage", ...stripes());
+  await ended(1);
+  ok("setStyle", "_slow");
+  await ended(2);
+  ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+  await ended(3);
+  expect(posted.find((m) => m.type === "end" && m.id === 3)).toMatchObject({ state: "error" });
+  expect(kinds(ok("preset").state)).toContain("pens_to_add");
+});
+
 test("apply runs the patch and redraws once", async () => {
   const { posted, ok, ended } = setup();
   ok("setImage", 400, 200, syntheticGradient(400, 200));
@@ -232,12 +374,66 @@ test("apply runs the patch and redraws once", async () => {
   await ended(2);
 });
 
+test("apply takes a crop into the page, keeps the rest of it, and zeros take it off", async () => {
+  const { call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const { state } = ok("apply", { page: { crop: [0.1, 0, 0.2, 0] } });
+  expect(state.canvas).toMatchObject({ width_mm: 210, height_mm: 297, margin_mm: 10, crop: [0.1, 0, 0.2, 0] });
+  await ended(2);
+  // The engine leaves an all-zero crop out of the page, as it does of a preset.
+  expect(ok("apply", { page: { crop: [0, 0, 0, 0] } }).state.canvas.crop).toBeUndefined();
+  await ended(3);
+  expect(call("apply", { page: { crop: [0.5, 0, 0, 0] } }).ok).toBe(false);
+});
+
+test("apply sets a patch's pens before its settings and redraws once", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", 400, 200, syntheticGradient(400, 200));
+  await ended(1);
+  const pens = [{ name: "Yellow 0.3", width_mm: 0.3, color: "#f5c400" }, { name: "Black 0.3", width_mm: 0.3, color: "#000000" }];
+  const { state } = ok("apply", { pens, settings: { split: { mode: "by_colour" } } });
+  expect(state.pens).toEqual(pens);
+  expect((state.settings.split as { mode: string }).mode).toBe("by_colour");
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(2);
+  await ended(2);
+});
+
 test("a refused patch redraws nothing", async () => {
   const { posted, call, ok, ended } = setup();
   ok("setImage", ...image());
   await ended(1);
   expect(call("apply", { style: "no such style" }).ok).toBe(false);
   expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+});
+
+test("applyLook sets the look's settings, the state names it, and the page can undo it through restore", async () => {
+  const { posted, call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("setStyle", "waves");
+  await ended(2);
+  const before = ok("preset").state;
+  expect(before.look).toBe("balanced");
+  const runs = () => posted.filter((m) => m.type === "run").length;
+  const { state } = ok("applyLook", "fine");
+  expect(state.look).toBe("fine");
+  expect((state.settings.waves as { spacing_mm: number }).spacing_mm).toBe(1);
+  expect(state.settings.tone).toEqual(before.settings.tone); // only the look's keys change
+  expect(runs()).toBe(3);
+  await ended(3);
+  // An unknown look changes nothing and redraws nothing.
+  const refused = call("applyLook", "no such look");
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) expect(refused.error).toContain("balanced");
+  expect(ok("preset").state.look).toBe("fine");
+  expect(runs()).toBe(3);
+  // A setting off the look's value is Custom, and a restore of the earlier setup shows Balanced.
+  expect(ok("update", "waves", { spacing_mm: 1.7 }).state.look).toBeNull();
+  await ended(4);
+  const { style, canvas, pens, machine, settings } = before;
+  expect(ok("restore", { style, canvas, pens, machine, settings }).state.look).toBe("balanced");
+  await ended(5);
 });
 
 test("thumbs draws styles without touching the drawing, and cancelThumbs stops it", async () => {
@@ -267,6 +463,25 @@ test("thumbs without an image posts each style's error", async () => {
   expect(events).toHaveLength((ok("listStyles").value as unknown[]).length - 1); // not `learned`, which needs a model
   expect(events.map((m) => m.style)).not.toContain("learned");
   expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
+});
+
+test("setPaper only repaints: no run, and a restore brings the old paper back", async () => {
+  const { posted, call, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  const before = ok("preset").state;
+  expect(before.paper).toBe("#ffffff");
+  const { state } = ok("setPaper", "#f5ecd7");
+  expect(state.paper).toBe("#f5ecd7");
+  expect((ok("preset").value as { paper: string }).paper).toBe("#f5ecd7");
+  expect(state.run.id).toBe(1);
+  expect(posted.filter((m) => m.type === "run")).toHaveLength(1);
+  expect(call("setPaper", "cream").ok).toBe(false);
+  expect(ok("preset").state.paper).toBe("#f5ecd7");
+  expect(setupOf(state)).not.toBe(setupOf(before));
+  const { style, canvas, paper, pens, machine, settings } = before;
+  expect(ok("restore", { style, canvas, paper, pens, machine, settings }).state.paper).toBe("#ffffff");
+  await ended(2); // a restore redraws, as for any setup
 });
 
 test("restore applies a setup over the preset and redraws", async () => {
@@ -303,6 +518,7 @@ test("undoing a random run of edits through restore returns the start, and undo 
     () => ok("update", "split", { mode: pick(["one_pen", "light_to_dark", "by_colour"]) }),
     () => ok("setCanvas", { width_mm: pick([148, 210, 297]), height_mm: 297, margin_mm: Math.round(rand() * 20), fit: pick(["fit", "fill"]) }),
     () => ok("setPens", [{ name: "P", width_mm: 0.1 + Math.round(rand() * 8) / 10, color: pick(["#000000", "#d0202e"]) }]),
+    () => ok("setPaper", pick(["#ffffff", "#f5ecd7", "#000000"])),
   ];
   for (let i = 0; i < 40; i++) see(pick(edits)().state);
   see(ok("update", "tone", { gamma: 1.3 }).state);
@@ -373,6 +589,67 @@ test("a model arriving or leaving redraws an image, so a drawing on it follows",
     ok("addModel", null, onnx);
     expect(runs()).toBe(3);
     await ended(3);
+  } finally {
+    delete globalThis.plotlineModels;
+  }
+});
+
+test("a panic ends the run with its message, and the rebuilt session keeps the image and setup", async () => {
+  const { posted, ok, ended } = setup();
+  ok("setImage", ...image());
+  await ended(1);
+  ok("setStyle", "_slow");
+  await ended(2);
+  ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+  await ended(3);
+  const end = posted.find((m) => m.type === "end" && m.id === 3);
+  expect(end).toMatchObject({ state: "error", error: expect.stringMatching(/^the engine failed: .*slow panicked/s) });
+  // A poisoned session would refuse every call from here on.
+  expect(ok("preset").state).toMatchObject({ image: true, style: "_slow" });
+  ok("setStyle", "grid");
+  await ended(4);
+  expect(posted.find((m) => m.type === "end" && m.id === 4)).toMatchObject({ state: "done" });
+});
+
+test("a trap in one style's picture shows in its cell, and the grid and drawing carry on", async () => {
+  const session = new Session();
+  const trial = session.trial.bind(session);
+  // A trap as a panic gives one; the session is then replaced, so only this one trial traps.
+  session.trial = (name: string) => {
+    const t = trial(name);
+    if (name === "ink") t.nextFrame = () => { throw new WebAssembly.RuntimeError("unreachable"); };
+    return t;
+  };
+  const posted: Array<Record<string, any>> = [];
+  const p = new Protocol(session, (msg) => posted.push(msg as Record<string, any>));
+  // A small page and tone map, which a style switch carries to every trial, keep the grid quick.
+  p.handle({ id: 1, method: "setCanvas", args: [{ width_mm: 100, height_mm: 75, margin_mm: 5, fit: "fit" }] });
+  p.handle({ id: 2, method: "update", args: ["tone", { resolution: 64 }] });
+  p.handle({ id: 3, method: "setImage", args: image() });
+  while (!posted.some((m) => m.type === "end")) await macrotask();
+  // `learned` needs a downloaded model, so the grid leaves it out.
+  const styles = (JSON.parse(listStyles()) as Array<{ name: string }>).filter((s) => s.name !== "learned");
+  p.handle({ id: 4, method: "thumbs", args: [120] });
+  for (let i = 0; i < 20000 && posted.filter((m) => m.type === "thumb").length < styles.length; i++) await macrotask();
+  const thumbs = posted.filter((m) => m.type === "thumb");
+  expect(thumbs.filter((m) => m.error !== null)).toEqual([expect.objectContaining({ style: "ink", error: "unreachable", png: null })]);
+  expect(thumbs.filter((m) => m.png !== null)).toHaveLength(styles.length - 1);
+  expect(posted.filter((m) => m.type === "run").map((m) => m.id)).toEqual([1, 2]); // the drawing, redrawn on the new session
+}, 30_000);
+
+test("a rebuilt session keeps the models", async () => {
+  await loadModels();
+  try {
+    const { ok, ended } = setup();
+    const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
+    const id = (ok("addModel", null, onnx).value as { id: string }).id;
+    ok("setImage", ...image());
+    await ended(1);
+    ok("setStyle", "_slow");
+    await ended(2);
+    ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+    await ended(3);
+    expect(ok("models").value).toEqual([expect.objectContaining({ id })]);
   } finally {
     delete globalThis.plotlineModels;
   }

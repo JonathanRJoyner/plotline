@@ -112,9 +112,10 @@ class RunHandle:
 
     @property
     def optimum(self) -> dict[str, Any] | None:
-        """``{stage, key, value, error, current, current_error, budget, trials, reason, patch}``:
-        the best value found and its tone error, the current value and its own, ``trials`` as
-        ``{value, error, metric, over}`` in order, a sentence, and ``patch``, which
+        """``{stage, key, value, error, minutes, current, current_error, current_minutes, budget,
+        trials, reason, patch}``: the best value found with its tone error and plot time, the
+        current value with its own, ``trials`` as ``{value, error, minutes, metric, over, slow,
+        warnings, failed}`` in order, a sentence, and ``patch``, which
         ``{"settings": {stage: {key: value}}}`` applies, or ``None`` when the current value is
         best. Nothing is applied."""
         return self._optimum
@@ -226,9 +227,18 @@ class Session:
         return self._core.settings()
 
     @property
+    def look(self) -> str | None:
+        """The name of the style's look that the settings are at, such as ``"balanced"``, or
+        ``None`` when they are at none, as after an edit of a setting that the looks set. It is
+        worked out from the settings on each call, so a reset, a preset or a style switch show
+        the right one. ``style.schema()["looks"]`` lists them."""
+        return self._core.look()
+
+    @property
     def state(self) -> RunState:
-        """The state of the latest run, or ``idle`` before any run."""
-        return RunState.idle if self._handle is None else self._handle.state
+        """The state of the latest run, ``done`` after a test chart, or ``idle`` before any run."""
+        # With no handle the engine's slot is all there is: idle, or the chart's done.
+        return RunState(self._core.state()) if self._handle is None else self._handle.state
 
     def load_image(self, path: str | os.PathLike[str]) -> None:
         """Read the PNG, JPEG or WebP file at ``path`` as the source image. Raises ``OSError``
@@ -254,10 +264,17 @@ class Session:
 
     def analysis(self) -> dict[str, Any]:
         """What the image looks like and what would suit it, as ``{"stats", "suggestions"}``.
-        ``stats`` holds numbers measured when the image was set. Each suggestion is
-        ``{"kind", "reason", "patch"}``, where ``patch`` is ``None`` or any of ``style``,
-        ``settings`` (``{stage: {key: value}}``) and ``page`` (``{width_mm, height_mm}``), which
-        the caller applies; the list follows the current style, settings and page. Raises
+        ``stats`` holds numbers measured when the image was set, among them ``palette`` (the
+        ``{name, color}`` inks that draw a colour image best, lightest first, empty for a grey
+        one, and taken from the pen library when one is set with :meth:`set_pen_library`),
+        ``palette_error`` (its mean colour difference) and ``palette_additions`` (``{name,
+        color, error}`` inks the library lacks that would lower it, which a ``pens_to_add``
+        suggestion names). Each suggestion is
+        ``{"kind", "reason", "patch"}``, where ``patch`` is ``None`` or any of ``style``, ``pens``
+        (a list of ``{name, width_mm, color}``, for :meth:`set_pens`), ``settings``
+        (``{stage: {key: value}}``) and ``page`` (``{width_mm, height_mm}`` or ``{crop}``, the
+        shares to cut from the image's left, top, right and bottom), which the caller applies in
+        that order; the list follows the current style, pens, settings and page. Raises
         ``RuntimeError`` when no image is loaded."""
         analysis = self._core.analysis()
         if analysis is None:
@@ -266,13 +283,31 @@ class Session:
 
     def set_canvas(self, canvas: Canvas) -> None:
         """Use ``canvas`` as the page. Raises ``ValueError`` for a page or margin that leaves no
-        drawing area."""
+        drawing area and for a crop share that is not from 0 to 0.45."""
         self._core.set_canvas(asdict(canvas))
+
+    @property
+    def paper(self) -> str:
+        """The colour of the paper, as ``#rrggbb``; ``#ffffff`` until it is set."""
+        return self._core.paper()
+
+    def set_paper(self, color: str) -> None:
+        """Use ``color``, ``#rrggbb``, as the paper. Only the previews and the preset read it: the
+        previews fill the page with it and multiply the ink onto it, and the preset keeps it. No
+        stage reruns, and the SVG, JSON paths and G-code leave it out. Raises ``ValueError``
+        for anything but ``#rrggbb``, and changes nothing."""
+        self._core.set_paper(color)
 
     def set_pens(self, pens: Sequence[Pen]) -> None:
         """Use ``pens``, in drawing order. Raises ``ValueError`` when there are none, because
         every result needs a pen, and for a pen the engine refuses."""
         self._core.set_pens([asdict(pen) for pen in pens])
+
+    def set_pen_library(self, pens: Sequence[Pen]) -> None:
+        """Use ``pens`` as the user's own pens. With any, :meth:`analysis` picks a colour image's
+        palette from their colours and lists inks worth adding; an empty list clears them. They
+        never change a drawing or a preset. Raises ``ValueError`` for a pen the engine refuses."""
+        self._core.set_pen_library([asdict(pen) for pen in pens])
 
     @property
     def machine(self) -> dict[str, Any] | None:
@@ -308,19 +343,27 @@ class Session:
         nothing."""
         self._core.update(stage, values)
 
+    def apply_look(self, name: str) -> None:
+        """Start from the style's look ``name``, a named set of values for the few settings that
+        set how the style draws, as ``update`` would set each one. Every other setting stays as
+        it is, the image adjustments and Pen use among them. Raises ``ValueError`` for a name
+        that the style has no look of, naming the ones it has, and changes nothing."""
+        self._core.apply_look(name)
+
     def save_preset(self, path: str | os.PathLike[str]) -> None:
-        """Write the style, canvas, pens and settings to ``path`` as a JSON preset, UTF-8 with LF
-        line ends and indented by two spaces so that it reads and diffs well."""
+        """Write the style, canvas, paper, pens and settings to ``path`` as a JSON preset, UTF-8
+        with LF line ends and indented by two spaces so that it reads and diffs well."""
         text = json.dumps(self._core.preset(), indent=2) + "\n"
         Path(path).write_text(text, encoding="utf-8", newline="\n")
 
     def load_preset(self, path: str | os.PathLike[str]) -> None:
-        """Read the preset file at ``path`` and apply it, so its style, canvas, pens, machine and
-        settings replace the current ones. A key the file leaves out keeps its default, and each
-        stage or setting the style does not have is dropped with a ``UserWarning``. A preset with
-        a machine also sets ``speeds`` to the machine's. Raises ``ValueError`` for a file that is
-        not a preset or that the engine refuses."""
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        """Read the file at ``path`` and apply the preset it holds, so its style, canvas, paper,
+        pens, machine and settings replace the current ones. The file is a preset, an SVG exported
+        with its preset embedded or a JSON drawing exported with one. A key the file leaves out
+        keeps its default, and each stage or setting the style does not have is dropped with a
+        ``UserWarning``. A preset with a machine also sets ``speeds`` to the machine's. Raises
+        ``ValueError`` for a file that holds no preset or that the engine refuses."""
+        data = _core.preset_from_text(Path(path).read_text(encoding="utf-8"))
         for message in self._core.load_preset(data):
             warnings.warn(message, UserWarning, stacklevel=2)
         if self._core.machine() is not None:
@@ -371,16 +414,36 @@ class Session:
         """Search the style's density setting for the value whose drawing follows the tone map
         most closely, on a worker thread as ``run`` does, and return its handle at once.
 
-        It runs the style eight times: at the current value, then by golden-section search from a
-        quarter to four times it. Given ``metric`` and ``target``, as for ``fit``, a trial whose
-        drawing goes over the target does not count. The settings are left alone: when the handle
-        is ``done``, ``result`` is the drawing of the current settings and the handle's
-        ``optimum`` the suggestion, which ``update`` applies. Raises ``RuntimeError`` when no
-        image is loaded and ``ValueError`` as ``fit`` does, or for only one of ``metric`` and
-        ``target``.
+        It runs the style up to nine times: at the current value, then at half-octave steps from
+        a quarter to four times it. A trial does not count when its run fails, or when its drawing
+        plots for over twice the current value's time, or an hour if that is more, or has a plot
+        lint warning or error the current value's drawing does not. Given ``metric`` and
+        ``target``, as for ``fit``, a trial whose drawing goes over the target does not count
+        either, and a ``minutes`` target replaces the time limit. The settings are left alone:
+        when the handle is ``done``, ``result`` is the drawing of the current settings and the
+        handle's ``optimum`` the suggestion, which ``update`` applies. Raises ``RuntimeError``
+        when no image is loaded and ``ValueError`` as ``fit`` does, or for only one of ``metric``
+        and ``target``.
         """
         self._core.set_speeds(asdict(self.speeds))
         return self._spawn(self._start(lambda: self._core.optimize(metric, target)))
+
+    def testchart(self) -> Drawing:
+        """Make the test chart for the canvas and the first pen and return it; it is also kept in
+        ``result``, so the exports, ``stats`` and ``lint`` work on it as on any drawing. The chart
+        is a page of small labelled patches: line spacings, dot sizes and repeated passes, all
+        scaled to the pen. Plot it to see where lines merge, how big dots come out, how many
+        passes the paper takes, and whether ``stats`` gives the plot time. It needs no image. A
+        run under way is cancelled and waited for, and ``state`` is ``done``. Raises ``ValueError``
+        when the page is too small for the chart, leaving ``result`` and the run as they were.
+        """
+        self._core.testchart()  # cancels the engine's run, and refuses before it does
+        if self._handle is not None:
+            self._handle.cancel()
+            self._handle.wait()
+            self._handle = None
+        self.result = result = _drawing(_have(self._core.drawing()))
+        return result
 
     def cancel(self) -> None:
         """Ask the latest run to stop, which ends it in ``cancelled``. Nothing happens when there
@@ -525,6 +588,19 @@ class Session:
         for file, text in zip(files, texts, strict=True):
             file.write_text(text, encoding="utf-8", newline="\n")
         return files
+
+    def hpgl(self, units_per_mm: float = 40.0) -> str:
+        """The result as one HPGL program, with ``units_per_mm`` plotter units to the millimetre;
+        40, HPGL's plotter unit of 0.025 mm, suits most plotters. Each layer that has paths
+        selects its own pen, numbered from 1. Raises ``RuntimeError`` when there is no result and
+        ``ValueError`` for a resolution that is not above 0 and at most 1000."""
+        return self._core.hpgl(units_per_mm)
+
+    def export_hpgl(self, path: str | os.PathLike[str], units_per_mm: float = 40.0) -> None:
+        """Write the HPGL program to ``path`` as ASCII with LF line ends. Raises
+        ``RuntimeError`` when there is no result and ``ValueError`` for a resolution that is not
+        above 0 and at most 1000; in both cases nothing is written."""
+        Path(path).write_text(self.hpgl(units_per_mm), encoding="ascii", newline="\n")
 
     def stats(self) -> Stats:
         """The path count, pen-down and pen-up distances and estimated plot time of the result at

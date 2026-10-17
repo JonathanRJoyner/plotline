@@ -1,9 +1,10 @@
 //! The session: one working context that holds the state a front end edits and the latest result.
 //!
-//! A [`Session`] holds the source image, the canvas, the pens, the chosen style with the settings
-//! of each of its stages, the plot speeds, the stage cache its runs share, and the result slot
-//! its runs write: the latest drawing, the run state and the error. [`Session::start`] hands back
-//! a [`Run`] for the host to drive a frame at a time, and the outputs are read from the slot.
+//! A [`Session`] holds the source image, the canvas, the pens, the paper colour, the chosen style
+//! with the settings of each of its stages, the plot speeds, the stage cache its runs share, and
+//! the result slot its runs write: the latest drawing, the run state and the error.
+//! [`Session::start`] hands back a [`Run`] for the host to drive a frame at a time, and the
+//! outputs are read from the slot.
 //!
 //! The session holds no threads, files or network code, so it runs the same natively and in
 //! WebAssembly. Hosts add those: a host drives the [`Run`] on a worker thread or in a loop of its
@@ -14,12 +15,13 @@ use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::analysis::{self, Analysis, ImageStats};
 use crate::cache::{CacheStats, StageCache};
 use crate::export::gcode::{self, GcodeError};
+use crate::export::hpgl::{self, HpglError};
 use crate::export::{json, svg};
 use crate::fit::{places_points, Density, FitRun, Metric};
 use crate::image::{self, ImageError};
@@ -34,9 +36,10 @@ use crate::runner::{Run, RunState, Shared};
 use crate::settings::{merge, validate, SettingsError};
 use crate::stage::Artifact;
 use crate::stats::{self, Speeds, Stats};
-use crate::style::{Style, StyleError};
+use crate::style::{same, Look, Style, StyleError};
+use crate::testchart;
 use crate::tone_match::ToneMatch;
-use crate::types::{Canvas, Drawing, Fit, Image, Pen, TypeError};
+use crate::types::{check_color, Canvas, Drawing, Fit, Image, Pen, TypeError, DEFAULT_PAPER};
 
 /// Why a session refused a change or could not start a run; the message is shown to users.
 #[derive(Debug, Error)]
@@ -62,6 +65,9 @@ pub enum SessionError {
     /// A layer could not be written as G-code.
     #[error(transparent)]
     Gcode(#[from] GcodeError),
+    /// The drawing could not be written as HPGL.
+    #[error(transparent)]
+    Hpgl(#[from] HpglError),
     /// G-code was asked for with no machine set.
     #[error("no machine is set")]
     NoMachine,
@@ -78,6 +84,13 @@ pub enum SessionError {
         stage: String,
         stages: String,
     },
+    /// The style has no look of this name; `looks` lists the ones it has.
+    #[error("style {style:?} has no look {look:?}; its looks are {looks}")]
+    UnknownLook {
+        style: String,
+        look: String,
+        looks: String,
+    },
     /// The pens were set to an empty list.
     #[error("a session needs at least one pen")]
     NoPens,
@@ -87,6 +100,9 @@ pub enum SessionError {
     /// A fit was refused; the message says why.
     #[error("{0}")]
     Fit(String),
+    /// The test chart could not be made; the message says why.
+    #[error("{0}")]
+    Testchart(String),
 }
 
 /// One working context: an image, a canvas, pens, a style with its settings, the plot speeds, the
@@ -101,6 +117,12 @@ pub struct Session {
     image_stats: Option<ImageStats>,
     canvas: Canvas,
     pens: Vec<Pen>,
+    /// The user's own pens, which the image analysis picks a palette from. No stage, preset or
+    /// undo history reads it, so it never changes a drawing.
+    pen_library: Vec<Pen>,
+    /// The colour of the paper, written as `#rrggbb`. Only the preview and the preset read it,
+    /// so no stage's cache key holds it and changing it reruns nothing.
+    paper: String,
     /// The machine the G-code export writes for, if one is set.
     machine: Option<Machine>,
     /// The learned line models, shared with the runs that use them.
@@ -122,8 +144,8 @@ pub struct Session {
 
 impl Session {
     /// A session with a stage cache of `cache_bytes`, no image, an A4 page with a 10 mm margin
-    /// that fits the image, the pen "Black 0.3", the `grid` style at its defaults, the default
-    /// speeds and no run.
+    /// that fits the image, white paper, the pen "Black 0.3", the `grid` style at its defaults,
+    /// the default speeds and no run.
     pub fn new(cache_bytes: usize) -> Session {
         let style = get_style("grid").expect("the grid style is built in");
         Session {
@@ -131,6 +153,8 @@ impl Session {
             image_stats: None,
             canvas: Canvas::new(210.0, 297.0, 10.0, Fit::Fit).expect("A4 is a valid canvas"),
             pens: vec![Pen::new("Black 0.3", 0.3, "#000000").expect("the default pen is valid")],
+            pen_library: Vec::new(),
+            paper: DEFAULT_PAPER.to_string(),
             machine: None,
             models: Arc::default(),
             settings: style.defaults(),
@@ -153,7 +177,7 @@ impl Session {
 
     /// Use `image` as the source image and measure it.
     pub fn set_image(&mut self, image: Image) {
-        self.image_stats = Some(analysis::measure(&image));
+        self.image_stats = Some(analysis::measure_with(&image, &self.pen_library));
         self.image = Some(Arc::new(image));
     }
 
@@ -162,7 +186,14 @@ impl Session {
     /// the current page, style and settings. `None` without an image.
     pub fn analysis(&self) -> Option<Analysis> {
         let stats = self.image_stats.clone()?;
-        let suggestions = analysis::suggest(&stats, &self.canvas, &self.style.name, &self.settings);
+        let suggestions = analysis::suggest(
+            &stats,
+            &self.canvas,
+            &self.style.name,
+            &self.settings,
+            &self.pens,
+            &self.pen_library,
+        );
         Some(Analysis { stats, suggestions })
     }
 
@@ -181,6 +212,20 @@ impl Session {
         self.canvas = c;
     }
 
+    /// The share `[x, y]` of the source image, from its top-left corner, under the page point
+    /// `mm`; see [`Canvas::image_point`]. `None` without an image or where the page shows none.
+    pub fn image_point(&self, mm: [f64; 2]) -> Option<[f64; 2]> {
+        let image = self.image.as_ref()?;
+        self.canvas.image_point(mm, image.width, image.height)
+    }
+
+    /// The page point in mm where the share `[x, y]` of the source image is drawn; see
+    /// [`Canvas::page_point`]. `None` without an image.
+    pub fn page_point(&self, share: [f64; 2]) -> Option<[f64; 2]> {
+        let image = self.image.as_ref()?;
+        Some(self.canvas.page_point(share, image.width, image.height))
+    }
+
     /// The pens, in drawing order.
     pub fn pens(&self) -> &[Pen] {
         &self.pens
@@ -192,6 +237,35 @@ impl Session {
             return Err(SessionError::NoPens);
         }
         self.pens = pens;
+        Ok(())
+    }
+
+    /// The user's own pens; see [`Session::set_pen_library`].
+    pub fn pen_library(&self) -> &[Pen] {
+        &self.pen_library
+    }
+
+    /// Use `pens` as the user's own pens, which the image analysis fits its palette to and finds
+    /// the inks worth adding to; an empty list clears it. The image, if any, is measured again.
+    /// Nothing else reads the library, so a run and the cache are not touched.
+    pub fn set_pen_library(&mut self, pens: Vec<Pen>) {
+        self.pen_library = pens;
+        if let Some(image) = &self.image {
+            self.image_stats = Some(analysis::measure_with(image, &self.pen_library));
+        }
+    }
+
+    /// The colour of the paper, written as `#rrggbb`: [`DEFAULT_PAPER`] until it is set.
+    pub fn paper(&self) -> &str {
+        &self.paper
+    }
+
+    /// Use `color`, written as `#rrggbb`, as the paper the preview shows. Fails, changing
+    /// nothing, for anything else. The paper is no input of any stage, so a run in progress and
+    /// the cache are not touched.
+    pub fn set_paper(&mut self, color: &str) -> Result<(), SessionError> {
+        check_color("paper", color)?;
+        self.paper = color.to_string();
         Ok(())
     }
 
@@ -304,6 +378,40 @@ impl Session {
         Ok(())
     }
 
+    /// Set every key the look `name` of the style sets to the look's value, through
+    /// [`Session::update`]: a key set to its default stops counting as the user's change, and any
+    /// other counts as one. Nothing else changes, neither the image settings and Pen use nor a
+    /// setting no look of the style sets. Fails, changing nothing, for a name the style has no
+    /// look of; see [`Style::looks`].
+    pub fn apply_look(&mut self, name: &str) -> Result<(), SessionError> {
+        let looks = self.style.looks();
+        let Some(look) = looks.iter().find(|l| l.name == name) else {
+            let names: Vec<&str> = looks.iter().map(|l| l.name.as_str()).collect();
+            return Err(SessionError::UnknownLook {
+                style: self.style.name.clone(),
+                look: name.to_string(),
+                looks: names.join(", "),
+            });
+        };
+        for (stage, values) in look.settings.as_object().into_iter().flatten() {
+            self.update(stage, values)?;
+        }
+        Ok(())
+    }
+
+    /// The name of the first look of the style whose settings all equal the current ones, numbers
+    /// by value, or `None` when none does. It is worked out from the settings on each call, so it
+    /// follows an edit, an undo, a preset, a reset and a style switch with nothing stored.
+    pub fn look(&self) -> Option<String> {
+        let holds = |look: &Look| {
+            (look.settings.as_object().into_iter().flatten()).all(|(stage, values)| {
+                (values.as_object().into_iter().flatten())
+                    .all(|(key, v)| same(v, &self.settings[stage][key]))
+            })
+        };
+        self.style.looks().into_iter().find(holds).map(|l| l.name)
+    }
+
     /// The speeds [`Session::stats`] times a plot at.
     pub fn speeds(&self) -> Speeds {
         self.speeds
@@ -362,10 +470,23 @@ impl Session {
         ))
     }
 
+    /// Cancel the latest run and make the [test chart](testchart) for the canvas and the first pen
+    /// the latest drawing, in state [`RunState::Done`]. It needs no image. Fails, changing nothing,
+    /// when the chart does not fit the page or the pen is too thin.
+    pub fn testchart(&mut self) -> Result<(), SessionError> {
+        let drawing =
+            testchart::chart(&self.canvas, &self.pens[0]).map_err(SessionError::Testchart)?;
+        self.claim();
+        let mut shared = self.shared.lock().unwrap();
+        shared.drawing = Some(Arc::new(drawing));
+        shared.state = RunState::Done;
+        Ok(())
+    }
+
     /// Cancel the latest run and return a search of the style's density setting for the value
-    /// whose drawing follows the tone map most closely, with every trial's `metric` (as for
-    /// [`Session::fit`]) at most `target` when a budget is given; see
-    /// [`optimize`](crate::optimize). It works over a snapshot of the session and claims the result
+    /// whose drawing follows the tone map most closely, within the time and lint limits and with
+    /// every trial's `metric` (as for [`Session::fit`]) at most `target` when a budget is given;
+    /// see [`optimize`](crate::optimize). It works over a snapshot of the session and claims the result
     /// slot as [`Session::start`] does, and ends with the drawing of the current settings. The
     /// settings stay as they are: [`OptimizeRun::result`] suggests a patch, applied only with
     /// [`Session::update`].
@@ -488,14 +609,27 @@ impl Session {
         self.shared.lock().unwrap().error.clone()
     }
 
-    /// The last finished drawing as SVG text.
+    /// The last finished drawing as SVG text, with its preset embedded; see
+    /// [`Session::embedded_preset`].
     pub fn svg(&self) -> Option<String> {
-        self.drawing().map(|d| svg::to_svg(&d))
+        self.drawing()
+            .map(|d| svg::to_svg(&d, self.embedded_preset(&d).as_ref()))
     }
 
-    /// The last finished drawing in the `plotline-paths` JSON format.
+    /// The last finished drawing in the `plotline-paths` JSON format, with its preset embedded.
     pub fn json(&self) -> Option<Value> {
-        self.drawing().map(|d| json::to_value(&d))
+        self.drawing()
+            .map(|d| json::to_value(&d, self.embedded_preset(&d).as_ref()))
+    }
+
+    /// The preset of the run that made `d` with the session's machine and paper in place of the
+    /// run's null one and white, so loading an export later keeps the user's machine and paper.
+    /// `None` for a drawing no run made.
+    fn embedded_preset(&self, d: &Drawing) -> Option<Value> {
+        let mut preset = d.preset.clone()?;
+        preset["machine"] = json!(self.machine);
+        preset["paper"] = json!(self.paper);
+        Some(preset)
     }
 
     /// Layer `layer` of the last finished drawing as G-code for the machine. Fails without a
@@ -505,6 +639,14 @@ impl Session {
         let m = self.machine.as_ref().ok_or(SessionError::NoMachine)?;
         let d = self.drawing().ok_or(SessionError::NoDrawing)?;
         Ok(gcode::to_gcode(&d, layer, m)?)
+    }
+
+    /// The last finished drawing as one HPGL program with `units_per_mm` plotter units to the
+    /// millimetre; see [`hpgl::to_hpgl`]. Fails without a drawing and for a resolution that is not
+    /// above 0 and at most [`hpgl::MAX_UNITS_PER_MM`].
+    pub fn hpgl(&self, units_per_mm: f64) -> Result<String, SessionError> {
+        let d = self.drawing().ok_or(SessionError::NoDrawing)?;
+        Ok(hpgl::to_hpgl(&d, units_per_mm)?)
     }
 
     /// The stats of the last finished drawing at the session's speeds.
@@ -552,8 +694,8 @@ impl Session {
         Some((drawing, measure))
     }
 
-    /// The last finished drawing as PNG bytes `width_px` wide, of the page or of `region`, in page
-    /// mm as `[x, y, width, height]`; see [`preview::render_png`].
+    /// The last finished drawing as PNG bytes `width_px` wide on the session's paper, of the page
+    /// or of `region`, in page mm as `[x, y, width, height]`; see [`preview::render_png`].
     pub fn preview_png(
         &self,
         width_px: u32,
@@ -562,23 +704,24 @@ impl Session {
         region: Option<[f64; 4]>,
     ) -> Option<Result<Vec<u8>, PreviewError>> {
         self.drawing()
-            .map(|d| preview::render_png(&d, width_px, travel, source, region))
+            .map(|d| preview::render_png(&d, width_px, &self.paper, travel, source, region))
     }
 
-    /// The style, canvas, pens and settings as a preset.
+    /// The style, canvas, pens, machine, paper and settings as a preset.
     pub fn preset(&self) -> Value {
         presets::to_value(
             &self.style.name,
             &self.canvas,
             &self.pens,
             self.machine.as_ref(),
+            &self.paper,
             &self.settings,
         )
     }
 
-    /// Apply the preset `v`: its style with every stage at its defaults, its canvas, its pens,
-    /// then its settings stage by stage in the style's order, so a key the preset leaves out
-    /// takes its default. Returns one warning for each setting a stage does not have, then one for
+    /// Apply the preset `v`: its style with every stage at its defaults, its canvas, its paper
+    /// (white when it has none), its pens, then its settings stage by stage in the style's order,
+    /// so a key the preset leaves out takes its default. Returns one warning for each setting a stage does not have, then one for
     /// each stage the style does not have, sorted by name; all of them are dropped.
     ///
     /// Fails before anything changes when [`presets::parse`] rejects `v`. An unknown style or a
@@ -589,6 +732,7 @@ impl Session {
         self.set_style(&data.style)?;
         self.reset_settings();
         self.set_canvas(data.canvas);
+        self.set_paper(&data.paper)?;
         self.set_pens(data.pens)?;
         self.set_machine(data.machine)?;
         let mut warnings = Vec::new();
@@ -633,20 +777,11 @@ impl Session {
     }
 }
 
-/// Whether two setting values are equal, numbers by value: JavaScript writes `1.0` as `1`, which
-/// JSON reads as an integer.
-fn same(a: &Value, b: &Value) -> bool {
-    match (a.as_f64(), b.as_f64()) {
-        (Some(x), Some(y)) => x == y,
-        _ => a == b,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::analysis::measure;
-    use crate::synthetic::{gradient, ramp, still_life, strokes};
+    use crate::synthetic::{color_bars, gradient, ramp, still_life, strokes};
     use serde_json::json;
 
     #[test]
@@ -665,6 +800,55 @@ mod tests {
         assert_ne!(s.analysis().unwrap().stats, line_art.stats);
     }
     #[test]
+    fn a_colour_image_suggests_pens_at_the_sessions_width() {
+        let mut s = Session::new(1 << 20);
+        s.set_pens(vec![Pen::new("Fine", 0.5, "#000000").unwrap()])
+            .unwrap();
+        s.set_image(color_bars(256, 64));
+        let analysis = s.analysis().unwrap();
+        let colour = analysis.suggestions.iter().find(|g| g.kind == "colour");
+        let patch = colour.and_then(|g| g.patch.as_ref()).unwrap();
+        let pens = patch["pens"].as_array().unwrap();
+        assert_eq!(pens.len(), analysis.stats.palette.len());
+        assert!(pens.iter().all(|p| p["width_mm"] == 0.5));
+        assert_eq!(patch["settings"]["split"]["mode"], "by_colour");
+    }
+    #[test]
+    fn a_new_library_measures_the_image_again() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(color_bars(256, 64));
+        let kinds = |s: &Session| -> Vec<&str> {
+            s.analysis()
+                .unwrap()
+                .suggestions
+                .iter()
+                .map(|g| g.kind)
+                .collect()
+        };
+        assert!(!kinds(&s).contains(&"pens_to_add"));
+        let library = vec![
+            Pen::new("Lemon", 0.5, "#f5c400").unwrap(),
+            Pen::new("Ink", 0.3, "#000000").unwrap(),
+        ];
+        s.set_pen_library(library.clone());
+        assert_eq!(s.pen_library(), library.as_slice());
+        let stats = s.analysis().unwrap().stats;
+        assert!(stats.palette.iter().all(|ink| library
+            .iter()
+            .any(|p| p.color.eq_ignore_ascii_case(&ink.color))));
+        assert!(kinds(&s).contains(&"pens_to_add"));
+        // An empty library goes back to the inks.
+        s.set_pen_library(Vec::new());
+        assert_eq!(s.analysis().unwrap().stats, measure(&color_bars(256, 64)));
+    }
+    #[test]
+    fn the_library_is_not_in_the_preset() {
+        let mut s = Session::new(1 << 20);
+        let before = s.preset();
+        s.set_pen_library(vec![Pen::new("Lemon", 0.5, "#f5c400").unwrap()]);
+        assert_eq!(s.preset(), before);
+    }
+    #[test]
     fn a_refused_image_keeps_the_analysis() {
         let mut s = Session::new(1 << 20);
         s.set_image(gradient(64, 48));
@@ -680,6 +864,16 @@ mod tests {
         assert_eq!(stats.p_low, 0.1220703125);
     }
 
+    #[test]
+    fn points_go_between_the_page_and_the_image() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.image_point([105.0, 148.5]).is_none() && s.page_point([0.5, 0.5]).is_none());
+        s.set_image(gradient(64, 48));
+        // The A4 page's centre is the centre of the fitted image.
+        assert_eq!(s.image_point([105.0, 148.5]), Some([0.5, 0.5]));
+        assert_eq!(s.page_point([0.5, 0.5]), Some([105.0, 148.5]));
+        assert_eq!(s.image_point([105.0, 5.0]), None);
+    }
     #[test]
     fn defaults_and_setters() {
         let mut s = Session::new(1 << 20);
@@ -744,6 +938,109 @@ mod tests {
         assert_eq!(s.settings()["tone"]["gamma"], 1.0);
         assert_eq!(s.settings()["split"]["mode"], "one_pen");
     }
+    fn mark(stage: &str, key: &str) -> (String, String) {
+        (stage.to_string(), key.to_string())
+    }
+
+    #[test]
+    fn a_look_sets_its_keys_and_is_then_the_look() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("waves").unwrap();
+        assert_eq!(s.look().as_deref(), Some("balanced"));
+        s.apply_look("fine").unwrap();
+        assert_eq!(s.look().as_deref(), Some("fine"));
+        assert_eq!(s.settings()["waves"]["spacing_mm"], 1.0);
+        assert!(s.changed.contains(&mark("waves", "spacing_mm")));
+        s.apply_look("faithful").unwrap();
+        assert_eq!(s.look().as_deref(), Some("faithful"));
+        assert_eq!(s.settings()["waves"]["spacing_mm"], 2.8);
+        // Balanced is the defaults, so its keys stop counting as the user's changes.
+        s.apply_look("balanced").unwrap();
+        assert_eq!(s.look().as_deref(), Some("balanced"));
+        assert_eq!(s.settings(), &s.style().defaults());
+        assert!(s.changed.is_empty());
+    }
+    #[test]
+    fn a_reset_and_an_edit_move_the_look() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("waves").unwrap();
+        s.apply_look("fine").unwrap();
+        s.reset_settings();
+        assert_eq!(s.look().as_deref(), Some("balanced"));
+        s.apply_look("fine").unwrap();
+        // A key of the look set to another value is no look; set back, in either JSON number
+        // form, it is the look again.
+        s.update("waves", &json!({"spacing_mm": 1.5})).unwrap();
+        assert_eq!(s.look(), None);
+        s.update("waves", &json!({"spacing_mm": 1})).unwrap();
+        assert_eq!(s.look().as_deref(), Some("fine"));
+        // A setting no look of the style sets leaves the look alone.
+        s.update("tone", &json!({"gamma": 1.4})).unwrap();
+        s.update("waves", &json!({"amplitude": 0.5})).unwrap();
+        assert_eq!(s.look().as_deref(), Some("fine"));
+    }
+    #[test]
+    fn an_unknown_look_fails_and_changes_nothing() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("waves").unwrap();
+        s.apply_look("fine").unwrap();
+        let (settings, changed) = (s.settings().clone(), s.changed.clone());
+        let message = |e: SessionError| e.to_string();
+        assert_eq!(
+            message(s.apply_look("nope").unwrap_err()),
+            r#"style "waves" has no look "nope"; its looks are balanced, faithful, fine"#
+        );
+        // A look in the list that this style does not declare is unknown to it too.
+        assert!(matches!(
+            s.apply_look("quick"),
+            Err(SessionError::UnknownLook { .. })
+        ));
+        assert_eq!(s.settings(), &settings);
+        assert_eq!(s.changed, changed);
+        // A style with no looks but Balanced has that one.
+        s.set_style("ink").unwrap();
+        assert_eq!(
+            message(s.apply_look("fine").unwrap_err()),
+            r#"style "ink" has no look "fine"; its looks are balanced"#
+        );
+        assert_eq!(s.look().as_deref(), Some("balanced"));
+        s.apply_look("balanced").unwrap();
+    }
+    #[test]
+    fn a_look_leaves_pen_use_and_the_image_settings_alone() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("line").unwrap();
+        s.update("split", &json!({"mode": "light_to_dark"}))
+            .unwrap();
+        s.update("tone", &json!({"invert": true})).unwrap();
+        let before = s.settings().clone();
+        s.apply_look("faithful").unwrap();
+        assert_eq!(s.look().as_deref(), Some("faithful"));
+        assert_eq!(s.settings()["split"], before["split"]);
+        assert_eq!(s.settings()["tone"]["invert"], true);
+        assert_eq!(s.settings()["tone"]["response"], "auto");
+        assert_eq!(s.settings()["voronoi"]["count"], 20000);
+        assert_eq!(
+            s.settings()["voronoi"]["iterations"],
+            before["voronoi"]["iterations"]
+        );
+        s.apply_look("balanced").unwrap();
+        assert_eq!(s.settings()["split"], before["split"]);
+        assert_eq!(s.settings()["tone"]["invert"], true);
+        assert_eq!(s.settings()["voronoi"], before["voronoi"]);
+    }
+    #[test]
+    fn a_look_survives_a_switch_to_a_style_sharing_its_stages_and_back() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("stipple").unwrap();
+        s.apply_look("fine").unwrap();
+        s.set_style("line").unwrap();
+        // The point count is kept, so the points are reused; line's looks are not this one.
+        assert_eq!(s.settings()["voronoi"]["count"], 12000);
+        assert_eq!(s.look(), None);
+        s.set_style("stipple").unwrap();
+        assert_eq!(s.look().as_deref(), Some("fine"));
+    }
     #[test]
     #[allow(clippy::len_zero)] // the brief's assertion, kept as written
     fn start_needs_an_image_and_runs_to_a_drawing() {
@@ -805,6 +1102,57 @@ mod tests {
         }
         assert_eq!(labels, vec!["cached"; 5]);
         assert_eq!(s.cache_stats().hits, 5);
+    }
+    #[test]
+    fn the_paper_is_white_until_set_and_takes_only_rrggbb() {
+        let mut s = Session::new(1 << 20);
+        assert_eq!(s.paper(), "#ffffff");
+        assert_eq!(s.paper(), DEFAULT_PAPER);
+        s.set_paper("#f5f0e1").unwrap();
+        assert_eq!(s.paper(), "#f5f0e1");
+        for bad in ["cream", "#fff"] {
+            let e = s.set_paper(bad).unwrap_err().to_string();
+            assert_eq!(e, format!("paper must be written as #rrggbb, got {bad:?}"));
+            assert_eq!(s.paper(), "#f5f0e1");
+        }
+    }
+    #[test]
+    fn a_new_paper_reruns_nothing_and_repaints() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(gradient(64, 48));
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        let mut r = s.start().unwrap();
+        while r.next_frame().is_some() {}
+        let white = s.preview_png(100, false, false, None).unwrap().unwrap();
+        s.set_paper("#000000").unwrap();
+        let black = s.preview_png(100, false, false, None).unwrap().unwrap();
+        assert_ne!(white, black);
+        let mut r = s.start().unwrap();
+        let mut labels = vec![];
+        while let Some(f) = r.next_frame() {
+            labels.push(f.label);
+        }
+        assert_eq!(labels, vec!["cached"; 5]);
+    }
+    #[test]
+    fn the_paper_rides_in_the_preset() {
+        let mut s = Session::new(1 << 20);
+        assert_eq!(s.preset()["paper"], "#ffffff");
+        s.set_paper("#f5f0e1").unwrap();
+        assert_eq!(s.preset()["paper"], "#f5f0e1");
+        let mut t = Session::new(1 << 20);
+        assert!(t.load_preset(&s.preset()).unwrap().is_empty());
+        assert_eq!(t.paper(), "#f5f0e1");
+        // A preset without the key is white paper.
+        let mut v = s.preset();
+        v.as_object_mut().unwrap().remove("paper");
+        assert!(t.load_preset(&v).unwrap().is_empty());
+        assert_eq!(t.paper(), DEFAULT_PAPER);
+        // A bad paper is refused before anything changes.
+        t.set_paper("#112233").unwrap();
+        v["paper"] = json!("cream");
+        assert!(t.load_preset(&v).is_err());
+        assert_eq!(t.paper(), "#112233");
     }
     #[test]
     fn switching_voronoi_style_at_the_defaults_reuses_the_points() {
@@ -985,7 +1333,8 @@ mod tests {
         }
         assert_eq!(labels.len(), crate::optimize::TRIALS);
         assert!(
-            labels[0].starts_with("try 1 of 8: spacing_mm 1: tone error"),
+            labels[0].starts_with("try 1 of 9: spacing_mm 1: tone error")
+                && labels[0].ends_with(" min"),
             "{labels:?}"
         );
         let found = job.result().unwrap();
@@ -996,6 +1345,10 @@ mod tests {
         let drawn = s.drawing().unwrap();
         assert_eq!(found.current, json!(1.0));
         assert!(found.error <= found.current_error.unwrap());
+        assert_eq!(
+            found.current_minutes,
+            s.stats().unwrap().estimated_seconds / 60.0
+        );
         assert_eq!(found.patch.is_some(), found.value != found.current);
         assert!(!drawn.layers[0].paths.is_empty());
         // A budget the first trial breaks keeps every chosen trial within it.
@@ -1037,6 +1390,72 @@ mod tests {
     }
 
     #[test]
+    fn the_focus_map_is_pinned() {
+        // The same setup and literal are in crates/wasm/tests/smoke.rs, so CI proves both
+        // targets blur the tone map away from the focus points alike.
+        let mut s = Session::new(1 << 24);
+        s.set_image(still_life(120, 120));
+        s.set_canvas(Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap());
+        let focus = json!([[0.3, 0.4], [0.8, 0.7]]);
+        s.update("tone", &json!({"resolution": 64, "focus": focus}))
+            .unwrap();
+        drain(&mut s);
+        let drawing = s.drawing().unwrap();
+        let ink = &drawing.tone.as_ref().unwrap().ink;
+        let sum = (ink.iter()).fold(0u32, |h, v| h.wrapping_mul(31).wrapping_add(v.to_bits()));
+        assert_eq!(sum, 686_476_666);
+    }
+
+    #[test]
+    fn the_test_chart_becomes_the_drawing() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.drawing().is_none());
+        s.testchart().unwrap(); // no image is needed
+        assert_eq!(s.state(), RunState::Done);
+        assert!(s.error().is_none());
+        assert!(s.svg().unwrap().starts_with("<svg"));
+        assert!(s.stats().unwrap().path_count > 0);
+        // The PASSES patches are drawn over by design.
+        let codes: Vec<&str> = s.lint().unwrap().iter().map(|f| f.code).collect();
+        assert!(codes.contains(&"overdraw"), "{codes:?}");
+    }
+    #[test]
+    fn a_refused_test_chart_keeps_the_old_drawing() {
+        let mut s = Session::new(1 << 20);
+        s.testchart().unwrap();
+        let before = s.drawing().unwrap();
+        s.set_image(gradient(8, 8));
+        s.set_style("_slow").unwrap();
+        s.update("b", &json!({"frames": 3, "delay_ms": 0})).unwrap();
+        let mut run = s.start().unwrap();
+        s.set_canvas(Canvas::new(74.0, 105.0, 10.0, Fit::Fit).unwrap());
+        s.set_pens(vec![Pen::new("fat", 2.0, "#000000").unwrap()])
+            .unwrap();
+        let e = s.testchart().unwrap_err();
+        assert!(matches!(e, SessionError::Testchart(_)));
+        assert!(e.to_string().contains("too small"), "{e}");
+        assert!(Arc::ptr_eq(&s.drawing().unwrap(), &before));
+        // The refusal did not claim the slot, so the run it would have cancelled still runs.
+        assert_eq!(s.state(), RunState::Running);
+        while run.next_frame().is_some() {}
+        assert_eq!(s.state(), RunState::Done);
+    }
+    #[test]
+    fn a_test_chart_cancels_the_latest_run() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(gradient(8, 8));
+        s.set_style("_slow").unwrap();
+        s.update("b", &json!({"frames": 1000, "delay_ms": 0}))
+            .unwrap();
+        let mut run = s.start().unwrap();
+        run.next_frame();
+        s.testchart().unwrap();
+        assert!(run.next_frame().is_none());
+        assert_eq!(run.state(), RunState::Cancelled);
+        assert_eq!(s.state(), RunState::Done);
+    }
+
+    #[test]
     fn preset_round_trip_and_warnings() {
         let mut s = Session::new(1 << 20);
         s.update("points", &json!({"spacing_mm": 3.0})).unwrap();
@@ -1053,6 +1472,37 @@ mod tests {
                 "ignoring unknown stage \"nostage\""
             ]
         );
+    }
+
+    #[test]
+    fn exports_load_back_as_the_runs_own_preset_with_the_sessions_machine_and_paper() {
+        let mut s = Session::new(1 << 20);
+        s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.set_paper("#f5f0e1").unwrap();
+        s.set_pens(vec![Pen::new("A & <B>", 0.4, "#112233").unwrap()])
+            .unwrap();
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        s.update("points", &json!({"spacing_mm": 3.0})).unwrap();
+        s.set_image(gradient(64, 48));
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+        let sent = s.preset();
+        for text in [s.svg().unwrap(), s.json().unwrap().to_string()] {
+            let mut t = Session::new(1 << 20);
+            let v = presets::from_text(&text).unwrap();
+            assert!(t.load_preset(&v).unwrap().is_empty());
+            assert_eq!(t.preset(), sent);
+        }
+        // Later changes do not reach the drawing's own preset, but the machine and the paper are
+        // the session's.
+        s.update("points", &json!({"spacing_mm": 4.0})).unwrap();
+        s.set_machine(Some(crate::test_util::machine())).unwrap();
+        s.set_paper("#202020").unwrap();
+        let v = presets::from_text(&s.svg().unwrap()).unwrap();
+        assert_eq!(v["settings"]["points"]["spacing_mm"], 3.0);
+        assert_eq!(v["machine"], s.preset()["machine"]);
+        assert_eq!(v["paper"], "#202020");
+        assert_eq!(s.json().unwrap()["preset"], v);
     }
 
     #[test]
@@ -1108,5 +1558,21 @@ mod tests {
             "{g}"
         );
         assert!(s.gcode(1).unwrap_err().to_string().contains("no layer 1"));
+    }
+
+    #[test]
+    fn hpgl_needs_a_drawing_but_no_machine() {
+        let mut s = Session::new(1 << 20);
+        assert!(s.hpgl(40.0).unwrap_err().to_string().contains("drawing"));
+        s.set_canvas(Canvas::new(100.0, 75.0, 5.0, Fit::Fit).unwrap());
+        s.set_image(gradient(64, 48));
+        s.update("tone", &json!({"resolution": 64})).unwrap();
+        let mut run = s.start().unwrap();
+        while run.next_frame().is_some() {}
+        let h = s.hpgl(40.0).unwrap();
+        assert!(h.starts_with("IN;\nSP1;\nPU"), "{h}");
+        assert!(h.ends_with("PU;\nSP0;\n"), "{h}");
+        let err = s.hpgl(0.0).unwrap_err();
+        assert!(matches!(err, SessionError::Hpgl(_)), "{err}");
     }
 }

@@ -8,12 +8,14 @@ from functools import partial
 from pathlib import Path
 
 import anyio
+import numpy as np
 import pytest
+from looks import off_look, style_with_looks
 from machines import MACHINE
 from mcp import Client, StdioServerParameters
 from pngs import write_png
 
-from plotline import RunState, Session, _core, inks, models
+from plotline import RunState, Session, _core, inks, list_styles, models
 from plotline.mcp_server import build_server
 
 pytestmark = pytest.mark.anyio
@@ -52,6 +54,8 @@ async def test_lists_and_describes_styles():
         assert "grid" in [s["name"] for s in styles]
         assert set(styles[0]) == {"name", "label", "description"}
         assert "stages" in data(await call(c, "describe_style", style="grid"))
+        looks = data(await call(c, "describe_style", style=style_with_looks()[0]))["looks"]
+        assert looks[0]["name"] == "balanced" and len(looks) > 1
         assert (await call(c, "describe_style", style="nope")).is_error
 
 
@@ -62,9 +66,10 @@ async def test_setup_tools_and_session(tmp_path):
         r = await call(c, "load_image", path=str(path))
         assert data(r) == {"path": str(path), "width_px": 64, "height_px": 48}
         r = await call(c, "set_page", width_mm=100, height_mm=100, margin_mm=5)
-        assert data(r) == {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fit"}
+        page = {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fit", "paper": "#ffffff"}
+        assert data(r) == page
         r = await call(c, "set_page", fit="fill")
-        assert data(r) == {"width_mm": 100, "height_mm": 100, "margin_mm": 5, "fit": "fill"}
+        assert data(r) == {**page, "fit": "fill"}
         r = await call(c, "set_pens", pens=[{"name": "B", "width_mm": 0.5, "color": "Blue"}])
         assert data(r) == [{"name": "B", "width_mm": 0.5, "color": inks()["blue"]}]
         s = data(await call(c, "get_session"))
@@ -75,6 +80,27 @@ async def test_setup_tools_and_session(tmp_path):
         assert s["page"]["fit"] == "fill"
         assert s["pens"][0]["color"] == inks()["blue"]
         assert "tone" in s["settings"]
+
+
+async def test_set_page_sets_the_paper_and_get_session_reports_it():
+    async with Client(build_server(Session())) as c:
+        assert data(await call(c, "get_session"))["paper"] == "#ffffff"
+        r = await call(c, "set_page", paper="#f5f0e1")
+        assert data(r) == {
+            "width_mm": 210,
+            "height_mm": 297,
+            "margin_mm": 10,
+            "fit": "fit",
+            "paper": "#f5f0e1",
+        }
+        assert data(await call(c, "get_session"))["paper"] == "#f5f0e1"
+        r = await call(c, "set_page", paper="Blue")
+        assert data(r)["paper"] == inks()["blue"]
+        # A refused paper is a tool error, and the page that came with it does not change.
+        r = await call(c, "set_page", width_mm=50, paper="cream")
+        assert r.is_error and "paper" in text(r)
+        s = data(await call(c, "get_session"))
+        assert (s["paper"], s["page"]["width_mm"]) == (inks()["blue"], 210)
 
 
 async def test_refused_values_are_tool_errors():
@@ -166,6 +192,41 @@ async def test_export_gcode(tmp_path):
         assert "G1 Z4 F1200" in file.read_text(encoding="utf-8")
 
 
+async def test_export_hpgl(tmp_path):
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    out = tmp_path / "o.hpgl"
+    async with Client(build_server(session)) as c:
+        r = await call(c, "export", path=str(out), format="hpgl")
+        assert r.is_error
+        assert "no drawing" in text(r)
+        assert not out.exists()
+
+        settings = {"tone": {"resolution": 64}, "points": {"spacing_mm": 5}}
+        assert not (await call(c, "run", settings=settings)).is_error
+        r = await call(c, "export", path=str(out), format="hpgl")
+        assert not r.is_error, text(r)
+        assert data(r) == {"path": str(out), "format": "hpgl", "bytes": out.stat().st_size}
+        whole = out.read_text(encoding="ascii")
+        assert whole.startswith("IN;\nSP1;\n") and whole.endswith("PU;\nSP0;\n")
+
+        # A file that exists is kept, and the resolution is read.
+        r = await call(c, "export", path=str(out), format="hpgl", units_per_mm=10)
+        assert r.is_error
+        assert "overwrite=true" in text(r)
+        assert out.read_text(encoding="ascii") == whole
+        r = await call(c, "export", path=str(out), format="hpgl", units_per_mm=10, overwrite=True)
+        assert not r.is_error, text(r)
+        assert out.read_text(encoding="ascii") == session.hpgl(10)
+
+        for bad in (0, 1000.5):
+            r = await call(
+                c, "export", path=str(out), format="hpgl", units_per_mm=bad, overwrite=True
+            )
+            assert r.is_error
+            assert "above 0 and at most 1000" in text(r)
+
+
 async def test_file_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -218,6 +279,21 @@ async def test_preset_round_trip_and_warnings(tmp_path):
         assert "bogus" in r["warnings"][0]
 
 
+async def test_load_preset_reads_an_exported_svg(tmp_path):
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    svg = tmp_path / "o.svg"
+    async with Client(build_server(session)) as c:
+        await call(c, "set_page", width_mm=100, height_mm=75, margin_mm=5)
+        await call(c, "run", settings={"tone": {"resolution": 64}})
+        await call(c, "export", path=str(svg), format="svg")
+    async with Client(build_server(Session())) as c:
+        r = data(await call(c, "load_preset", path=str(svg)))
+        assert r == {"style": "grid", "warnings": []}
+        s = data(await call(c, "get_session"))
+        assert s["settings"]["tone"]["resolution"] == 64 and s["page"]["width_mm"] == 100
+
+
 def png(block):
     return base64.b64decode(block.data)
 
@@ -249,6 +325,24 @@ async def test_run_and_preview(tmp_path):
             assert out.read_bytes().startswith(start)
 
 
+async def test_testchart_draws_without_an_image_and_a_small_page_is_an_error():
+    session = Session()
+    async with Client(build_server(session)) as c:
+        r = await call(c, "testchart")
+        assert not r.is_error
+        stats = json.loads(r.content[0].text)
+        assert stats["path_count"] > 0
+        assert "overdraw" in [f["code"] for f in stats["lint"]]
+        assert png(r.content[1]).startswith(b"\x89PNG")
+        assert session.result is not None
+        # The chart is the result, so the exports work.
+        assert data(await call(c, "get_session"))["stats"]["path_count"] == stats["path_count"]
+        await call(c, "set_page", width_mm=74, height_mm=105)
+        await call(c, "set_pens", pens=[{"name": "Fat", "width_mm": 2, "color": "black"}])
+        r = await call(c, "testchart")
+        assert r.is_error and "the page is too small for the test chart" in text(r)
+
+
 async def test_fit_returns_the_value_and_the_curve():
     session = Session()
     session.set_image(_core.synthetic_gradient(64, 48))
@@ -277,10 +371,21 @@ async def test_optimize_suggests_a_density_and_changes_nothing():
         assert not r.is_error, text(r)
         found = json.loads(r.content[0].text)
         assert (found["stage"], found["key"], found["current"]) == ("hatch", "spacing_mm", 1.0)
-        assert len(found["trials"]) == 8 and "tone" in json.loads(r.content[1].text)
+        assert len(found["trials"]) == 9 and "tone" in json.loads(r.content[1].text)
         assert data(await call(c, "get_session"))["settings"]["hatch"]["spacing_mm"] == 1.0
         r = await call(c, "optimize", metric="minutes")
         assert r.is_error and "both a metric and a target" in text(r)
+
+
+async def test_run_takes_focus_points():
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        r = await call(c, "run", settings={"tone": {"resolution": 64, "focus": [[0.5, 0.5]]}})
+        assert not r.is_error
+        assert data(await call(c, "get_session"))["settings"]["tone"]["focus"] == [[0.5, 0.5]]
+        r = await call(c, "run", settings={"tone": {"focus": [[1.5, 0.5]]}})
+        assert r.is_error and "point 1 is [1.5, 0.5]" in text(r)
 
 
 async def test_refused_setting_changes_nothing():
@@ -298,6 +403,76 @@ async def test_refused_setting_changes_nothing():
             assert f'style "{style}" has no stage "nope"' in text(r)
             after = data(await call(c, "get_session"))
             assert (after["style"], after["settings"]) == (before["style"], before["settings"])
+
+
+def small_page(c):
+    """A page that keeps a run short, whatever the look."""
+    return call(c, "set_page", width_mm=40, height_mm=30, margin_mm=2)
+
+
+async def test_run_starts_from_a_look_and_get_session_reports_it():
+    name, looks = style_with_looks()
+    look = looks[-1]
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        await small_page(c)
+        settings = {"tone": {"resolution": 64}}
+        r = await call(c, "run", style=name, look=look["name"], settings=settings)
+        assert not r.is_error, text(r)
+        after = data(await call(c, "get_session"))
+        assert after["look"] == look["name"]
+        for stage, values in look["settings"].items():
+            for key, value in values.items():
+                assert after["settings"][stage][key] == value
+        # settings apply after the look, so they adjust it, and the settings are then at no look.
+        stage, key, value = off_look(name, looks)
+        r = await call(c, "run", look=looks[0]["name"], settings={stage: {key: value}})
+        assert not r.is_error, text(r)
+        after = data(await call(c, "get_session"))
+        assert after["settings"][stage][key] == value and after["look"] is None
+        # reset comes before the look, and with no look puts the defaults back.
+        r = await call(c, "run", reset=True, settings=settings)
+        assert not r.is_error and data(await call(c, "get_session"))["look"] == "balanced"
+
+
+async def test_a_refused_look_changes_nothing_and_runs_nothing():
+    name, looks = style_with_looks()
+    other = next(s.name for s in list_styles() if s.name != name)
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        await small_page(c)
+        r = await call(
+            c, "run", style=name, look=looks[-1]["name"], settings={"tone": {"resolution": 64}}
+        )
+        assert not r.is_error, text(r)
+        before = data(await call(c, "get_session"))
+        # A switch to another style comes first, so it has to be put back too.
+        for tool, args in (
+            ("run", {}),
+            ("fit", {"metric": "minutes", "target": 1}),
+            ("optimize", {}),
+        ):
+            r = await call(c, tool, style=other, look="nope", **args)
+            assert r.is_error and 'has no look "nope"' in text(r)
+            assert data(await call(c, "get_session")) == before
+
+
+async def test_fit_and_optimize_start_from_a_look():
+    name, looks = style_with_looks()
+    look = looks[-1]
+    session = Session()
+    session.set_image(_core.synthetic_gradient(64, 48))
+    async with Client(build_server(session)) as c:
+        await small_page(c)
+        settings = {"tone": {"resolution": 64}}
+        r = await call(c, "optimize", style=name, look=look["name"], settings=settings)
+        assert not r.is_error, text(r)
+        # Optimize changes nothing more, so the look it started from still holds.
+        assert data(await call(c, "get_session"))["look"] == look["name"]
+        r = await call(c, "fit", metric="minutes", target=1, look=looks[0]["name"])
+        assert not r.is_error, text(r)
 
 
 async def test_a_new_style_keeps_changed_settings():
@@ -338,6 +513,52 @@ async def test_analyse_image(tmp_path):
         r = await call(c, "analyse_image")
         assert not r.is_error
         assert set(data(r)) == {"stats", "suggestions"}
+
+
+async def test_a_pen_library_chooses_the_palette(tmp_path):
+    path = tmp_path / "bars.png"
+    img = np.ones((48, 64, 3))
+    for i, rgb in enumerate([[1.0, 0.0, 0.0], [0.0, 0.7, 0.0], [0.0, 0.0, 1.0], [1.0, 0.9, 0.0]]):
+        img[:, i * 16 : (i + 1) * 16] = rgb
+    write_png(path, img)
+    async with Client(build_server(Session())) as c:
+        await call(c, "load_image", path=str(path))
+        library = [
+            {"name": "Ink", "width_mm": 0.3, "color": "black"},
+            {"name": "Lemon", "width_mm": 0.5, "color": "#f5c400"},
+        ]
+        r = await call(c, "set_pen_library", pens=library)
+        assert not r.is_error
+        assert data(r)[0] == {"name": "Ink", "width_mm": 0.3, "color": "#000000"}
+        analysis = data(await call(c, "analyse_image"))
+        assert {ink["name"] for ink in analysis["stats"]["palette"]} <= {"Ink", "Lemon"}
+        assert "pens_to_add" in [s["kind"] for s in analysis["suggestions"]]
+        r = await call(c, "set_pen_library", pens=[{"name": "X", "width_mm": 0.3, "color": "x"}])
+        assert r.is_error
+
+
+async def test_set_page_crops_the_image_as_the_framing_suggestion_says(tmp_path):
+    path = tmp_path / "disc.png"
+    y, x = np.mgrid[0:256, 0:256] / 256
+    inside = (x - 0.7) ** 2 + (y - 0.3) ** 2 <= 0.05**2
+    write_png(path, np.repeat(np.where(inside, 0.1, 0.95)[..., None], 3, axis=2))
+    async with Client(build_server(Session())) as c:
+        await call(c, "load_image", path=str(path))
+        found = data(await call(c, "analyse_image"))["suggestions"]
+        crop = next(s for s in found if s["kind"] == "framing")["patch"]["page"]["crop"]
+        assert len(crop) == 4 and any(crop)
+        r = await call(c, "set_page", crop=crop)
+        assert data(r)["crop"] == crop and data(r)["width_mm"] == 210
+        found = data(await call(c, "analyse_image"))["suggestions"]
+        assert all(s["kind"] != "framing" for s in found)
+        # Every other value stays; zeros remove the crop; a refused crop changes nothing.
+        r = await call(c, "set_page", crop=[0, 0, 0, 0])
+        assert "crop" not in data(r)  # a crop of zeros is left out
+        await call(c, "set_page", crop=crop)
+        for bad in ([0.5, 0, 0, 0], [0.1, 0.1]):
+            r = await call(c, "set_page", crop=bad)
+            assert r.is_error
+        assert data(await call(c, "get_session"))["page"]["crop"] == crop
 
 
 async def test_preview_limits(tmp_path):
@@ -507,8 +728,10 @@ async def test_stdio_server_lists_the_tools():
         "analyse_image",
         "set_page",
         "set_pens",
+        "set_pen_library",
         "set_machine",
         "run",
+        "testchart",
         "fit",
         "optimize",
         "preview",

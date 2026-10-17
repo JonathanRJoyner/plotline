@@ -58,6 +58,12 @@ fn grid_matches_the_golden_file() {
             assert!((va.as_f64().unwrap() - ve.as_f64().unwrap()).abs() <= 1e-3);
         }
     }
+    // The exported SVG holds the run's preset.
+    let svg = s.svg().unwrap();
+    let preset: serde_json::Value =
+        serde_json::from_str(&plotline_wasm::preset_from_text(&svg).unwrap()).unwrap();
+    assert_eq!(preset["style"], "grid");
+    assert_eq!(preset["settings"]["points"]["spacing_mm"], 2.0);
 }
 #[wasm_bindgen_test]
 fn stipple_matches_the_golden_file() {
@@ -157,6 +163,21 @@ fn machines_and_gcode() {
     assert!(s.machine().is_none());
 }
 #[wasm_bindgen_test]
+fn hpgl_is_one_program_without_a_machine() {
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(64, 48, &plotline_wasm::synthetic_gradient(64, 48))
+        .unwrap();
+    s.set_canvas(r#"{"width_mm":100,"height_mm":75,"margin_mm":5,"fit":"fit"}"#)
+        .unwrap();
+    s.update("tone", r#"{"resolution":64}"#).unwrap();
+    assert!(s.hpgl(40.0).is_err());
+    let mut run = s.start().unwrap();
+    while run.next_frame().is_some() {}
+    let h = s.hpgl(40.0).unwrap();
+    assert!(h.starts_with("IN;\nSP1;\nPU") && h.ends_with("PU;\nSP0;\n"));
+    assert!(s.hpgl(0.0).is_err());
+}
+#[wasm_bindgen_test]
 fn still_life_analysis_matches_native() {
     // The same literals are pinned in crates/core/src/session.rs on the native target.
     let still_life = plotline_core::synthetic::still_life(600, 875);
@@ -169,6 +190,42 @@ fn still_life_analysis_matches_native() {
     let a: serde_json::Value = serde_json::from_str(&s.analysis().unwrap()).unwrap();
     assert_eq!(a["stats"]["height_px"], 875);
     assert!(a["suggestions"].is_array());
+}
+#[wasm_bindgen_test]
+fn framing_matches_native() {
+    // The same literals as analysis::tests::the_framing_crop_is_pinned in the core crate: a dark
+    // disc of radius 0.05 at (0.7, 0.3) on a light 256 x 256 field, on the default A4 page.
+    let rgb: Vec<f32> = (0..256 * 256)
+        .flat_map(|i| {
+            let (u, v) = (
+                (i % 256) as f32 / 256.0 - 0.7,
+                (i / 256) as f32 / 256.0 - 0.3,
+            );
+            [if u * u + v * v <= 0.05 * 0.05 {
+                0.1
+            } else {
+                0.95
+            }; 3]
+        })
+        .collect();
+    let mut s = plotline_wasm::Session::new();
+    s.set_image(256, 256, &rgb).unwrap();
+    let a: serde_json::Value = serde_json::from_str(&s.analysis().unwrap()).unwrap();
+    let framing = (a["suggestions"].as_array().unwrap().iter())
+        .find(|g| g["kind"] == "framing")
+        .expect("a framing suggestion");
+    let crop: Vec<f64> = (framing["patch"]["page"]["crop"].as_array().unwrap().iter())
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    for (got, want) in crop.iter().zip([0.43, 0.0, 0.01, 0.2]) {
+        assert!((got - want).abs() < 1e-12, "{crop:?}");
+    }
+    // The page takes the crop, the preset carries it, and a bad one is refused.
+    let page =
+        r#"{"width_mm":210,"height_mm":297,"margin_mm":10,"fit":"fit","crop":[0.45,0,0.04,0.29]}"#;
+    s.set_canvas(page).unwrap();
+    assert!(s.preset().contains(r#""crop""#));
+    assert!(s.set_canvas(&page.replace("0.45,0", "0.5,0")).is_err());
 }
 #[wasm_bindgen_test]
 fn a_fit_takes_the_native_steps() {
@@ -233,4 +290,61 @@ fn the_tone_match_and_the_response_match_native() {
     s.update("tone", &json!({"response": "auto"})).unwrap();
     drain(&mut s);
     assert_eq!(s.tone_match().unwrap().error, 0.09068600548308096);
+}
+#[wasm_bindgen_test]
+fn the_focus_map_matches_native() {
+    // The same setup and literal are pinned in crates/core/src/session.rs on the native target.
+    use serde_json::json;
+    let mut s = plotline_core::Session::new(1 << 24);
+    s.set_image(plotline_core::synthetic::still_life(120, 120));
+    let canvas = plotline_core::Canvas::new(100.0, 100.0, 0.0, plotline_core::Fit::Fit).unwrap();
+    s.set_canvas(canvas);
+    let focus = json!([[0.3, 0.4], [0.8, 0.7]]);
+    s.update("tone", &json!({"resolution": 64, "focus": focus}))
+        .unwrap();
+    let mut run = s.start().unwrap();
+    while run.next_frame().is_some() {}
+    let drawing = s.drawing().unwrap();
+    let ink = &drawing.tone.as_ref().unwrap().ink;
+    let sum = (ink.iter()).fold(0u32, |h, v| h.wrapping_mul(31).wrapping_add(v.to_bits()));
+    assert_eq!(sum, 686_476_666);
+    // The wasm session passes the two placements through.
+    let mut w = plotline_wasm::Session::new();
+    assert!(w.image_point(50.0, 50.0).is_none());
+    w.set_image(
+        120,
+        120,
+        &plotline_core::synthetic::still_life(120, 120).rgb,
+    )
+    .unwrap();
+    w.set_canvas(r#"{"width_mm":100,"height_mm":100,"margin_mm":0,"fit":"fit"}"#)
+        .unwrap();
+    assert_eq!(w.image_point(50.0, 50.0), Some(vec![0.5, 0.5]));
+    assert_eq!(w.page_point(0.25, 0.5), Some(vec![25.0, 50.0]));
+}
+#[wasm_bindgen_test]
+fn a_look_is_applied_and_read_back() {
+    let mut s = plotline_wasm::Session::new();
+    s.set_style("waves").unwrap();
+    assert_eq!(s.look().as_deref(), Some("balanced"));
+    s.apply_look("fine").unwrap();
+    assert_eq!(s.look().as_deref(), Some("fine"));
+    assert!(s.apply_look("no such look").is_err());
+    assert_eq!(s.look().as_deref(), Some("fine"));
+    s.update("waves", r#"{"spacing_mm":1.7}"#).unwrap();
+    assert_eq!(s.look(), None);
+}
+#[wasm_bindgen_test]
+fn iso_lines_keep_their_levels_apart_past_u32() {
+    // 256 x 256 cells have 2^17 edges, so on wasm32 `level * edges` wrapped to 0 at level 2^15
+    // and that level's ring took level 0's keys. One cell at 40,000 gives one ring per level.
+    let n = 256;
+    let mut field = vec![0.0f32; n * n];
+    field[128 * n + 128] = 40_000.0;
+    let lines = plotline_core::raster::iso_lines(&field, n, n, 0.5, 1.0, 39_999.5);
+    assert_eq!(lines.len(), 40_000);
+    assert!(
+        lines.iter().all(|l| l.len() == 5),
+        "every ring is a closed diamond"
+    );
 }

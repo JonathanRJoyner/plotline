@@ -37,17 +37,21 @@ from plotline.types import Cancelled, Canvas, Frame, Pen, RunState
 INSTRUCTIONS = (
     "plotline turns an image into line art for a pen plotter. Work in this order: load_image, "
     "then set_page and set_pens if the defaults do not fit, then list_styles and describe_style "
-    "to choose a style and see its settings. Call analyse_image to see the image's statistics and "
-    "suggested changes; apply a suggestion with run(style=..., settings=...) or set_page. run "
+    "to choose a style and see its settings and looks. Call analyse_image to see the image's "
+    "statistics and suggested changes; apply a suggestion with run(style=..., settings=...) or "
+    "set_page, and set_pens first when its patch holds pens. If the user lists the pens they "
+    "own, pass them to set_pen_library first, so the colour suggestion picks from them. run "
     "draws the image and returns its stats, the tone match, the plot lint's findings and a "
-    "preview at true pen width; apply a finding's patch the same way as a suggestion's. Look at "
-    "the preview, change settings with run(settings=...), and repeat; only the stages after a "
-    "changed setting run again. To meet a budget of plot time, paths, pen-down metres or dots, "
-    "call fit, which sets the style's density setting. To make the drawing's tones follow the "
-    "image more closely, call optimize, which suggests a density, or set tone.response to auto. "
-    "Use preview with region_mm to inspect detail. export writes the result. set_machine "
-    "describes a pen plotter or pen-fitted printer; export with gcode then writes one file per "
-    "pen. list_models shows the models that the learned style can draw with; choose one with "
+    "preview at true pen width; apply a "
+    "finding's patch the same way as a suggestion's. Look at the preview, change settings with "
+    "run(settings=...), and repeat; only the stages after a changed setting run again. To meet a "
+    "budget of plot time, paths, pen-down metres or dots, call fit, which sets the style's "
+    "density setting. To make the drawing's tones follow the image more closely, call optimize, "
+    "which suggests a density, or set tone.response to auto. Use preview with region_mm to "
+    "inspect detail. export writes the result. testchart draws a calibration chart for the "
+    "first pen, to plot and compare by eye. set_machine describes a pen plotter or "
+    "pen-fitted printer; export with gcode then writes one file per pen. list_models shows the "
+    "models that the learned style can draw with; choose one with "
     'run(style="learned", settings={"model": {"model": id}}). A person downloads a model, so '
     "an assistant cannot. All lengths are millimetres, the page origin is its top-left corner and "
     "y grows down. Paths must be absolute."
@@ -119,6 +123,15 @@ def _image_size(session: Session) -> dict[str, int] | None:
     # slow on a huge image, with a size accessor in the engine.
     image = session.image
     return None if image is None else {"width_px": image.shape[1], "height_px": image.shape[0]}
+
+
+def _page_dict(canvas: Canvas) -> dict[str, Any]:
+    """The page as the tools show it. A crop of zeros is left out, as the engine leaves it out of
+    a preset."""
+    page = asdict(canvas)
+    if not any(canvas.crop):
+        del page["crop"]
+    return page
 
 
 def _page(session: Session) -> Canvas:
@@ -205,10 +218,15 @@ def build_server(session: Session | None = None) -> MCPServer:
     @server.tool()
     async def analyse_image() -> dict[str, Any]:
         """Measure the loaded image and suggest changes for it. stats are numbers about its tones,
-        noise and colour. Each suggestion has a kind, a reason and a patch, which holds any of
-        style, settings ({stage: {setting: value}}) and page ({width_mm, height_mm}), or none for a
-        note. Apply a patch with run(style=..., settings=...) or set_page. The suggestions follow
-        the current style, settings and page."""
+        noise and colour; for a colour image, palette lists the {name, color} inks that draw it
+        best, picked from the pen library when set_pen_library set one, and palette_additions the
+        inks the library lacks that would draw it better, which a pens_to_add note names. Each
+        suggestion has a kind, a reason and a patch, which holds any of style, pens (a list of
+        {name, width_mm, color}), settings ({stage: {setting: value}}) and page ({width_mm,
+        height_mm}, or {crop}, the shares to cut from the image's left, top, right and bottom),
+        or none for a note. Apply a patch with set_pens for its pens, then run(style=...,
+        settings=...) or set_page. The suggestions follow the current style, pens, settings and
+        page."""
         with _errors():
             return session.analysis()
 
@@ -218,19 +236,36 @@ def build_server(session: Session | None = None) -> MCPServer:
         height_mm: float | None = None,
         margin_mm: float | None = None,
         fit: Literal["fit", "fill"] | None = None,
+        paper: str | None = None,
+        crop: list[float] | None = None,
     ) -> dict[str, Any]:
-        """Set the page size and margin in mm, and whether the image fits inside the drawing area
-        or fills it. A value that is left out stays as it was."""
+        """Set the page size and margin in mm, whether the image fits inside the drawing area or
+        fills it, the paper colour, which is #rrggbb or an ink name such as blue, and the crop:
+        [left, top, right, bottom], the shares of the image to cut from each side before it is
+        fitted, each 0 to 0.45 (analyse_image's framing suggestion gives one; [0, 0, 0, 0] removes
+        it). The paper changes only the previews and the saved preset: they show the ink on that
+        paper, and the drawing, its SVG and its G-code stay as they are. A value that is left out
+        stays as it was; when any value is refused, nothing changes. Returns the page, with its
+        crop while there is one, and the paper."""
         given: dict[str, Any] = {
             "width_mm": width_mm,
             "height_mm": height_mm,
             "margin_mm": margin_mm,
             "fit": fit,
+            "crop": crop,
         }
+        inks = plotline.inks()
         with _errors():
             changes = {key: value for key, value in given.items() if value is not None}
-            session.set_canvas(replace(session.canvas, **changes))
-            return asdict(session.canvas)
+            old_page = session.canvas
+            session.set_canvas(replace(old_page, **changes))
+            if paper is not None:
+                try:
+                    session.set_paper(inks.get(paper.lower(), paper))
+                except ValueError:
+                    session.set_canvas(old_page)
+                    raise
+            return {**_page_dict(session.canvas), "paper": session.paper}
 
     @server.tool()
     async def set_pens(pens: list[PenSpec]) -> TextContent:
@@ -245,6 +280,20 @@ def build_server(session: Session | None = None) -> MCPServer:
                 ]
             )
             return _array([asdict(pen) for pen in session.pens])
+
+    @server.tool()
+    async def set_pen_library(pens: list[PenSpec]) -> TextContent:
+        """Set the pens the user owns, or clear them with an empty list. A pen has a name, a line
+        width in mm and a colour, which is #rrggbb or an ink name such as blue. analyse_image then
+        picks a colour image's palette from these pens and names inks worth adding. The library
+        changes no drawing; set_pens sets the pens a drawing uses."""
+        inks = plotline.inks()
+        library = [
+            Pen(p["name"], p["width_mm"], inks.get(p["color"].lower(), p["color"])) for p in pens
+        ]
+        with _errors():
+            session.set_pen_library(library)
+            return _array([asdict(pen) for pen in library])
 
     @server.tool()
     async def set_machine(machine: MachineSpec | None) -> dict[str, Any]:
@@ -279,19 +328,25 @@ def build_server(session: Session | None = None) -> MCPServer:
                 session.set_machine(old_machine)
                 session.speeds = old_speeds
                 raise
-            return {"machine": session.machine, "page": asdict(session.canvas)}
+            return {"machine": session.machine, "page": _page_dict(session.canvas)}
 
     def change(
-        style: str | None, settings: dict[str, dict[str, Any]] | None, reset: bool = False
+        style: str | None,
+        settings: dict[str, dict[str, Any]] | None,
+        reset: bool = False,
+        look: str | None = None,
     ) -> None:
-        """Switch to ``style``, reset the settings when ``reset`` is set, and apply ``settings``;
-        when a change is refused, put the style and settings back and raise."""
+        """Switch to ``style``, reset the settings when ``reset`` is set, start from ``look``, and
+        apply ``settings``; when a change is refused, put the style and settings back and
+        raise."""
         old_style, old_settings = session.style.name, session.settings
         try:
             if style is not None and style != old_style:
                 session.set_style(style)
             if reset:
                 session.reset_settings()
+            if look is not None:
+                session.apply_look(look)
             for stage, values in (settings or {}).items():
                 session.update(stage, **values)
         except Exception:
@@ -337,6 +392,7 @@ def build_server(session: Session | None = None) -> MCPServer:
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
         reset: bool = False,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
         px wide. The JSON's tone key is {error, ssim, floor, reach}: how the drawing's tones,
@@ -347,12 +403,29 @@ def build_server(session: Session | None = None) -> MCPServer:
         applies like an analyse_image suggestion's. A style that
         differs from the current one replaces it; a stage the two styles share keeps the values
         changed from the old style's defaults, and the rest take the new style's defaults. reset
-        puts every setting back to the style's defaults first. settings is {stage: {setting:
-        value}} and changes only the values given; only the stages after a changed setting run
-        again. When a change is refused, nothing changes and nothing runs."""
+        puts every setting back to the style's defaults first. look starts from one of the style's
+        looks, such as faithful, quick or fine, after reset and before settings; describe_style
+        lists them. settings is {stage: {setting: value}} and changes only the values given; only
+        the stages after a changed setting run again. An assistant that sees a face or a subject
+        can keep detail there and abstract the rest with {"tone": {"focus": [[x, y]]}}, each point
+        a share of the image's width and height from its top-left corner. When a change is
+        refused, nothing changes and nothing runs."""
         with _errors():
-            change(style, settings, reset)
+            change(style, settings, reset, look)
             await follow(ctx, session.run)
+            return shown()
+
+    @server.tool()
+    async def testchart() -> list[str | Image]:
+        """Draw a test chart for the page and the first pen and return the stats as JSON, with
+        the lint, and a preview, as run does. It needs no image and replaces the result. Plot it
+        and compare by eye. SPACING MM shows lines at 0.5 to 4 pen widths apart, to see where
+        they merge. DOT MM shows grids of dots 1 to 6 pen widths wide, to see how big a dot
+        really comes out. PASSES draws a solid fill 1 to 8 times over, to see how many passes the
+        paper takes; the lint reports overdraw on it by design. The stats' plot time is the
+        estimate to check against a stopwatch. Fails when the page is too small."""
+        with _errors():
+            session.testchart()
             return shown()
 
     @server.tool()
@@ -362,16 +435,17 @@ def build_server(session: Session | None = None) -> MCPServer:
         target: float,
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Find the value of the style's density setting that brings a metric of the drawing near
         target: minutes of estimated plot time, paths, metres of pen-down length, or dots for a
-        style that places points. style and settings apply first, as in run. The style reruns
+        style that places points. style, look and settings apply first, as in run. The style reruns
         with the setting changed, up to eight times, and keeps the run nearest the target; the
         setting keeps its value. Returns the stage, key, chosen value and the value and metric of
         every trial as JSON, then the stats and a preview as run does. The time estimate leaves
         out acceleration, so a time target runs optimistic on styles of short strokes or dots."""
         with _errors():
-            change(style, settings)
+            change(style, settings, look=look)
             handle = await follow(ctx, lambda: session.fit(metric, target))
             return [json.dumps(handle.fit), *shown()]
 
@@ -382,20 +456,25 @@ def build_server(session: Session | None = None) -> MCPServer:
         target: float | None = None,
         style: str | None = None,
         settings: dict[str, dict[str, Any]] | None = None,
+        look: str | None = None,
     ) -> list[str | Image]:
         """Search the style's density setting for the value whose drawing's tones follow the
-        image most closely, by the tone match's error, in eight runs: the current value, then a
-        golden-section search from a quarter to four times it. Given metric and target, as for
-        fit, a trial over the target does not count. style and settings apply first, as in run.
-        Nothing else changes: returns {stage, key, value, error, current, current_error, budget,
-        trials, reason, patch} as JSON, or null when no trial stayed within the target, then the
+        image most closely, by the tone match's error, in up to nine runs: the current value, then
+        half-octave steps from a quarter to four times it. A trial does not count when it plots for
+        over twice the current value's time or an hour, whichever is more, or has a plot lint
+        warning or error the current value does not. Given metric and target, as for fit, a trial
+        over the target does not count either, and a minutes target replaces the time limit.
+        style, look and settings apply first, as in run.
+        Nothing else changes: returns {stage, key, value, error, minutes, current, current_error,
+        current_minutes, budget, trials, reason, patch} as JSON, with plot times in minutes, or
+        null when no trial stayed within the target, then the
         stats and a preview of the current settings as run does. Apply the patch with
         run(settings=patch["settings"]) if it suits; fidelity to the image is not always the
         aim."""
         with _errors():
             if (metric is None) != (target is None):
                 raise ValueError("give both a metric and a target, or neither")
-            change(style, settings)
+            change(style, settings, look=look)
             handle = await follow(ctx, lambda: session.optimize(metric, target))
             return [json.dumps(handle.optimum), *shown()]
 
@@ -429,14 +508,17 @@ def build_server(session: Session | None = None) -> MCPServer:
 
     @server.tool()
     async def get_session() -> dict[str, Any]:
-        """Show the style, its settings, the page in mm, the pens, the image size, the state of the
-        latest run and the stats of the result, where there is one."""
+        """Show the style, its settings, the look they are at (null for none), the page in mm, the
+        paper colour, the pens, the image size, the state of the latest run and the stats of the
+        result, where there is one."""
         with _errors():
             stats = asdict(session.stats()) if session.result is not None else None
             return {
                 "style": session.style.name,
                 "settings": session.settings,
-                "page": asdict(session.canvas),
+                "look": session.look,
+                "page": _page_dict(session.canvas),
+                "paper": session.paper,
                 "pens": [asdict(pen) for pen in session.pens],
                 "machine": session.machine,
                 "image": _image_size(session),
@@ -446,8 +528,9 @@ def build_server(session: Session | None = None) -> MCPServer:
 
     @server.tool()
     async def load_preset(path: str) -> dict[str, Any]:
-        """Load the preset file at the absolute path, which replaces the style, page, pens and
-        settings. Settings that the style does not have are dropped and named in the warnings."""
+        """Load the preset at the absolute path, which replaces the style, page, paper, pens and
+        settings. The file is a saved preset, an exported SVG or an exported JSON drawing. Settings
+        that the style does not have are dropped and named in the warnings."""
         with _errors(), warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             session.load_preset(_absolute(path))
@@ -456,15 +539,19 @@ def build_server(session: Session | None = None) -> MCPServer:
     @server.tool()
     async def export(
         path: str,
-        format: Literal["svg", "json", "png", "preset", "gcode"],
+        format: Literal["svg", "json", "png", "preset", "gcode", "hpgl"],
         overwrite: bool = False,
+        units_per_mm: float = 40.0,
     ) -> dict[str, Any]:
-        """Write the result as svg, json (the paths) or png (a preview), or the settings as a
-        preset, to the absolute path. A file that exists is kept unless overwrite is true. With
-        format gcode the path is a folder, made if it is missing, and the result is written into
-        it as one file per pen, plot_1_<pen>.gcode and so on, for the machine from set_machine;
-        if any of those files exists, none is written unless overwrite is true. Returns the path
-        and size of each file for gcode, and the size of the file for the other formats."""
+        """Write the result as svg, json (the paths), png (a preview) or hpgl (one plotter file,
+        with a pen selected for each layer), or the settings as a preset, to the absolute path.
+        units_per_mm is the plotter units to the millimetre of hpgl, above 0 and at most 1000,
+        40 for most plotters, and no other format reads it. A file that exists is kept unless
+        overwrite is true. With format gcode the path is a folder, made if it is missing, and the
+        result is written into it as one file per pen, plot_1_<pen>.gcode and so on, for the
+        machine from set_machine; if any of those files exists, none is written unless overwrite
+        is true. Returns the path and size of each file for gcode, and the size of the file for
+        the other formats."""
         with _errors():
             p = _absolute(path)
             if format == "gcode":
@@ -477,6 +564,8 @@ def build_server(session: Session | None = None) -> MCPServer:
                 session.export_svg(p)
             elif format == "json":
                 session.export_json(p)
+            elif format == "hpgl":
+                session.export_hpgl(p, units_per_mm)
             elif format == "png":
                 p.write_bytes(session.preview_png(_page_px(session)))
             else:

@@ -1,12 +1,12 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
 // `worker.ts` only connects it to `self`.
-import { catalogue, describe, listInks, listPens, listStyles, syntheticStillLife, type Run, type Session } from "../pkg/plotline_wasm.js";
-import { drive, macrotask } from "./driver";
+import { catalogue, describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
+import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
-/** A change the engine suggests, in the shape of `Session::analysis`: `settings` apply after `style`. */
-export type Patch = { style?: string; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
+/** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
+export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } | Pick<Canvas, "crop"> };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
 /** A hosted model, in the shape of the core's `CatalogueEntry`. */
@@ -17,7 +17,13 @@ export type CatalogueEntry = {
 /** A model the session holds; `entry` is null for a file of the user's own. */
 export type ModelInfo = { id: string; label: string; overlap: number; entry: CatalogueEntry | null };
 export type State = {
-  image: boolean; style: string; canvas: Canvas; pens: Pen[]; machine: Machine | null;
+  image: boolean; style: string;
+  /** The name of the style's look the settings match; null when they match none, which the page calls Custom. */
+  look: string | null;
+  canvas: Canvas;
+  /** The paper's colour as `#rrggbb`: a setting beside the page that the preview and the style pictures draw onto. */
+  paper: string;
+  pens: Pen[]; machine: Machine | null;
   settings: Record<string, Record<string, unknown>>; speeds: Speeds;
   run: { id: number; state: string; error: string | null }; stats: Stats | null;
   /** The pens of the last drawing's layers; empty without a drawing. */
@@ -30,14 +36,21 @@ export type State = {
   tone: ToneMatch | null;
   /** The models the session holds, in id order. */
   models: ModelInfo[];
+  /** Where the tone stage's focus points are drawn, in page mm; empty without an image. */
+  focus: [number, number][];
 };
 export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
-// The commands that change what a drawing is made from: each one redraws once it succeeds.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "resetSettings", "update", "loadPreset", "apply", "restore", "addModel", "removeModel"]);
+// The commands that change what a drawing is made from: each one redraws once it succeeds. `setPaper` is
+// not among them: the paper is no input of a run, so a change only repaints. Nor is `setPenLibrary`: the
+// user's own pens only change the suggestions, which every reply's state carries.
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore", "addModel", "removeModel"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
+// A trap: a panic or memory running out aborts the call with a `RuntimeError`, and a stack
+// overflow with a `RangeError`. Either leaves the objects the call was using borrowed for good.
+const trapped = (e: unknown): boolean => e instanceof WebAssembly.RuntimeError || e instanceof RangeError;
 
 export class Protocol {
   private image = false;
@@ -45,57 +58,99 @@ export class Protocol {
   private current: Run | null = null;
   private go: (() => void) | null = null;
   private thumbsId = 0;
+  // What a rebuilt session needs: how to set the image again, and the last preset and speeds a
+  // reply carried.
+  private source: ((s: Session) => void) | null = null;
+  private saved: { preset: string; speeds: string } | null = null;
+  // The pen library as the session last took it, which a rebuilt session gets again.
+  private library = "[]";
+  // The model files the session holds, by id, with the catalogue id each was added under, which a
+  // rebuilt session loads again. shortcut: keeps a second copy of each file, up to 200 MB for one of
+  // the user's own; read them back from the browser's store instead if that memory matters.
+  private readonly modelFiles = new Map<string, [string | null, Uint8Array]>();
   private readonly methods: Record<string, (...args: any[]) => unknown>;
 
-  constructor(private readonly session: Session, private readonly post: (msg: Reply | Event | ThumbEvent, transfer?: Transferable[]) => void) {
-    const s = session;
+  constructor(private session: Session, private readonly post: (msg: Reply | Event | ThumbEvent, transfer?: Transferable[]) => void) {
+    // Every call reads `this.session`, which `recover` replaces.
+    const s = (): Session => this.session;
     this.methods = {
       listStyles: () => JSON.parse(listStyles()),
       listPens: () => JSON.parse(listPens()),
       listInks: () => JSON.parse(listInks()),
-      setMachine: (machine: Machine | null) => s.setMachine(JSON.stringify(machine)),
-      gcode: (layer: number) => s.gcode(layer),
+      setMachine: (machine: Machine | null) => s().setMachine(JSON.stringify(machine)),
+      gcode: (layer: number) => s().gcode(layer),
+      hpgl: (unitsPerMm: number) => s().hpgl(unitsPerMm),
       describe: (name: string) => JSON.parse(describe(name)),
-      setImageBytes: (bytes: Uint8Array) => { s.setImageBytes(bytes); this.image = true; },
-      setImage: (width: number, height: number, rgb: Float32Array) => { s.setImage(width, height, rgb); this.image = true; },
+      setImageBytes: (bytes: Uint8Array) => this.setSource((t) => t.setImageBytes(bytes)),
+      setImage: (width: number, height: number, rgb: Float32Array) => this.setSource((t) => t.setImage(width, height, rgb)),
       // The default A4 drawing area's shape, 190 x 277 mm, so the sample fills it.
       sample: () => this.methods.setImage(600, 875, syntheticStillLife(600, 875)),
-      setCanvas: (canvas: Canvas) => s.setCanvas(JSON.stringify(canvas)),
-      setPens: (pens: Pen[]) => s.setPens(JSON.stringify(pens)),
-      setStyle: (name: string) => s.setStyle(name),
-      resetSettings: () => s.resetSettings(),
-      update: (stage: string, values: Record<string, unknown>) => s.update(stage, JSON.stringify(values)),
+      setCanvas: (canvas: Canvas) => s().setCanvas(JSON.stringify(canvas)),
+      setPaper: (color: string) => s().setPaper(color),
+      setPens: (pens: Pen[]) => s().setPens(JSON.stringify(pens)),
+      setPenLibrary: (pens: Pen[]) => {
+        const json = JSON.stringify(pens);
+        s().setPenLibrary(json);
+        this.library = json;
+      },
+      setStyle: (name: string) => s().setStyle(name),
+      applyLook: (name: string) => s().applyLook(name),
+      resetSettings: () => s().resetSettings(),
+      update: (stage: string, values: Record<string, unknown>) => s().update(stage, JSON.stringify(values)),
       // The session calls, not `methods`, so the whole patch redraws once. A refusal partway leaves
       // the earlier parts applied; only a stale suggestion can cause one.
-      apply: ({ style, settings, page }: Patch) => {
-        if (style) s.setStyle(style);
-        for (const [stage, values] of Object.entries(settings ?? {})) s.update(stage, JSON.stringify(values));
-        if (page) s.setCanvas(JSON.stringify({ ...JSON.parse(s.preset()).canvas, ...page }));
+      apply: ({ style, pens, settings, page }: Patch) => {
+        if (style) s().setStyle(style);
+        if (pens) s().setPens(JSON.stringify(pens));
+        for (const [stage, values] of Object.entries(settings ?? {})) s().update(stage, JSON.stringify(values));
+        if (page) s().setCanvas(JSON.stringify({ ...JSON.parse(s().preset()).canvas, ...page }));
       },
-      setSpeeds: (speeds: Speeds) => s.setSpeeds(JSON.stringify(speeds)),
+      setSpeeds: (speeds: Speeds) => s().setSpeeds(JSON.stringify(speeds)),
       run: () => this.start(),
       // The settings stay as they are: the page applies the value the run's end carries.
-      fit: (metric: string, target: number) => this.start(() => s.fit(metric, target), "fit"),
+      fit: (metric: string, target: number) => this.start(() => s().fit(metric, target), "fit"),
       // The settings stay as they are, and the page only offers what the search found.
-      optimize: (metric?: string, target?: number) => this.start(() => s.optimize(metric ?? null, target ?? null), "optimize"),
+      optimize: (metric?: string, target?: number) => this.start(() => s().optimize(metric ?? null, target ?? null), "optimize"),
       cancel: () => this.current?.cancel(),
-      preset: () => JSON.parse(s.preset()),
-      loadPreset: (preset: unknown) => s.loadPreset(JSON.stringify(preset)),
+      // The share of the image, from its top-left corner, under a page point in mm; null off the image.
+      imagePoint: (x: number, y: number) => {
+        const p = s().imagePoint(x, y);
+        return p ? Array.from(p) : null;
+      },
+      // The calibration chart for the page and the first pen. The engine cancels the run, and the
+      // events a finished run posts follow the reply. A refusal changes nothing.
+      testchart: () => {
+        s().testchart();
+        const id = ++this.counter;
+        this.current = null;
+        this.go = () => postDone(s(), id, this.post);
+      },
+      preset: () => JSON.parse(s().preset()),
+      loadPreset: (preset: unknown) => s().loadPreset(JSON.stringify(preset)),
+      // The text of a preset file, an exported SVG or an exported JSON drawing.
+      loadPresetText: (text: string) => s().loadPreset(presetFromText(text)),
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
-      restore: (setup: Record<string, unknown>) => s.loadPreset(JSON.stringify({ ...JSON.parse(s.preset()), ...setup })),
+      restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
       // Draws every style after the reply, which carries the id its `thumb` events will have.
-      thumbs: (width: number) => {
+      thumbs: (width: number, shrink = 1) => {
         const id = ++this.thumbsId;
-        this.go = () => void this.thumbs(id, width);
+        this.go = () => void this.thumbs(id, width, shrink);
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
-      svg: () => s.svg(),
-      json: () => s.json(),
+      svg: () => s().svg(),
+      json: () => s().json(),
       // The worker loads the model module before it hands this command over.
-      addModel: (id: string | null, bytes: Uint8Array) => JSON.parse(s.addModel(id, bytes)),
-      removeModel: (id: string) => s.removeModel(id),
-      models: () => JSON.parse(s.models()),
+      addModel: (id: string | null, bytes: Uint8Array) => {
+        const info = JSON.parse(s().addModel(id, bytes)) as ModelInfo;
+        this.modelFiles.set(info.id, [id, bytes]);
+        return info;
+      },
+      removeModel: (id: string) => {
+        s().removeModel(id);
+        this.modelFiles.delete(id);
+      },
+      models: () => JSON.parse(s().models()),
       catalogue: () => JSON.parse(catalogue()),
     };
   }
@@ -107,11 +162,53 @@ export class Protocol {
       if (REDRAWS.has(method) && this.image) this.start();
       this.post({ id, ok: true, state: this.state(), value });
     } catch (e) {
-      this.post({ id, ok: false, error: message(e) });
+      this.post({ id, ok: false, error: trapped(e) ? this.recover(e, true) : message(e) });
     }
+    this.release();
+  }
+
+  // Lets a run that `start` set up go.
+  private release(): void {
     const go = this.go;
     this.go = null;
     go?.();
+  }
+
+  private setSource(set: (s: Session) => void): void {
+    set(this.session);
+    this.source = set;
+    this.image = true;
+  }
+
+  // Rebuilds the session after a trap, which leaves its objects borrowed so that every later call
+  // on them fails. A new session gets the image again and the last preset and speeds a reply
+  // carried, and redraws unless the run that trapped was the latest. Returns the panic's message,
+  // which the trap itself does not carry.
+  private recover(e: unknown, redraw: boolean): string {
+    const error = takePanic() ?? message(e);
+    const old = this.session;
+    try {
+      this.current?.cancel(); // the old session's run would otherwise draw on
+    } catch {
+      // the run that trapped is borrowed, and its loop has already ended
+    }
+    this.current = null;
+    this.session = new Session();
+    try {
+      this.session.setPenLibrary(this.library); // before the image, so it is measured once
+      // Before the preset, so a run with the learned style finds its model.
+      for (const [id, bytes] of this.modelFiles.values()) this.session.addModel(id, bytes);
+      this.source?.(this.session);
+      if (this.saved) {
+        this.session.loadPreset(this.saved.preset);
+        this.session.setSpeeds(this.saved.speeds);
+      }
+      if (redraw && this.image) this.start();
+    } catch {
+      // the new session keeps what was set before this failed
+    }
+    free(old);
+    return error;
   }
 
   // Starts a run; `handle` lets it go after the reply, which reports it running. `drive` would
@@ -123,7 +220,11 @@ export class Protocol {
     this.current = run;
     this.go = () => {
       drive(this.session, run, id, this.post, { kind })
-        .catch((e) => this.post({ type: "end", id, state: "error", error: message(e), stats: null, tone: null, lint: [] }, []))
+        .catch((e) => {
+          const error = trapped(e) ? this.recover(e, this.current !== run) : message(e);
+          this.post({ type: "end", id, state: "error", error, stats: null, tone: null, lint: [] }, []);
+          this.release(); // the redraw, when an older run trapped
+        })
         .finally(() => { if (this.current === run) this.current = null; }); // `drive` freed it
     };
   }
@@ -131,7 +232,7 @@ export class Protocol {
   // Draws every listed style in turn as a trial, which leaves the session's own run, drawing and
   // settings alone, and posts each as a `thumb` event. It yields as `drive` does, so commands get
   // their turn, and a newer `thumbs` or a `cancelThumbs` ends it.
-  private async thumbs(id: number, width: number): Promise<void> {
+  private async thumbs(id: number, width: number, shrink: number): Promise<void> {
     let lastYield = performance.now();
     for (const { name } of JSON.parse(listStyles()) as Array<{ name: string }>) {
       if (name === "learned") continue; // it needs a downloaded model, so it has no trial picture
@@ -142,7 +243,7 @@ export class Protocol {
         const trial = this.session.trial(name);
         try {
           for (let frame = trial.nextFrame(); frame; frame = trial.nextFrame()) {
-            frame.free();
+            free(frame);
             if (performance.now() - lastYield >= 50) {
               await macrotask();
               lastYield = performance.now();
@@ -150,12 +251,17 @@ export class Protocol {
             }
           }
           error = trial.error() ?? null;
-          png = trial.previewPng(width) ?? null;
+          png = trial.previewPng(width, shrink) ?? null;
         } finally {
-          trial.free();
+          free(trial);
         }
       } catch (e) {
-        error = message(e);
+        if (trapped(e)) {
+          error = this.recover(e, true);
+          this.release();
+        } else {
+          error = message(e);
+        }
       }
       this.post({ type: "thumb", id, style: name, png, error }, png ? [png.buffer as ArrayBuffer] : []);
     }
@@ -163,7 +269,9 @@ export class Protocol {
 
   private state(): State {
     const s = this.session;
-    const { style, canvas, pens, machine, settings } = JSON.parse(s.preset());
+    const preset = s.preset();
+    this.saved = { preset, speeds: s.speeds() };
+    const { style, canvas, paper, pens, machine, settings } = JSON.parse(preset);
     const stats = s.stats();
     const layers: Pen[] = [];
     const drawing = s.drawing();
@@ -171,18 +279,24 @@ export class Protocol {
       try {
         for (let i = 0; i < drawing.layerCount(); i++) layers.push(JSON.parse(drawing.layerPen(i)));
       } finally {
-        drawing.free();
+        free(drawing);
       }
     }
     const analysis = s.analysis();
     const lint = s.lint();
     const tone = s.toneMatch();
+    const focus: [number, number][] = [];
+    for (const [x, y] of (settings.tone?.focus ?? []) as [number, number][]) {
+      const p = s.pagePoint(x, y);
+      if (p) focus.push([p[0], p[1]]);
+    }
     return {
-      image: this.image, style, canvas, pens, machine, settings, speeds: JSON.parse(s.speeds()), layers,
+      image: this.image, style, look: s.look() ?? null, canvas, paper, pens, machine, settings, speeds: JSON.parse(this.saved.speeds), layers,
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
       tone: tone ? JSON.parse(tone) : null,
       models: JSON.parse(s.models()),
+      focus,
       run: { id: this.counter, state: s.state(), error: s.error() ?? null },
       stats: stats ? JSON.parse(stats) : null,
     };

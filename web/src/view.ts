@@ -20,3 +20,9 @@ export const zoomPercent = (scale: number): number => Math.round((scale * 25.4 *
 export function toMm(view: View, px: number, py: number): [number, number] {
   return [(px - view.x) / view.scale, (py - view.y) / view.scale];
 }
+
+// The grey for text drawn on the paper `#rrggbb`: 4.8:1 on white, and a light grey where the paper is dark.
+export function onPaper(paper: string): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(paper.slice(i, i + 2), 16));
+  return 0.299 * r + 0.587 * g + 0.114 * b < 128 ? "#c4c8d0" : "#6b7280";
+}

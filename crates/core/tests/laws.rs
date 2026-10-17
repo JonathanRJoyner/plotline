@@ -7,7 +7,9 @@
 //! is a small image built in code (a two-colour gradient under discs, boxes and noise, or one of
 //! the crate's synthetic pictures), a page and margin, one to three pens, a style, and a value for
 //! each of its settings, Pen use included, from the schema's range: the default, either end, or
-//! anything between. proptest shrinks a failing case and prints it.
+//! anything between. proptest shrinks a failing case and prints it. The look law is the one
+//! exception: its cases are a style, one of its looks and one of three test images at the size of
+//! the regression gallery's.
 //!
 //! Each law runs a fixed number of cases from a fixed seed, so a pull request's run is the same
 //! every time. `PLOTLINE_LAWS_SCALE` multiplies the case counts and raises the speed caps, and
@@ -19,15 +21,22 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use plotline_core::cache::StageCache;
+use plotline_core::export::hpgl::MAX_UNITS_PER_MM;
 use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
+use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
 use plotline_core::models::{file_id, StandIn, STANDIN_BYTES, STANDIN_HALF_BYTES};
+use plotline_core::optimize::{LONGEST, SLOWER, TRIALS};
+use plotline_core::pens::INKS;
+use plotline_core::preview::{render_png_shrunk, render_rgba};
+use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
+use plotline_core::stages::tone::{flatten, guided};
 use plotline_core::style::Style;
-use plotline_core::synthetic::{flat_noise, ramp, scene, strokes};
+use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session};
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -46,7 +55,8 @@ const SPEED_CAPS: &[(&str, &str, f64)] = &[
     ("model", "resolution", 512.0),
 ];
 
-/// The seed of the pull request run.
+/// The seed of the pull request run. Every law must hold for any seed, since a new setting shifts
+/// every case a seed draws; see docs/decisions/2026-10-16-property-law-fixes.md.
 const SEED: u64 = 0x706c_6f74_6c69_6e65;
 
 /// How many times more cases to run than a pull request does, from `PLOTLINE_LAWS_SCALE`.
@@ -250,20 +260,25 @@ fn picture() -> impl Strategy<Value = Picture> {
     ]
 }
 
-/// A page in mm, its margin as a share of the most it could be, and whether the image fills it.
+/// A page in mm, its margin as a share of the most it could be, whether the image fills it, and
+/// the shares of the image cut from its left, top, right and bottom.
 #[derive(Clone, Debug)]
 struct Page {
     width: f64,
     height: f64,
     margin: f64,
     fill: bool,
+    crop: [f64; 4],
 }
 
 impl Page {
     fn canvas(&self) -> Canvas {
         let margin = self.margin * self.width.min(self.height) / 2.0;
         let fit = if self.fill { Fit::Fill } else { Fit::Fit };
-        Canvas::new(self.width, self.height, margin, fit).expect("the margin leaves an area")
+        let canvas = Canvas::new(self.width, self.height, margin, fit);
+        canvas
+            .and_then(|c| c.with_crop(self.crop))
+            .expect("the margin leaves an area")
     }
 }
 
@@ -274,8 +289,19 @@ fn page() -> impl Strategy<Value = Page> {
             height,
             margin,
             fill,
+            crop: [0.0; 4],
         },
     )
+}
+
+/// The crop of a case, drawn from its `cancel_at` instead of from a strategy of its own, so that
+/// every case the other laws drew before crops existed is still drawn: one case in four is
+/// cropped, each side by up to the most it may be, and a shrunk case has none.
+fn crop_of(cancel_at: usize) -> [f64; 4] {
+    if cancel_at % 4 != 3 {
+        return [0.0; 4];
+    }
+    [0, 1, 2, 3].map(|i| f64::from((hash(cancel_at as u64, i) + 1.0) / 2.0) * 0.45)
 }
 
 /// One to three pens as width in mm and colour, thin ones included.
@@ -331,6 +357,18 @@ fn value(stage: &str, key: &str, prop: &Value, defs: &Value) -> BoxedStrategy<Va
         Some("number") => {
             let (lo, hi, d) = range();
             prop_oneof![1 => Just(d), 1 => Just(lo), 1 => Just(hi), 3 => lo..=hi]
+                .prop_map(Value::from)
+                .boxed()
+        }
+        // A list of number lists, such as the focus points: none to three of them, each number
+        // in the range the schema gives the items' items.
+        Some("array") => {
+            let item = &prop["items"];
+            let n = item["minItems"].as_u64().expect("fixed-length items") as usize;
+            let lo = item["items"]["minimum"].as_f64().expect("a range");
+            let hi = item["items"]["maximum"].as_f64().expect("a range");
+            let list = prop::collection::vec(lo..=hi, n);
+            prop::collection::vec(list, 0..=3)
                 .prop_map(Value::from)
                 .boxed()
         }
@@ -409,7 +447,10 @@ fn case(names: Vec<String>) -> impl Strategy<Value = Case> {
             style,
             settings,
             picture,
-            page,
+            page: Page {
+                crop: crop_of(cancel_at),
+                ..page
+            },
             pens,
             cancel_at,
         },
@@ -600,6 +641,30 @@ fn every_run_keeps_the_run_laws() {
     });
 }
 
+#[test]
+fn a_crop_of_zeros_leaves_every_drawing_unchanged() {
+    check("zero crop", 24, case(all_styles()), |c| {
+        let mut plain = c.clone();
+        plain.page.crop = [0.0; 4];
+        let canvas = plain.page.canvas();
+        let mut json = serde_json::to_value(&canvas).unwrap();
+        prop_assert!(
+            json.get("crop").is_none(),
+            "a crop of zeros is written: {json}"
+        );
+        // The same page as a file that spells the zeros out would give it.
+        json["crop"] = json!([0.0, 0.0, 0.0, 0.0]);
+        let spelled = serde_json::from_value::<Canvas>(json).unwrap();
+        let mut a = plain.session();
+        run(&mut a)?;
+        let mut b = plain.session();
+        b.set_canvas(spelled.with_crop([0.0; 4]).unwrap());
+        run(&mut b)?;
+        prop_assert!(left(&a) == left(&b), "a crop of zeros changes the drawing");
+        Ok(())
+    });
+}
+
 /// Values at the ends of a setting's range: either end or the default for a number, any value of
 /// a boolean or an enum.
 fn corner(stage: &str, key: &str, prop: &Value, defs: &Value) -> BoxedStrategy<Value> {
@@ -647,6 +712,7 @@ fn a_run_at_the_ends_of_every_range_ends_with_a_drawing_or_a_message() {
             height: 160.0,
             margin: 0.0,
             fill,
+            crop: [0.0; 4],
         };
         gather(parts).prop_map(move |settings| Case {
             style: name.clone(),
@@ -665,10 +731,24 @@ fn a_run_at_the_ends_of_every_range_ends_with_a_drawing_or_a_message() {
 }
 
 /// Apply a suggestion's or a finding's patch as the front ends do: the style, then the settings,
-/// then the page size with the margin and fit kept.
+/// then the page size or the crop with the rest of the page kept.
 fn apply(s: &mut Session, patch: &Value) -> Result<(), TestCaseError> {
     if let Some(style) = patch["style"].as_str() {
         s.set_style(style)
+            .map_err(|e| TestCaseError::fail(e.to_string()))?;
+    }
+    if let Some(pens) = patch["pens"].as_array() {
+        let pen = |p: &Value| {
+            let text = |k: &str| p[k].as_str().unwrap_or_default();
+            Pen::new(
+                text("name"),
+                p["width_mm"].as_f64().unwrap_or(0.0),
+                text("color"),
+            )
+        };
+        let pens: Result<Vec<Pen>, _> = pens.iter().map(pen).collect();
+        let pens = pens.map_err(|e| TestCaseError::fail(e.to_string()))?;
+        s.set_pens(pens)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
     }
     for (stage, values) in patch["settings"].as_object().into_iter().flatten() {
@@ -679,12 +759,19 @@ fn apply(s: &mut Session, patch: &Value) -> Result<(), TestCaseError> {
         let c = s.canvas().clone();
         let size = |k: &str| page.get(k).and_then(Value::as_f64);
         let (w, h) = (size("width_mm"), size("height_mm"));
+        let crop = match page.get("crop") {
+            Some(v) => {
+                serde_json::from_value(v.clone()).map_err(|e| TestCaseError::fail(e.to_string()))?
+            }
+            None => c.crop,
+        };
         let canvas = Canvas::new(
             w.unwrap_or(c.width_mm),
             h.unwrap_or(c.height_mm),
             c.margin_mm,
             c.fit,
         );
+        let canvas = canvas.and_then(|canvas| canvas.with_crop(crop));
         s.set_canvas(canvas.map_err(|e| TestCaseError::fail(e.to_string()))?);
     }
     Ok(())
@@ -709,12 +796,107 @@ fn an_applied_suggestion_goes_away() {
     });
 }
 
+/// One to six library pens, each in a listed ink's colour or in any colour.
+fn library() -> impl Strategy<Value = Vec<Pen>> {
+    let colour = prop_oneof![
+        select(INKS.to_vec()).prop_map(|(_, hex)| hex.to_string()),
+        any::<[u8; 3]>().prop_map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}")),
+    ];
+    prop::collection::vec((0.1..2.0f64, colour), 1..=6).prop_map(|pens| {
+        pens.into_iter()
+            .enumerate()
+            .map(|(i, (width, colour))| Pen::new(&format!("P{i}"), width, &colour).unwrap())
+            .collect()
+    })
+}
+
+#[test]
+fn a_library_palette_uses_owned_pens() {
+    // With a pen library the colour suggestion offers only library pens, and every ink it says is
+    // worth adding is one the library lacks that gains a just noticeable difference (2.3 ΔE*ab).
+    check(
+        "palette library",
+        64,
+        (picture(), library()),
+        |(picture, library)| {
+            let mut s = Session::new(64 << 20);
+            s.set_pen_library(library.clone());
+            s.set_image(picture.image());
+            let analysis = s.analysis().unwrap();
+            let stats = &analysis.stats;
+            let owns = |hex: &str| library.iter().any(|p| p.color.eq_ignore_ascii_case(hex));
+            prop_assert!(stats.palette_additions.len() <= 3);
+            for ink in &stats.palette_additions {
+                prop_assert!(!owns(&ink.color), "{ink:?} is in the library");
+                prop_assert!(
+                    stats.palette_error - ink.error >= 2.3,
+                    "{ink:?} gains too little on {}",
+                    stats.palette_error
+                );
+            }
+            if let Some(colour) = analysis.suggestions.iter().find(|g| g.kind == "colour") {
+                let patch = colour.patch.as_ref().unwrap();
+                for pen in patch["pens"].as_array().unwrap() {
+                    prop_assert!(
+                        library.iter().any(|p| json!(p) == *pen),
+                        "{pen} is not a library pen"
+                    );
+                }
+                apply(&mut s, patch)?;
+                let after = s.analysis().unwrap().suggestions;
+                prop_assert!(after.iter().all(|g| g.kind != "colour"));
+            }
+            Ok(())
+        },
+    );
+}
+
+#[test]
+fn flattening_ignores_uniform_lighting() {
+    // Dimming a picture evenly dims its paper just as much, so the flattened picture is the same.
+    check(
+        "flatten",
+        256,
+        (picture(), 1.0..=50.0f64, 0.25f32..=1.0),
+        |(picture, window, gain)| {
+            let image = picture.image();
+            let (w, h) = (image.width as usize, image.height as usize);
+            let lum = image.luminance();
+            let dim: Vec<f32> = lum.iter().map(|v| v * gain).collect();
+            let (plain, dimmed) = (flatten(&lum, w, h, window), flatten(&dim, w, h, window));
+            for (i, (a, b)) in plain.iter().zip(&dimmed).enumerate() {
+                prop_assert!(
+                    (a - b).abs() <= 1e-4,
+                    "pixel {i} of {w} x {h} is {a}, and {b} at gain {gain}"
+                );
+            }
+            Ok(())
+        },
+    );
+}
+
+#[test]
+fn smoothing_stays_within_the_tone_range() {
+    // The output averages mixes of a pixel and window means, so it never leaves the picture's range.
+    check("smooth", 256, (picture(), 1usize..=40), |(picture, r)| {
+        let image = picture.image();
+        let (w, h) = (image.width as usize, image.height as usize);
+        let lum = image.luminance();
+        let lo = lum.iter().copied().fold(f32::INFINITY, f32::min) - 1e-5;
+        let hi = lum.iter().copied().fold(f32::NEG_INFINITY, f32::max) + 1e-5;
+        for (i, q) in guided(&lum, w, h, r).iter().enumerate() {
+            prop_assert!(
+                (lo..=hi).contains(q),
+                "pixel {i} of {w} x {h} is {q}, outside {lo} to {hi} at r {r}"
+            );
+        }
+        Ok(())
+    });
+}
+
 /// The lint findings whose number is a share inked, which rises as the drawing improves; every
 /// other finding's number falls.
 const RISING: &[&str] = &["empty", "dark"];
-
-/// Lint findings whose patch can miss, which the law skips until issue #32 is closed.
-const LINT_MISSES: &[&str] = &["empty", "unused_pens", "dark", "travel"];
 
 #[test]
 fn an_applied_lint_fix_removes_or_shrinks_its_finding() {
@@ -725,9 +907,7 @@ fn an_applied_lint_fix_removes_or_shrinks_its_finding() {
             return Ok(());
         };
         for f in findings {
-            let Some(patch) = f.patch.as_ref().filter(|_| !LINT_MISSES.contains(&f.code)) else {
-                continue;
-            };
+            let Some(patch) = &f.patch else { continue };
             let mut t = c.session();
             apply(&mut t, patch)?;
             run(&mut t)?;
@@ -829,9 +1009,17 @@ fn metrics(s: &Session, run: &Run) -> [f64; 4] {
     ]
 }
 
-/// The least pen-down length, in metres, on which the density law judges the length. A
-/// 24 mm line across a white map came out 0.46 mm longer at a flow spacing of 8 mm than of 0.7 mm.
-const JUDGED_METRES: f64 = 0.25;
+/// What the density setting `d` of `style` drives, from the `x-density-of` mark on its schema
+/// property: `points`, `lines` or `length`. Unmarked, a style that places points is judged on its
+/// points and any other on its length.
+fn drives(style: &Style, d: &Density) -> String {
+    let stage = style.stages.iter().find(|s| s.name() == d.stage).unwrap();
+    match stage.schema()["properties"][&d.key]["x-density-of"].as_str() {
+        Some(mark) => mark.to_string(),
+        None if places_points(style) => "points".to_string(),
+        None => "length".to_string(),
+    }
+}
 
 #[test]
 fn a_density_setting_moves_its_metrics_one_way() {
@@ -851,6 +1039,10 @@ fn a_density_setting_moves_its_metrics_one_way() {
         // A minimum length drops more paths as marks get shorter, so with it a denser setting can
         // draw less; the solver bisects across such a drop.
         s.update("order", &json!({"min_length_mm": 0.0})).unwrap();
+        // A tone response held to the image lightens the map as the style draws darker, so with
+        // it a denser setting can draw less: with two pens light to dark, 3346 Voronoi points
+        // emptied the second pen's band that 516 points drew in.
+        s.update("tone", &json!({"response": "off"})).unwrap();
         let mut measure = |v: f64| -> Result<Option<[f64; 4]>, TestCaseError> {
             let v = if d.integer { json!(v as u64) } else { json!(v) };
             s.update(&d.stage, &json!({ &d.key: v })).unwrap();
@@ -861,28 +1053,45 @@ fn a_density_setting_moves_its_metrics_one_way() {
         let (Some(a), Some(b)) = (measure(lo)?, measure(hi)?) else {
             return Ok(());
         };
-        // The pen-down length and the points of the denser drawing are at least those of the
-        // sparser one, give or take 1 percent: lines and grids land on whole steps, which wobble
-        // a little. The path count is left out, because it follows where lines break, such as
-        // where a pen's share of the image runs out, and the time, because its pen-up travel
-        // follows the path order, as much as the density. The length is judged only from
-        // JUDGED_METRES of line: a line ends within a tracing step of the edge, and flow's step
-        // is half its minimum spacing, so on a drawing of one or two lines where that step falls
-        // outweighs the density.
+        // The denser drawing has at least as much of one measure as the sparser one, give or
+        // take 1 percent. The setting's `x-density-of` mark in its schema says which measure it
+        // drives: `points` (the points placed), `lines` (the path count) or `length` (the
+        // pen-down length). With no mark, a style that places points is judged on its points
+        // and any other on its length. A style that places points is not judged on length by
+        // default: its length follows how the renderer turns points into marks, since a dot no
+        // wider than the pen is one vertex with no length, and points crowding a small dark
+        // area sit on the pixel lattice, where a mesh with holes in it has longer edges than a
+        // fuller one. The length may also fall short by one of the sparser drawing's average
+        // paths: lines land on whole steps, so where they fall moves the length by about a line
+        // (waves 3.8 percent shorter at a 6.3 mm spacing than at 7.7 mm, with six lines), and a
+        // line ends within a tracing step of the edge (flow's step is half its minimum
+        // spacing). A style whose spacing sets how many lines there are, but not how long they
+        // are, marks `lines`, because its length does not follow the spacing: in waves and
+        // spiral the ripple swing is a share of the spacing, so closer lines ripple less and
+        // the total falls (waves with a 0.2 mm wavelength drew 0.99 m at one spacing and 0.53 m
+        // at a closer one, with 4 and 18 paths), and in mosaic lines join into one path across
+        // a gap of twice the spacing, so a sparser spacing joins with longer connectors. The
+        // path count is otherwise left out, because it follows where lines break, such as where
+        // a pen's share of the image runs out, and so is the time, because its pen-up travel
+        // follows the path order, as much as the density.
         let (sparse, dense) = if d.direct { (a, b) } else { (b, a) };
-        for (i, name) in [(2, "metres"), (3, "dots")] {
-            if i == 2 && sparse[2] < JUDGED_METRES {
-                continue;
+        let (i, name, floor) = match drives(&style, &d).as_str() {
+            "points" => (3, "dots", 0.99 * sparse[3]),
+            "lines" => (1, "paths", 0.99 * sparse[1]),
+            "length" => {
+                let slack = sparse[2] / sparse[1].max(1.0);
+                (2, "metres", (0.99 * sparse[2]).min(sparse[2] - slack))
             }
-            prop_assert!(
-                dense[i] >= 0.99 * sparse[i],
-                "{}.{} {lo} gives {} {name}, {hi} gives {}",
-                d.stage,
-                d.key,
-                a[i],
-                b[i]
-            );
-        }
+            other => panic!("{}.{} has x-density-of {other:?}", d.stage, d.key),
+        };
+        prop_assert!(
+            dense[i] >= floor,
+            "{}.{} {lo} gives {} {name}, {hi} gives {}",
+            d.stage,
+            d.key,
+            a[i],
+            b[i]
+        );
         Ok(())
     });
 }
@@ -956,6 +1165,182 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         let mut r = s.start().unwrap();
         drain(&mut r)?;
         prop_assert_eq!(metrics(&s, &r)[metric], fit.achieved);
+        Ok(())
+    });
+}
+
+/// The plot lint warnings and errors of the session's drawing, by code.
+fn warned(s: &Session) -> Vec<&'static str> {
+    (s.lint().unwrap_or_default().into_iter())
+        .filter(|f| matches!(f.severity, Severity::Warning | Severity::Error))
+        .map(|f| f.code)
+        .collect()
+}
+
+#[test]
+fn an_optimize_suggestion_keeps_the_limits() {
+    check("optimize", 8, case(dense_styles()), |c| {
+        let mut s = c.session();
+        run(&mut s)?;
+        if s.state() != RunState::Done {
+            return Ok(());
+        }
+        let minutes = s.stats().unwrap().estimated_seconds / 60.0;
+        let known = warned(&s);
+        let mut job = s.optimize(None).unwrap();
+        while job.next_frame().is_some() {}
+        if job.state() == RunState::Error {
+            prop_assert!(job.error().is_some_and(|e| !e.trim().is_empty()));
+            return Ok(());
+        }
+        prop_assert_eq!(job.state(), RunState::Done);
+        let Some(found) = job.result() else {
+            return Ok(());
+        };
+        prop_assert!(found.trials.len() <= TRIALS);
+        prop_assert_eq!(found.current_minutes, minutes);
+        // The suggestion, applied, plots in the time it reports, within the limit, and with no
+        // warning the current settings' drawing does not have.
+        s.update(&found.stage, &json!({ &found.key: found.value.clone() }))
+            .unwrap();
+        run(&mut s)?;
+        let after = s.stats().unwrap().estimated_seconds / 60.0;
+        prop_assert_eq!(after, found.minutes);
+        prop_assert!(
+            after <= (SLOWER * minutes).max(LONGEST),
+            "{after} min against {minutes}"
+        );
+        let new: Vec<_> = (warned(&s).into_iter())
+            .filter(|w| !known.contains(w))
+            .collect();
+        prop_assert!(new.is_empty(), "{} = {}: {new:?}", found.key, found.value);
+        Ok(())
+    });
+}
+
+#[test]
+fn a_test_chart_is_made_on_the_page_or_refused_with_a_message() {
+    check("testchart", 48, (page(), pens()), |(pg, pens)| {
+        let pens: Vec<Pen> = (pens.iter().enumerate())
+            .map(|(i, (width, [r, g, b]))| {
+                Pen::new(
+                    &format!("Pen {i}"),
+                    *width,
+                    &format!("#{r:02x}{g:02x}{b:02x}"),
+                )
+                .unwrap()
+            })
+            .collect();
+        let new = || {
+            let mut s = Session::new(1 << 20);
+            s.set_canvas(pg.canvas());
+            s.set_pens(pens.clone()).unwrap();
+            s
+        };
+        let mut s = new();
+        match s.testchart() {
+            Err(e) => {
+                let message = e.to_string();
+                prop_assert!(
+                    message.contains("too small") || message.contains("too thin"),
+                    "{message}"
+                );
+                prop_assert!(s.drawing().is_none() && s.state() == RunState::Idle);
+            }
+            Ok(()) => {
+                prop_assert_eq!(s.state(), RunState::Done);
+                let d = s.drawing().unwrap();
+                prop_assert_eq!(d.layers.len(), 1);
+                prop_assert_eq!(&d.layers[0].pen, &pens[0]);
+                let [x, y, w, h] = d.canvas.drawing_rect();
+                for p in d.layers[0].paths.coords() {
+                    let inside = x - 1e-9 <= p[0]
+                        && p[0] <= x + w + 1e-9
+                        && y - 1e-9 <= p[1]
+                        && p[1] <= y + h + 1e-9;
+                    prop_assert!(inside, "{p:?} is off {:?}", [x, y, w, h]);
+                }
+                let mut t = new();
+                t.testchart().unwrap();
+                prop_assert_eq!(digest(&d), digest(&t.drawing().unwrap()));
+            }
+        }
+        Ok(())
+    });
+}
+
+#[test]
+fn focus_points_keep_the_ink_within_their_radius() {
+    // Every tone-map pixel within `focus_mm` of a focus point has the ink it has without focus.
+    let points = prop::collection::vec(prop::array::uniform2(0.0..=1.0f64), 1..=3);
+    check("focus", 12, (case(all_styles()), points), |(c, points)| {
+        let drawn = |focus: Value| -> Result<Option<Arc<Drawing>>, TestCaseError> {
+            let mut s = c.session();
+            s.update("tone", &json!({ "focus": focus })).unwrap();
+            run(&mut s)?;
+            Ok(s.drawing())
+        };
+        // A run that ends in a message has no tone map to compare.
+        let (Some(with), Some(without)) = (drawn(json!(points))?, drawn(json!([]))?) else {
+            return Ok(());
+        };
+        let (Some(a), Some(b)) = (&with.tone, &without.tone) else {
+            return Ok(());
+        };
+        prop_assert_eq!((a.width, a.height), (b.width, b.height));
+        let radius = c.settings.0["tone"]["focus_mm"].as_f64().unwrap();
+        let image = c.picture.image();
+        let at: Vec<[f64; 2]> = (points.iter())
+            .map(|&p| with.canvas.page_point(p, image.width, image.height))
+            .collect();
+        for y in 0..a.height as usize {
+            for x in 0..a.width as usize {
+                let [mx, my] = a.to_mm([x as f64 + 0.5, y as f64 + 0.5]);
+                let near = at.iter().any(|p| {
+                    let (dx, dy) = (mx - p[0], my - p[1]);
+                    (dx * dx + dy * dy).sqrt() <= radius - 1e-6
+                });
+                let i = y * a.width as usize + x;
+                prop_assert!(
+                    !near || a.ink[i] == b.ink[i],
+                    "({x}, {y}) changed within {radius} mm"
+                );
+            }
+        }
+        Ok(())
+    });
+}
+
+/// The test images of the regression gallery, by name, which the look law draws.
+const LOOK_IMAGES: [&str; 3] = ["still life", "scene", "gradient"];
+
+#[test]
+fn every_look_plots_clean() {
+    // Balanced is the defaults, which some styles' own findings warn about, so it is left out.
+    let looks: Vec<(String, String)> = (list_styles().iter())
+        .flat_map(|s| {
+            let others = s.looks().into_iter().filter(|l| l.name != "balanced");
+            others.map(|l| (s.name.clone(), l.name)).collect::<Vec<_>>()
+        })
+        .collect();
+    let strategy = (select(looks), 0..LOOK_IMAGES.len());
+    check("looks", 12, strategy, |((style, look), image)| {
+        let mut s = Session::new(256 << 20);
+        s.set_image(match image {
+            0 => still_life(600, 875),
+            1 => scene(600, 875),
+            _ => gradient(600, 875),
+        });
+        s.set_style(&style).unwrap();
+        s.apply_look(&look).unwrap();
+        run(&mut s)?;
+        let case = format!("{style} at {look} on the {}", LOOK_IMAGES[image]);
+        prop_assert_eq!(s.state(), RunState::Done, "{}: {:?}", case, s.error());
+        let found: Vec<String> = (s.lint().unwrap_or_default().iter())
+            .filter(|f| matches!(f.severity, Severity::Warning | Severity::Error))
+            .map(|f| format!("{}: {}", f.code, f.message))
+            .collect();
+        prop_assert!(found.is_empty(), "{case} plots with {}", found.join("; "));
         Ok(())
     });
 }
@@ -1066,4 +1451,211 @@ fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
         }
         Ok(())
     });
+}
+
+/// A polyline of up to 40 vertices, a tolerance, and whether no three of its vertices are
+/// collinear: points on a coarse grid, which makes collinear and repeated vertices likely; free
+/// points; or an arc, which has none collinear, with a tolerance of 0.
+fn polyline() -> impl Strategy<Value = (Vec<[f64; 2]>, f64, bool)> {
+    let point = (-50.0..50.0f64, -50.0..50.0f64).prop_map(|(x, y)| [x, y]);
+    let grid = (-5..=5i32, -5..=5i32).prop_map(|(x, y)| [f64::from(x), f64::from(y)]);
+    let tolerance = prop_oneof![Just(0.0), 0.0..0.1f64, 0.0..5.0f64];
+    let arc = (1.0..100.0f64, 0.3..3.0f64, 3..40usize).prop_map(|(r, sweep, n)| {
+        let angle = |i: usize| sweep * i as f64 / (n - 1) as f64;
+        let line = (0..n).map(|i| [r * angle(i).cos(), r * angle(i).sin()]);
+        (line.collect(), 0.0, true)
+    });
+    prop_oneof![
+        (prop::collection::vec(grid, 0..40), tolerance.clone()).prop_map(|(l, t)| (l, t, false)),
+        (prop::collection::vec(point, 0..40), tolerance).prop_map(|(l, t)| (l, t, false)),
+        arc,
+    ]
+}
+
+#[test]
+fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero() {
+    check("simplify", 512, polyline(), |(line, tol, no_collinear)| {
+        let out = simplify(&line, tol);
+        prop_assert_eq!(out.first(), line.first());
+        prop_assert_eq!(out.last(), line.last());
+        // The output is the input with some vertices removed.
+        let mut rest = line.iter();
+        prop_assert!(
+            out.iter().all(|p| rest.any(|q| q == p)),
+            "{out:?} is not a subsequence"
+        );
+        prop_assert!(out.len() <= line.len());
+        // Every input vertex is within the tolerance of the output line.
+        for p in &line {
+            let off = (out.iter().zip(out.iter().skip(1)))
+                .map(|(a, b)| off_segment(*p, *a, *b))
+                .fold(f64::INFINITY, f64::min);
+            let off = if out.len() == 1 {
+                off_segment(*p, out[0], out[0])
+            } else {
+                off
+            };
+            prop_assert!(off <= tol + 1e-9, "{p:?} is {off} from {out:?}, over {tol}");
+        }
+        // Nothing is collinear, so a tolerance of 0 drops nothing.
+        prop_assert!(!no_collinear || out == line, "{out:?} lost vertices");
+        Ok(())
+    });
+}
+
+/// The `x,y` pairs of the argument list of an HPGL `PU` or `PD`; a lone `PD;` has none.
+fn hpgl_pairs(args: &str) -> Vec<[i64; 2]> {
+    let n: Vec<i64> = (args.split(',').filter(|v| !v.is_empty()))
+        .map(|v| v.parse().unwrap())
+        .collect();
+    n.chunks(2).map(|p| [p[0], p[1]]).collect()
+}
+
+#[test]
+fn hpgl_stays_on_the_page_and_keeps_every_vertex() {
+    let units = prop_oneof![Just(40.0), 0.01..=MAX_UNITS_PER_MM];
+    check("hpgl", 12, (case(all_styles()), units), |(c, units)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let h = s.hpgl(units).unwrap();
+        prop_assert!(h.is_ascii() && !h.contains('\r'), "not ASCII with LF ends");
+        prop_assert!(h.starts_with("IN;\n") && h.ends_with("PU;\nSP0;\n"));
+        // The page scaled by the resolution, and the vertices of PU and PD against the drawing's.
+        let (w, hh) = (
+            (c.page.width * units).round(),
+            (c.page.height * units).round(),
+        );
+        let (mut pens, mut vertices) = (0, 0);
+        for line in h.lines() {
+            prop_assert!(line.ends_with(';'), "{line:?} does not end with ';'");
+            let line = line.trim_end_matches(';');
+            if line.starts_with("SP") {
+                pens += (line != "SP0") as usize;
+            } else if let Some(args) = line.strip_prefix("PU").or(line.strip_prefix("PD")) {
+                for [x, y] in hpgl_pairs(args) {
+                    vertices += 1;
+                    prop_assert!(
+                        (0.0..=w).contains(&(x as f64)) && (0.0..=hh).contains(&(y as f64)),
+                        "({x}, {y}) is off the {w} by {hh} page"
+                    );
+                }
+            }
+        }
+        let layers = d.layers.iter().filter(|l| !l.paths.is_empty()).count();
+        prop_assert_eq!(pens, layers);
+        let expected: usize = d.layers.iter().map(|l| l.paths.coords().len()).sum();
+        prop_assert_eq!(vertices, expected);
+        Ok(())
+    });
+}
+
+/// The paper shows wherever the white-paper picture is pure white, and ink and outline only
+/// darken it: no channel of the picture on coloured paper is lighter than the paper or than the
+/// white-paper picture, give or take one level.
+///
+/// The picture on coloured paper is not the white-paper one times the paper: tiny-skia blends in
+/// 8-bit fixed point and rounds at every blend, and a pixel crossed by several passes of the pen
+/// rounds once per pass. A change of a few levels that is lost on a dark paper, because it rounds
+/// to nothing there, adds up to tens of levels (35 over 240 cases) in a dense drawing. So the law
+/// keeps what rounding cannot move.
+#[test]
+fn the_paper_shows_where_nothing_is_drawn_and_ink_only_darkens_it() {
+    let strategy = (case(all_styles()), any::<[u8; 3]>());
+    check("paper", 12, strategy, |(c, rgb)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let paper = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
+        let (w, h, white) = render_rgba(&d, 200, "#ffffff", false, false, None);
+        let (w2, h2, tinted) = render_rgba(&d, 200, &paper, false, false, None);
+        prop_assert_eq!((w, h), (w2, h2));
+        prop_assert_eq!(white.len(), 4 * (w * h) as usize);
+        prop_assert_eq!(tinted.len(), white.len());
+        for (i, (a, b)) in white.chunks(4).zip(tinted.chunks(4)).enumerate() {
+            prop_assert!(a[3] == 255 && b[3] == 255, "pixel {i} is not opaque");
+            if a[..3] == [255, 255, 255] {
+                prop_assert!(b[..3] == rgb, "pixel {i} is {b:?}, not the paper {paper}");
+            }
+            for k in 0..3 {
+                let most = u32::from(a[k].min(rgb[k])) + 1;
+                prop_assert!(
+                    u32::from(b[k]) <= most,
+                    "pixel {i} channel {k}: {} on {paper} is lighter than the white-paper {}",
+                    b[k],
+                    a[k]
+                );
+            }
+        }
+        Ok(())
+    });
+}
+
+/// How the GUI's style grid draws its pictures (`THUMB_PX` and `THUMB_SHRINK` in
+/// web/src/app.tsx): 600 px wide with every mark at least 2 px, for a cell about 150 px wide.
+const GRID_PX: u32 = 600;
+const GRID_SHRINK: f64 = 2.0;
+const CELL_PX: u32 = 150;
+
+#[test]
+fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_grid() {
+    // A colour scene on A4 with three coloured pens, in every Pen use mode. A dot style once drew
+    // there but showed a blank cell: 0.3 mm dots 1 mm apart, a pixel wide in a 600 px picture,
+    // average to almost white at the cell's size. A visible mark is a cell pixel at least 10 %
+    // darker than the paper, and every style's cell has them on at least 3 % of its pixels.
+    let first = &list_styles()[0];
+    let split = first.stages[first.stage_index("split").unwrap()].schema();
+    let modes = choices(&split["properties"]["mode"], &split["$defs"]).unwrap();
+    let pens = [
+        ("Red", "#d0202e"),
+        ("Black", "#000000"),
+        ("Yellow", "#f5d000"),
+    ]
+    .map(|(name, color)| Pen::new(name, 0.3, color).unwrap())
+    .to_vec();
+    for mode in &modes {
+        let mut s = Session::new(1 << 30);
+        s.set_image(scene(300, 225));
+        s.set_pens(pens.clone()).unwrap();
+        for style in all_styles() {
+            s.set_style(&style).unwrap();
+            s.update("split", &json!({ "mode": mode })).unwrap();
+            for &(stage, key, cap) in SPEED_CAPS {
+                let now = &s.settings()[stage][key];
+                if now.as_f64().is_some_and(|v| v > cap) {
+                    let cap = if now.is_u64() {
+                        json!(cap as u64)
+                    } else {
+                        json!(cap)
+                    };
+                    s.update(stage, &json!({ key: cap })).unwrap();
+                }
+            }
+            let mut r = s.start().unwrap();
+            while r.next_frame().is_some() {}
+            let d = s.drawing().unwrap();
+            let paths: usize = d.layers.iter().map(|l| l.paths.len()).sum();
+            assert!(paths > 0, "{style} in {mode} draws nothing");
+            let png = render_png_shrunk(&d, GRID_PX, s.paper(), GRID_SHRINK).unwrap();
+            let picture = image::load_from_memory(&png).unwrap().to_luma8();
+            let height = CELL_PX * picture.height() / picture.width();
+            let cell = image::imageops::resize(
+                &picture,
+                CELL_PX,
+                height,
+                image::imageops::FilterType::Triangle,
+            );
+            let marked = cell.pixels().filter(|p| p.0[0] <= 230).count() as f64
+                / f64::from(CELL_PX * height);
+            assert!(
+                marked >= 0.03,
+                "{style} in {mode} marks {:.1} % of its cell",
+                100.0 * marked
+            );
+        }
+    }
 }
