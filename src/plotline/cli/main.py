@@ -546,7 +546,11 @@ def run(
             session.export_hpgl(hpgl, hpgl_units)
     echo_stats(session)
     if (match := session.tone_match()) is not None:
-        click.echo(f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}")
+        line = f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}"
+        line += f"  contrast: {match['contrast']:.0%}"
+        if (colour := match["colour"]) is not None:
+            line += f"  colour ΔE: {colour['error']:.1f} (blank {colour['blank']:.1f})"
+        click.echo(line)
     findings = session.lint()
     for finding in findings:
         click.echo(f"{finding['severity']}: {finding['message']}", err=True)

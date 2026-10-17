@@ -298,7 +298,10 @@ def test_run_prints_the_tone_match_and_an_optimize_suggestion(tmp_path, image):
     args += ["--width", "100", "--height", "75", "--set", "tone.resolution=64"]
     r = run(*args)
     assert r.exit_code == 0, r.output
-    assert any(x.startswith("tone error: ") and "ssim: " in x for x in r.stdout.splitlines())
+    assert any(
+        x.startswith("tone error: ") and "ssim: " in x and "contrast: " in x
+        for x in r.stdout.splitlines()
+    )
     r = run(*args, "--optimize")
     assert r.exit_code == 0, r.output
     line = next(x for x in r.stdout.splitlines() if x.startswith("optimize: "))
