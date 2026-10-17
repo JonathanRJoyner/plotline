@@ -256,6 +256,16 @@ pub struct ToneMap {
     pub mm_per_px: f64,
     /// The page position of the map's top-left corner in mm.
     pub origin_mm: [f64; 2],
+    /// The tone gamma the map was made with, 1 for none. With the defaults the tone stage's ink
+    /// is `1 - (1 - x)^gamma` of the ink `x` the gamma found; the by-colour split undoes that
+    /// curve before it solves the colours and applies it to each pen's share after.
+    #[serde(default = "no_gamma")]
+    pub gamma: f32,
+}
+
+/// The gamma of a map with no midtone curve.
+fn no_gamma() -> f32 {
+    1.0
 }
 
 impl ToneMap {
@@ -302,6 +312,25 @@ impl ToneMap {
         let top = at(x0, y0) * (1.0 - tx) + at(x1, y0) * tx;
         let bottom = at(x0, y1) * (1.0 - tx) + at(x1, y1) * tx;
         (top * (1.0 - ty) + bottom * ty) as f32
+    }
+}
+
+/// One tone map per pen that draws, from the stage that splits the drawing between the pens, with
+/// each map's part of a budget that a later stage spends per pen, such as the Voronoi placer's
+/// points (see [`crate::stage::RunContext::budget`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tones {
+    /// The maps, in the pens' order.
+    pub maps: Vec<Arc<ToneMap>>,
+    /// Each map's part of the pens' budgets, `[start, end]` counted in whole budgets.
+    pub budgets: Vec<[f64; 2]>,
+}
+
+impl Tones {
+    /// `maps` that each spend a whole budget of their own, `[0, 1]`.
+    pub fn each_whole(maps: Vec<Arc<ToneMap>>) -> Tones {
+        let budgets = vec![[0.0, 1.0]; maps.len()];
+        Tones { maps, budgets }
     }
 }
 
@@ -659,6 +688,7 @@ mod tests {
             ink: vec![0.0, 1.0, 0.0, 1.0],
             mm_per_px: 10.0,
             origin_mm: [5.0, 5.0],
+            gamma: 1.0,
         };
         assert_eq!(t.rect_mm(), [5.0, 5.0, 20.0, 20.0]);
         assert_eq!(t.to_px([10.0, 10.0]), [0.5, 0.5]);

@@ -15,7 +15,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::settings::SettingsError;
-use crate::types::{Canvas, Image, Layer, Paths, Pen, Points, ToneMap};
+use crate::types::{Canvas, Image, Layer, Paths, Pen, Points, ToneMap, Tones};
 
 /// The kind of artifact a stage requires or provides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -69,7 +69,7 @@ pub enum Artifact {
     /// The tone map.
     Tone(Arc<ToneMap>),
     /// One tone map per pen, from the stage that splits the drawing between the pens.
-    Tones(Arc<Vec<Arc<ToneMap>>>),
+    Tones(Arc<Tones>),
     /// Points on the page.
     Points(Arc<Points>),
     /// Paths on the page.
@@ -100,7 +100,7 @@ impl Artifact {
             Artifact::Image(i) => i.rgb.len() * 4,
             Artifact::Canvas(_) | Artifact::Pens(_) => 64,
             Artifact::Tone(t) => t.ink.len() * 4,
-            Artifact::Tones(maps) => maps.iter().map(|t| t.ink.len() * 4).sum(),
+            Artifact::Tones(t) => t.maps.iter().map(|m| m.ink.len() * 4).sum(),
             Artifact::Points(p) => p.0.len() * 16,
             Artifact::Paths(p) => paths(p),
             Artifact::Layers(l) => l.iter().map(|layer| paths(&layer.paths)).sum(),
@@ -165,7 +165,7 @@ impl Inputs {
     input!(canvas, Canvas, Canvas);
     input!(pens, Pens, Vec<Pen>);
     input!(tone, Tone, ToneMap);
-    input!(tones, Tones, Vec<Arc<ToneMap>>);
+    input!(tones, Tones, Tones);
     input!(points, Points, Points);
     input!(paths, Paths, Paths);
     input!(layers, Layers, Vec<Layer>);
@@ -185,19 +185,22 @@ impl Lane {
     pub const SINGLE: Lane = Lane { index: 0, count: 1 };
 }
 
-/// What a running stage may use besides its inputs: the cancel flag, seeded randomness and the
-/// lane it runs in.
+/// What a running stage may use besides its inputs: the cancel flag, seeded randomness, the lane
+/// it runs in and the lane's part of a per-pen budget.
 pub struct RunContext {
     cancel: Arc<AtomicBool>,
     lane: Lane,
+    budget: [f64; 2],
 }
 
 impl RunContext {
-    /// A context in [`Lane::SINGLE`] that reports cancelled once `cancel` is set.
+    /// A context in [`Lane::SINGLE`], with a whole budget, that reports cancelled once `cancel` is
+    /// set.
     pub fn new(cancel: Arc<AtomicBool>) -> RunContext {
         RunContext {
             cancel,
             lane: Lane::SINGLE,
+            budget: [0.0, 1.0],
         }
     }
 
@@ -206,9 +209,25 @@ impl RunContext {
         RunContext { lane, ..self }
     }
 
+    /// The context for the same run whose lane spends `budget` of a per-pen budget; see
+    /// [`budget`].
+    ///
+    /// [`budget`]: RunContext::budget
+    pub fn with_budget(self, budget: [f64; 2]) -> RunContext {
+        RunContext { budget, ..self }
+    }
+
     /// The lane the stage runs in.
     pub fn lane(&self) -> Lane {
         self.lane
+    }
+
+    /// The lane's part of a budget a stage spends per pen, such as the Voronoi placer's points,
+    /// as `[start, end]` counted in whole budgets: of a budget `b` per pen, the lane spends
+    /// `round(b * end) - round(b * start)`, so lanes whose parts meet spend their total exactly.
+    /// The split stage sets the parts ([`Tones`]); outside a split it is `[0, 1]`.
+    pub fn budget(&self) -> [f64; 2] {
+        self.budget
     }
 
     /// Whether the run has been cancelled.
@@ -317,8 +336,10 @@ mod tests {
     fn a_context_is_single_unless_put_in_a_lane() {
         let ctx = RunContext::new(Arc::default());
         assert_eq!(ctx.lane(), Lane::SINGLE);
+        assert_eq!(ctx.budget(), [0.0, 1.0]);
         let lane = Lane { index: 1, count: 3 };
-        assert_eq!(ctx.in_lane(lane).lane(), lane);
+        let ctx = ctx.in_lane(lane).with_budget([0.25, 0.5]);
+        assert_eq!((ctx.lane(), ctx.budget()), (lane, [0.25, 0.5]));
     }
     #[test]
     fn tones_input_is_declared_by_kind() {
@@ -326,7 +347,7 @@ mod tests {
             Kind::Tones,
             crate::test_util::tones(&[0.5]),
         )]));
-        assert_eq!(inputs.tones().len(), 1);
+        assert_eq!(inputs.tones().maps.len(), 1);
         assert_eq!(Kind::Tones.name(), "tones");
     }
 }

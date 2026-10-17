@@ -8,7 +8,11 @@
 //! through [`GridIndex`], rather than as exact polygons.
 //!
 //! When the drawing is split between pens, each lane draws its scatter from its own random stream
-//! ([`RunContext::rng`] cites why), so the pens' points fall independently of each other.
+//! ([`RunContext::rng`] cites why), so the pens' points fall independently of each other. `count`
+//! is a budget per pen: a lane places `round(count * end) - round(count * start)` points for its
+//! part `[start, end]` of the budgets ([`RunContext::budget`]). Each pen places `count` of its
+//! own, except by colour, where the pens share `count` per pen by their ink, so a pen whose colour
+//! makes up a tenth of the ink places about a tenth of the points.
 
 use std::sync::Arc;
 
@@ -33,7 +37,7 @@ const PIXELS_PER_STEP: usize = 200_000;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct VoronoiSettings {
-    /// Points to place; more points give finer detail and a longer plot.
+    /// Points to place per pen; by colour the pens share them by their ink; more points give finer detail and a longer plot.
     #[schemars(range(min = 100, max = 50000), extend("x-density" = "direct"))]
     pub count: u32,
     /// Relaxation passes; more passes spread the points more evenly.
@@ -117,7 +121,7 @@ impl Stage for VoronoiPlacer {
         "Weighted Voronoi"
     }
     fn version(&self) -> u32 {
-        2
+        3
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -140,10 +144,14 @@ impl Stage for VoronoiPlacer {
         let s = validate::<VoronoiSettings>(self.name(), &self.schema(), settings)?;
         let tone = inputs.tone().clone();
         let mut rng = ctx.rng(u64::from(s.seed));
-        let points = sample_by_density(&tone, s.exponent, s.count as usize, &mut rng);
+        // Each lane places its part of the budgets; alone, or with one budget per pen, `count`.
+        let [start, end] = ctx.budget();
+        let share = |at: f64| (f64::from(s.count) * at).round();
+        let count = (share(end) - share(start)) as usize;
+        let points = sample_by_density(&tone, s.exponent, count, &mut rng);
         let [_, _, w_mm, h_mm] = tone.rect_mm();
         // About one point per cell, and never finer than a pixel.
-        let cell = (w_mm * h_mm / f64::from(s.count))
+        let cell = (w_mm * h_mm / count.max(1) as f64)
             .sqrt()
             .max(tone.mm_per_px);
         let n = points.len();
@@ -274,7 +282,8 @@ impl StageRun for VoronoiRun {
     fn step(&mut self) -> Result<Step, StageError> {
         Ok(match self.phase {
             Phase::Scatter => {
-                // Only a map without ink draws no points, because `count` is at least 100.
+                // Only a map without ink draws no points, because `count` is at least 100, or a
+                // lane by colour whose share of the points, which follows its ink, rounds to none.
                 let no_ink = self.points.is_empty();
                 let finished = no_ink || self.iterations == 0;
                 self.phase = if finished {
@@ -295,6 +304,7 @@ impl StageRun for VoronoiRun {
 mod tests {
     use super::*;
     use crate::settings::merge;
+    use crate::stage::Lane;
     use crate::test_util::{bounds, run_stage, tone_map};
     use serde_json::json;
     use std::collections::HashMap;
@@ -320,7 +330,7 @@ mod tests {
         assert_eq!(bounds(&s, "exponent"), (0.5, 3.0, 1.0));
         assert_eq!(bounds(&s, "seed"), (0.0, 9999.0, 1.0));
         for (key, help) in [
-            ("count", "Points to place; more points give finer detail and a longer plot."),
+            ("count", "Points to place per pen; by colour the pens share them by their ink; more points give finer detail and a longer plot."),
             ("iterations", "Relaxation passes; more passes spread the points more evenly."),
             ("exponent", "Density follows ink to this power; 2 suits the line, tree, mesh and cells renderers, which put more ink between close points."),
             ("seed", "Starting scatter."),
@@ -414,6 +424,41 @@ mod tests {
         let (frames, _) = run_voronoi(map, json!({"count": 100, "iterations": 2}));
         assert!(frames.len() >= 10, "{} frames", frames.len());
         assert_eq!(frames.last().unwrap().progress, 1.0);
+    }
+
+    /// The points the placer gives lane 0 of 2 spending `budget` of the budgets, on a flat map.
+    fn points_with_budget(budget: [f64; 2], patch: Value) -> usize {
+        let settings = merge(&VoronoiPlacer.defaults(), &patch);
+        let map = Artifact::Tone(Arc::new(tone_map(20, 20, |_, _| 0.5)));
+        let inputs = Inputs::new(HashMap::from([(Kind::Tone, map)]));
+        let lane = Lane { index: 0, count: 2 };
+        let ctx = RunContext::new(Arc::default())
+            .in_lane(lane)
+            .with_budget(budget);
+        let mut run = VoronoiPlacer.start(inputs, &settings, ctx).unwrap();
+        loop {
+            if let Step::Done(Artifact::Points(p)) = run.step().unwrap() {
+                return p.0.len();
+            }
+        }
+    }
+
+    #[test]
+    fn a_lane_places_its_part_of_the_budgets() {
+        // Two pens by colour spend two budgets: one with a quarter of the ink spends half a
+        // budget, the other one and a half.
+        let patch = json!({"count": 400, "iterations": 0});
+        assert_eq!(points_with_budget([0.0, 0.5], patch.clone()), 200);
+        assert_eq!(points_with_budget([0.5, 2.0], patch.clone()), 600);
+        // Parts that meet place their budgets together, however their ends round.
+        let thirds = json!({"count": 100, "iterations": 0});
+        let cuts = [0.0, 1.0 / 3.0, 7.0 / 3.0, 3.0];
+        let parts: usize = (cuts.windows(2))
+            .map(|w| points_with_budget([w[0], w[1]], thirds.clone()))
+            .sum();
+        assert_eq!(parts, 300);
+        // A lane with no part places none.
+        assert_eq!(points_with_budget([0.25, 0.25], patch), 0);
     }
 
     #[test]

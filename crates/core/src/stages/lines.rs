@@ -12,11 +12,21 @@ use crate::math;
 use crate::stage::{Artifact, Frame, StageError, StageRun, Step};
 use crate::types::Paths;
 
-/// The ink below which the rippling styles lift the pen when the drawing is split between pens.
+/// The least ink below which the line styles lift the pen when the drawing is split between pens.
 /// They draw a straight line over no ink, so without it a pen whose colour the image lacks would
 /// cover the page; the margin also hides the small residue the colour table's interpolation leaves
-/// where a pen has no share.
+/// where a pen has no share. See [`lane_floor`] for the rule above it.
 pub const LANE_MIN_INK: f32 = 0.02;
+
+/// The ink below which a lane lifts its pen when the style's lines over white, `pen_mm` wide, lie
+/// `spacing_mm` apart. Such a bare line covers `pen_mm / spacing_mm` of the paper however little
+/// ink is below it, so where the ink asks for less than half of that, bare paper is nearer to it
+/// than the line: lifting picks the nearer of the two levels the pen can give there, as a
+/// two-level quantiser picks the level nearest its input. It is never below [`LANE_MIN_INK`].
+pub fn lane_floor(pen_mm: f64, spacing_mm: f64) -> f32 {
+    let bare = (pen_mm / spacing_mm).min(1.0);
+    ((bare / 2.0) as f32).max(LANE_MIN_INK)
+}
 
 /// Points from `a` to `b` no more than `step` apart, both ends included.
 pub fn sample_line(a: [f64; 2], b: [f64; 2], step: f64) -> impl Iterator<Item = [f64; 2]> {
@@ -174,6 +184,15 @@ mod tests {
 
     fn close(a: [f64; 2], b: [f64; 2]) -> bool {
         (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9
+    }
+
+    #[test]
+    fn a_lane_lifts_below_half_a_bare_line() {
+        // 0.3 mm lines 2 mm apart cover 15 %, so the pen lifts below 7.5 %.
+        assert_eq!(lane_floor(0.3, 2.0), 0.075);
+        // Never below the least ink that lifts, and lines wider than their spacing cover all.
+        assert_eq!(lane_floor(0.03, 10.0), LANE_MIN_INK);
+        assert_eq!(lane_floor(3.0, 2.0), 0.5);
     }
 
     #[test]
