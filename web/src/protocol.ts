@@ -1,6 +1,7 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
-// `worker.ts` only connects it to `self`.
+// `worker.ts` connects it to `self` and holds commands back while the model module loads for an
+// `addModel`.
 import { catalogue, describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
 import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
@@ -208,8 +209,15 @@ export class Protocol {
     this.session = new Session();
     try {
       this.session.setPenLibrary(this.library); // before the image, so it is measured once
-      // Before the preset, so a run with the learned style finds its model.
-      for (const [id, bytes] of this.modelFiles.values()) this.session.addModel(id, bytes);
+      // Before the preset, so a run with the learned style finds its model. Each on its own, so a
+      // model that fails to load again leaves the others, the image and the preset to come back.
+      for (const [key, [id, bytes]] of this.modelFiles) {
+        try {
+          this.session.addModel(id, bytes);
+        } catch {
+          this.modelFiles.delete(key); // not in the new session, so not offered again
+        }
+      }
       this.source?.(this.session);
       if (this.saved) {
         this.session.loadPreset(this.saved.preset);

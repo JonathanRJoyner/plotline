@@ -688,3 +688,24 @@ test("a rebuilt session keeps the models", async () => {
     delete globalThis.plotlineModels;
   }
 });
+
+test("a model that fails to load again leaves the image and setup to come back", async () => {
+  await loadModels();
+  try {
+    const { ok, ended } = setup();
+    const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
+    ok("addModel", null, onnx);
+    ok("setImage", ...image());
+    await ended(1);
+    ok("setStyle", "_slow");
+    await ended(2);
+    // From here the model module refuses every file, so the rebuilt session cannot take the model.
+    globalThis.plotlineModels = { ...globalThis.plotlineModels!, load: () => { throw new Error("refused"); } };
+    ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+    await ended(3);
+    expect(ok("models").value).toEqual([]);
+    expect(ok("preset").state).toMatchObject({ image: true, style: "_slow" });
+  } finally {
+    delete globalThis.plotlineModels;
+  }
+});
