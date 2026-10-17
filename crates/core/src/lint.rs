@@ -20,6 +20,7 @@ use crate::machine::Machine;
 use crate::raster;
 use crate::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
 use crate::stages::order::OrderStage;
+use crate::stages::truchet::nest_limit;
 use crate::stats::{self, Speeds, Stats};
 use crate::style::Style;
 use crate::tone_match::{self, ToneMatch};
@@ -324,6 +325,22 @@ fn keeps_all(cx: &Context) -> bool {
     cx.number("order", "min_length_mm").unwrap_or(0.0) == 0.0
 }
 
+/// Whether `patch`, which sets the spacing `stage.key`, can change the drawing. Truchet's arcs nest
+/// a spacing apart within half a tile, so a closer spacing must fit more arcs than the one it has
+/// ([`nest_limit`]) or the drawing is the same. Any other stage's spacing always can.
+fn nests_more(cx: &Context, (stage, key): (&str, &str), patch: &Value) -> bool {
+    if stage != "truchet" {
+        return true;
+    }
+    let to = patch["settings"][stage][key].as_f64();
+    let (Some(tile), Some(from), Some(to)) =
+        (cx.number(stage, "tile_mm"), cx.number(stage, key), to)
+    else {
+        return false;
+    };
+    nest_limit(tile, to) > nest_limit(tile, from)
+}
+
 /// The patch for a nearly empty drawing, or `None` where no setting is sure to add marks.
 fn more_ink(cx: &Context, d: &Drawing, paths: usize) -> Option<Value> {
     // A blank tone map has nothing for a setting to draw, and without one nothing says what can.
@@ -335,6 +352,9 @@ fn more_ink(cx: &Context, d: &Drawing, paths: usize) -> Option<Value> {
     if paths > 0 {
         let density = Density::of(cx.style)?;
         let patch = cx.denser(&density)?;
+        if !nests_more(cx, (&density.stage, &density.key), &patch) {
+            return None;
+        }
         // The count wanted, or the scale of the pattern now.
         let v = if density.direct {
             patch["settings"][&density.stage][&density.key].as_f64()?
@@ -448,7 +468,9 @@ fn simplified_fine_share(d: &Drawing, tolerance: f64, min_length: f64) -> Option
 /// more points or strokes, aiming at [`DARK_TARGET`]. But the dark parts must have room for the
 /// marks to land in them (see [`room`]), the order stage must keep every path, and the raster must
 /// see the pens: a pen thinner than a cell is undercounted (a dot counts only when a cell centre
-/// lies within half the pen of it), so what a patch would reach cannot be told.
+/// lies within half the pen of it), so what a patch would reach cannot be told. Truchet's arcs nest
+/// a spacing apart within half a tile, so its closer spacing must fit more arcs than the one it
+/// has (see [`nest_limit`]).
 fn more_dark(
     cx: &Context,
     (d, m): (&Drawing, &Measure),
@@ -464,7 +486,8 @@ fn more_dark(
     });
     if let Some((stage, key, s, s2)) = closer {
         let fits = room(tone, DARK_TONE, false, s.max(cx.scale(stage)));
-        return fits.then(|| cx.set(stage, key, s2))?;
+        let patch = fits.then(|| cx.set(stage, key, s2)).flatten()?;
+        return nests_more(cx, (stage, key), &patch).then_some(patch);
     }
     let (stage, key, n) = cx.find(&["count", "max_lines"])?;
     let mut to = (n * DARK_TARGET / c).round();
@@ -592,7 +615,16 @@ pub fn check(
         let levels = cx.number("hatch", "levels").filter(|&n| n > 1.0);
         let patch = match (levels, spacing) {
             (Some(n), _) => cx.set("hatch", "levels", n - 1.0),
-            (None, Some((stage, key, s))) => cx.set(stage, key, step_up(s * 1.5)),
+            (None, Some((stage, key, s))) => {
+                // Dots wider than the new spacing overlap whatever the spacing, so it gains
+                // nothing.
+                let fit = |p: &Value| {
+                    let to = p["settings"][stage][key].as_f64().unwrap_or(f64::MAX);
+                    cx.number("stipple", "size_mm")
+                        .is_none_or(|size| size <= to)
+                };
+                cx.set(stage, key, step_up(s * 1.5)).filter(fit)
+            }
             _ => None,
         };
         let message = format!(
@@ -1042,6 +1074,57 @@ mod tests {
         };
         d.tone = Some(Arc::new(grey));
         assert!(!finds(&d, "hatch", "dark"));
+    }
+
+    #[test]
+    fn truchet_is_offered_a_closer_spacing_only_if_it_nests_another_arc() {
+        let d = drawing_100_with_tone(lines(2.0));
+        let truchet = |tile: f64, spacing: f64| {
+            let set = |s: &mut Value| {
+                s["truchet"]["tile_mm"] = json!(tile);
+                s["truchet"]["spacing_mm"] = json!(spacing);
+            };
+            dark_patch(&d, "truchet", set)
+        };
+        // A 2 mm tile nests only its middle arc at any spacing above 0.28 mm, so a closer
+        // spacing from 5 mm draws the same.
+        assert_eq!(truchet(2.0, 5.0), None);
+        // A 6 mm tile nests only its middle arc at 1 mm, and three each side at 0.3 mm.
+        let patch = json!({"settings": {"truchet": {"spacing_mm": 0.3}}});
+        assert_eq!(truchet(6.0, 1.0), Some(patch));
+    }
+
+    #[test]
+    fn truchet_is_offered_a_denser_spacing_for_empty_only_if_it_nests_another_arc() {
+        let mut d = page(vec![vec![[50.0, 50.0], [51.0, 50.0]]]);
+        d.tone = Some(flat_tone(1.0, 100));
+        let truchet = |tile: f64, spacing: f64| {
+            let set = |s: &mut Value| {
+                s["truchet"]["tile_mm"] = json!(tile);
+                s["truchet"]["spacing_mm"] = json!(spacing);
+            };
+            empty_patch(&d, "truchet", set)
+        };
+        // Half of 5 mm nests only the middle arc in a 2 mm tile, as 5 mm does.
+        assert_eq!(truchet(2.0, 5.0), None);
+        // Half of 1 mm nests one arc each side of a 6 mm tile's middle one, where 1 mm nests none.
+        let patch = json!({"settings": {"truchet": {"spacing_mm": 0.5}}});
+        assert_eq!(truchet(6.0, 1.0), Some(patch));
+    }
+
+    #[test]
+    fn overdraw_raises_the_spacing_only_if_the_dots_fit_in_it() {
+        let d = page((0..4).flat_map(|_| lines(2.0)).collect());
+        let patch = |size: f64| {
+            let all = lint(&d, "halftone", |s| s["stipple"]["size_mm"] = json!(size));
+            find(&all, "overdraw").unwrap().patch.clone()
+        };
+        // Halftone's 2 mm spacing is raised to 3 mm: dots up to that width fit, wider ones overlap
+        // at any spacing.
+        let raised = json!({"settings": {"points": {"spacing_mm": 3.0}}});
+        assert_eq!(patch(2.0), Some(raised.clone()));
+        assert_eq!(patch(3.0), Some(raised));
+        assert_eq!(patch(3.1), None);
     }
 
     #[test]
