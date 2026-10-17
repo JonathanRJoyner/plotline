@@ -62,7 +62,7 @@ impl ModelRuntime for StandIn {
             .lock()
             .unwrap()
             .get(id)
-            .ok_or_else(|| ModelError::Unknown(id.to_string()))?;
+            .ok_or_else(|| ModelError::Run(format!("model {id} is not loaded")))?;
         let n = side * side;
         if rgb.len() != 3 * n {
             return Err(ModelError::Run(format!(
@@ -146,7 +146,7 @@ mod tests {
         ));
         assert!(matches!(
             rt.infer("a", &step(8)),
-            Err(ModelError::Unknown(_))
+            Err(ModelError::Run(m)) if m == "model a is not loaded"
         ));
         rt.load("a", STANDIN_BYTES, 8).unwrap();
         assert!(matches!(rt.infer("a", &[0.0; 3]), Err(ModelError::Run(_))));

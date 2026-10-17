@@ -8,6 +8,7 @@
 mod tiny;
 
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 
 use plotline_core::models::{ModelError, ModelRuntime};
@@ -27,8 +28,37 @@ pub struct TractRuntime {
     models: Mutex<HashMap<String, Loaded>>,
 }
 
+/// `f`'s result, or `kind` holding the panic's message when tract panics on a graph it does not
+/// expect, so a hostile or broken file fails as an error instead of unwinding into the host. A
+/// WebAssembly build aborts on a panic instead, so there it stays a trap.
+fn caught<T>(
+    f: impl FnOnce() -> Result<T, ModelError>,
+    kind: fn(String) -> ModelError,
+) -> Result<T, ModelError> {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|panic| {
+        let why = (panic.downcast_ref::<&str>().map(|s| s.to_string()))
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "no message".to_string());
+        Err(kind(format!("the model runtime failed: {why}")))
+    })
+}
+
 impl ModelRuntime for TractRuntime {
     fn load(&self, id: &str, bytes: &[u8], side: usize) -> Result<(), ModelError> {
+        caught(|| self.load_unguarded(id, bytes, side), ModelError::Invalid)
+    }
+
+    fn infer(&self, id: &str, rgb: &[f32]) -> Result<Vec<f32>, ModelError> {
+        caught(|| self.infer_unguarded(id, rgb), ModelError::Run)
+    }
+
+    fn unload(&self, id: &str) {
+        self.models.lock().unwrap().remove(id);
+    }
+}
+
+impl TractRuntime {
+    fn load_unguarded(&self, id: &str, bytes: &[u8], side: usize) -> Result<(), ModelError> {
         let invalid = |e: TractError| ModelError::Invalid(format!("{e:#}"));
         // A file that does not decode, or decodes to no graph (an empty file does), is not ONNX at
         // all. The decoder's own words say only where it gave up, so they are left out; what tract
@@ -66,14 +96,14 @@ impl ModelRuntime for TractRuntime {
         Ok(())
     }
 
-    fn infer(&self, id: &str, rgb: &[f32]) -> Result<Vec<f32>, ModelError> {
+    fn infer_unguarded(&self, id: &str, rgb: &[f32]) -> Result<Vec<f32>, ModelError> {
         let run = |e: TractError| ModelError::Run(format!("{e:#}"));
         // The lock covers the lookup only, so runs of different models do not wait for each other.
         let (plan, side) = {
             let models = self.models.lock().unwrap();
             let m = models
                 .get(id)
-                .ok_or_else(|| ModelError::Unknown(id.to_string()))?;
+                .ok_or_else(|| ModelError::Run(format!("model {id} is not loaded")))?;
             (m.plan.clone(), m.side)
         };
         if rgb.len() != 3 * side * side {
@@ -91,10 +121,6 @@ impl ModelRuntime for TractRuntime {
             .as_slice::<f32>()
             .map_err(run)?
             .to_vec())
-    }
-
-    fn unload(&self, id: &str) {
-        self.models.lock().unwrap().remove(id);
     }
 }
 
@@ -279,7 +305,28 @@ mod tests {
         rt.load("tiny", &tiny_conv_onnx(), 16).unwrap();
         assert!(rt.infer("tiny", &picture(16)).is_ok());
         rt.unload("tiny");
-        assert!(rt.infer("tiny", &picture(16)).is_err());
+        let r = rt.infer("tiny", &picture(16));
+        assert!(
+            matches!(&r, Err(ModelError::Run(m)) if m == "model tiny is not loaded"),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn a_panic_in_the_runtime_is_an_error_of_its_kind() {
+        let load = crate::caught::<()>(|| panic!("a broken graph"), ModelError::Invalid);
+        let text = "the model runtime failed: a broken graph";
+        assert!(
+            matches!(&load, Err(ModelError::Invalid(m)) if m == text),
+            "{load:?}"
+        );
+        let id = "tiny";
+        let infer = crate::caught::<()>(|| panic!("tile {id} overflowed"), ModelError::Run);
+        let text = "the model runtime failed: tile tiny overflowed";
+        assert!(
+            matches!(&infer, Err(ModelError::Run(m)) if m == text),
+            "{infer:?}"
+        );
     }
 
     #[test]
