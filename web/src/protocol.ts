@@ -35,7 +35,7 @@ export type Command = { id: number; method: string; args: unknown[] };
 export type Reply = { id: number; ok: true; state: State; value?: unknown } | { id: number; ok: false; error: string };
 
 // The commands that change what a drawing is made from: each one redraws once it succeeds.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "resetSettings", "update", "loadPreset", "apply", "restore"]);
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "resetSettings", "update", "loadPreset", "apply", "restore", "addModel", "removeModel"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
 

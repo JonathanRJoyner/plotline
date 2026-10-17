@@ -325,11 +325,15 @@ test("undoing a random run of edits through restore returns the start, and undo 
   expect(now).toBe(end);
 });
 
-test("addModel runs a model in the model module through the engine's bridge", async () => {
-  // What loadModelsModule does in the browser, with the bytes read from disk.
+// What loadModelsModule does in the browser, with the bytes read from disk.
+async function loadModels(): Promise<void> {
   const models = await import("../pkg-models/plotline_models.js");
   await models.default({ module_or_path: readFileSync(new URL("../pkg-models/plotline_models_bg.wasm", import.meta.url)) });
   globalThis.plotlineModels = models;
+}
+
+test("addModel runs a model in the model module through the engine's bridge", async () => {
+  await loadModels();
   try {
     const { posted, ok, ended } = setup();
     const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
@@ -351,4 +355,25 @@ test("addModel runs a model in the model module through the engine's bridge", as
 
 test("catalogue lists the hosted models", () => {
   expect(Array.isArray(setup().ok("catalogue").value)).toBe(true);
+});
+
+test("a model arriving or leaving redraws an image, so a drawing on it follows", async () => {
+  await loadModels();
+  try {
+    const { posted, ok, ended } = setup();
+    const runs = () => posted.filter((m) => m.type === "run").length;
+    const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
+    const id = (ok("addModel", null, onnx).value as { id: string }).id;
+    expect(runs()).toBe(0); // no image yet, so nothing to draw
+    ok("setImage", ...image());
+    await ended(1);
+    ok("removeModel", id);
+    expect(runs()).toBe(2);
+    await ended(2);
+    ok("addModel", null, onnx);
+    expect(runs()).toBe(3);
+    await ended(3);
+  } finally {
+    delete globalThis.plotlineModels;
+  }
 });

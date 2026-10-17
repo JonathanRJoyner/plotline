@@ -8,6 +8,7 @@ import { Engine } from "./engine";
 import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, ResultEvent } from "./events";
 import { ACCEPT, imageFile } from "./files";
 import { History, setupOf } from "./history";
+import { restoreModels } from "./models";
 import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, StylesDialog, SuggestionsPanel, type Thumb } from "./panels";
 import { Preview } from "./preview";
 import type { Patch, State } from "./protocol";
@@ -331,6 +332,12 @@ export function App() {
         } catch { /* keeps the grid state */ }
       }
       take(state);
+      // The kept models go back into the engine; each reply brings the state with the model in it.
+      void restoreModels(async (method, args) => {
+        const reply = await engine.call(method, args);
+        take(reply.state);
+        return reply;
+      });
     }, (e) => setFatal(message(e)));
     const paste = (e: ClipboardEvent) => openDropped(e.clipboardData);
     document.addEventListener("paste", paste);
