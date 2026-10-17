@@ -625,6 +625,12 @@ impl Session {
         self.drawing().map(|d| stats::compute(&d, self.speeds))
     }
 
+    /// When the pen gets where while the last finished drawing plots at the session's speeds; see
+    /// [`stats::timeline`].
+    pub fn timeline(&self) -> Option<stats::Timeline> {
+        self.drawing().map(|d| stats::timeline(&d, self.speeds))
+    }
+
     /// The plot lint findings for the last finished drawing; see [`lint::check`]. The drawing is
     /// measured on the first call after it is made, so runs nobody lints, such as trials, cost
     /// nothing; the findings are worked out on each call from the current style, settings, pens,

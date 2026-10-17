@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::machine::Machine;
 use plotline_core::runner::Shared;
+use plotline_core::stats::{LayerTimes, Timeline};
 use plotline_core::{
     image, pens, presets, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen,
     RunState, SessionError, DEFAULT_CACHE_BYTES,
@@ -344,6 +345,14 @@ impl Session {
         Ok(warnings.iter().map(|w| JsValue::from_str(w)).collect())
     }
 
+    /// When the pen gets where while the last finished drawing plots at the speeds, a layer at a
+    /// time.
+    pub fn timeline(&self) -> Option<TimelineHandle> {
+        self.inner
+            .timeline()
+            .map(|timeline| TimelineHandle { timeline })
+    }
+
     /// The last finished drawing.
     pub fn drawing(&self) -> Option<DrawingHandle> {
         self.inner
@@ -470,6 +479,48 @@ impl FrameHandle {
     pub fn offsets(&self) -> Option<Uint32Array> {
         let paths = self.frame.paths.as_ref()?;
         Some(Uint32Array::from(paths.offsets()))
+    }
+}
+
+/// The plot playback's times of a finished drawing, read a layer at a time, in seconds from the
+/// plot's start.
+#[wasm_bindgen]
+pub struct TimelineHandle {
+    timeline: Timeline,
+}
+
+impl TimelineHandle {
+    fn layer(&self, i: usize) -> Result<&LayerTimes, JsError> {
+        let n = self.timeline.layers.len();
+        (self.timeline.layers.get(i))
+            .ok_or_else(|| JsError::new(&format!("no layer {i}; the drawing has {n}")))
+    }
+}
+
+#[wasm_bindgen]
+impl TimelineHandle {
+    /// The number of layers.
+    #[wasm_bindgen(js_name = layerCount)]
+    pub fn layer_count(&self) -> usize {
+        self.timeline.layers.len()
+    }
+
+    /// Where the pen starts, lifted, as `[x, y]` in mm.
+    pub fn start(&self) -> Vec<f64> {
+        self.timeline.start.to_vec()
+    }
+
+    /// When each of layer `i`'s pen-up moves starts and ends, as `start0, end0, start1, ...`, one
+    /// move per path.
+    #[wasm_bindgen(js_name = layerTravel)]
+    pub fn layer_travel(&self, i: usize) -> Result<Float64Array, JsError> {
+        Ok(Float64Array::from(self.layer(i)?.travel.as_flattened()))
+    }
+
+    /// When the pen reaches each of layer `i`'s vertices, in the order of its coordinates.
+    #[wasm_bindgen(js_name = layerVertices)]
+    pub fn layer_vertices(&self, i: usize) -> Result<Float64Array, JsError> {
+        Ok(Float64Array::from(&self.layer(i)?.vertices[..]))
     }
 }
 
