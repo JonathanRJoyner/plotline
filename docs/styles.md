@@ -33,17 +33,18 @@ The GUI's style picker groups the styles under these same headings, and a test k
 
 <img src="images/grid.png" width="260" align="right" alt="The still life drawn with the grid style">
 
-A dot at every point of a square grid where the ink reaches a threshold. Tone shows only as dots or no dots, so the result reads like a poster with one level.
+A filled dot at every point of a square grid where the ink reaches a threshold. Tone shows only as dots or no dots, so the result reads like a poster with one level.
 
 **Use it for** bold, graphic pictures with clear shapes, and as a quick first plot to check the page and the pen.
 
 **Settings**
-- `points.spacing_mm` (density): the grid pitch. Finer spacing gives more detail and more dots.
+- `points.spacing_mm` (density): the grid pitch. Finer spacing gives more detail and more, smaller dots.
 - `points.threshold`: the least ink that gets a dot. Lower it to bring in the midtones.
+- `render.size`: a dot's width as a share of the spacing. At 1, the default, neighbouring dots touch and a dark area is about four-fifths ink at any spacing; lower it for a lighter, more open pattern.
 
-**Pens.** A dot is one touch of the pen, so the pen's width is the dot's size. A wide marker gives a strong pattern; a fine liner needs a fine spacing to show anything. Every dot is a pen lift.
+**Pens.** Each dot is filled with a spiral, so a wider pen fills it in fewer turns and plots faster. A dot no wider than the pen is one touch of the pen. Every dot is a pen lift.
 
-**Looks:** Quick (`points.spacing_mm` 1.8: about 30 minutes on the median test image, against 92) and Fine (0.8 mm).
+**Looks:** Quick (`points.spacing_mm` 4.4: about 30 minutes on the median test image, against 122, in large dots) and Fine (0.7 mm).
 
 ### `hatch`
 
@@ -308,9 +309,11 @@ Dots where error diffusion puts them: each grid cell gets a dot or none, and the
 - `dither.spacing_mm` (density): the grid cell; at most one dot per cell.
 - `dither.serpentine`: scans alternate rows in opposite directions, which breaks up diagonal patterns.
 
-**Pens.** A dot is one touch of the pen, so the pen's width is the dot's size; match it to the spacing. Every dot is a pen lift.
+- `render.size`: a dot's width as a share of the spacing. At 1, the default, neighbouring dots touch, so the dots' density alone carries the tone.
 
-**Looks:** Faithful (`dither.spacing_mm` 0.8) and Quick (1.8 mm: about 30 minutes on the median test image, against 93).
+**Pens.** Each dot is filled with a spiral, so a wider pen fills it in fewer turns and plots faster. A dot no wider than the pen is one touch of the pen. Every dot is a pen lift.
+
+**Looks:** Faithful (`dither.spacing_mm` 0.8). No Quick: the dots' ink alone takes most of half an hour, and the spacing that gets there loses the picture.
 
 ### `circles`
 

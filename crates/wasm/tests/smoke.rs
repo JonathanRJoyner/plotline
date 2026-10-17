@@ -12,6 +12,8 @@ fn grid_matches_the_golden_file() {
     // The golden file pins the 2 mm spacing it was checked against the Python engine at.
     s.update("points", r#"{"threshold":0.6,"spacing_mm":2}"#)
         .unwrap();
+    // Dots a tenth of the spacing are narrower than the pen, so each is one vertex, as in the file.
+    s.update("render", r#"{"size":0.1}"#).unwrap();
     let mut run = s.start().unwrap();
     let mut n = 0;
     while run.next_frame().is_some() {
@@ -261,6 +263,7 @@ fn golden_grid_lint_matches_native() {
     s.update("tone", &json!({"resolution": 64})).unwrap();
     s.update("points", &json!({"threshold": 0.6, "spacing_mm": 2}))
         .unwrap();
+    s.update("render", &json!({"size": 0.1})).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
     let all = s.lint().unwrap();

@@ -60,7 +60,7 @@ struct SlowPointRun {
 
 impl StageRun for SlowPointRun {
     fn step(&mut self) -> Result<Step, StageError> {
-        let points = Points(vec![[0.0, 0.0]]);
+        let points = Points(vec![[0.0, 0.0]], None);
         if self.framed {
             return Ok(Step::Done(Artifact::Points(Arc::new(points))));
         }

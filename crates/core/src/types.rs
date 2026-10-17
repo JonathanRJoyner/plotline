@@ -305,9 +305,10 @@ impl ToneMap {
     }
 }
 
-/// A list of points in mm.
+/// A list of points in mm, and the spacing of the grid they lie on when a placer puts them on one,
+/// which lets a renderer size its marks to the grid's cells.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Points(pub Vec<[f64; 2]>);
+pub struct Points(pub Vec<[f64; 2]>, pub Option<f64>);
 
 /// Many polylines in mm, stored flat: `offsets` has one entry more than there are paths, starts
 /// at 0, and path `i` is `coords[offsets[i]..offsets[i + 1]]`. A path of one vertex is a dot.

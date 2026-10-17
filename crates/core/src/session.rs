@@ -1053,7 +1053,7 @@ mod tests {
     }
     #[test]
     fn second_run_with_same_settings_is_all_cached() {
-        let mut s = Session::new(1 << 20);
+        let mut s = Session::new(1 << 26);
         s.set_image(gradient(64, 48));
         s.update("tone", &json!({"resolution": 64})).unwrap();
         let mut r = s.start().unwrap();
@@ -1081,7 +1081,7 @@ mod tests {
     }
     #[test]
     fn a_new_paper_reruns_nothing_and_repaints() {
-        let mut s = Session::new(1 << 20);
+        let mut s = Session::new(1 << 26);
         s.set_image(gradient(64, 48));
         s.update("tone", &json!({"resolution": 64})).unwrap();
         let mut r = s.start().unwrap();

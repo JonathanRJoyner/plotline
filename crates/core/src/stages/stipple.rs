@@ -178,35 +178,49 @@ impl Stage for StippleRenderer {
             .first()
             .ok_or_else(|| StageError::Failed("stipple needs a pen".into()))?
             .width_mm;
-        let (points, tone) = (inputs.points().clone(), inputs.tone().clone());
         // `max` guards the root against ink a hair outside 0..1.
         let diameter =
             move |ink: f32| s.size_mm * (1.0 - s.vary + s.vary * f64::from(ink)).max(0.0).sqrt();
-        let need: f64 = points
-            .0
-            .iter()
-            .map(|&p| dot_vertices(diameter(tone.sample(p)), pen_w, s.shape))
-            .sum();
-        if need > VERTEX_BUDGET {
-            return Err(StageError::Failed(format!(
-                "these dots need about {:.0} million vertices; use a wider pen, smaller or fewer dots",
-                need / 1e6
-            )));
-        }
-        let rect = tone.rect_mm();
-        Ok(Box::new(ChunkRun::new(
-            points.0.len(),
-            "dots",
-            Box::new(move |i, paths, _| {
-                let p = points.0[i];
-                let dot: Vec<[f64; 2]> = dot_path(p, diameter(tone.sample(p)), pen_w, s.shape)
-                    .into_iter()
-                    .map(|v| clamp_to(rect, v))
-                    .collect();
-                paths.push(&dot);
-            }),
-        )))
+        dot_run(&inputs, pen_w, s.shape, diameter)
     }
+}
+
+/// A run that draws each of the input points as a dot of diameter `diameter(ink)`, where `ink` is
+/// the tone map's ink under the point, with a pen `pen_w` wide, clamped to the tone map. It makes
+/// the dots a chunk at a time, reporting about 30 frames labelled with the dots done, then gives
+/// the paths. It fails at the start if the dots would need more than 20 million vertices, which a
+/// fine pen under large dots can reach.
+pub(crate) fn dot_run(
+    inputs: &Inputs,
+    pen_w: f64,
+    shape: DotShape,
+    diameter: impl Fn(f32) -> f64 + Send + 'static,
+) -> Result<Box<dyn StageRun>, StageError> {
+    let (points, tone) = (inputs.points().clone(), inputs.tone().clone());
+    let need: f64 = points
+        .0
+        .iter()
+        .map(|&p| dot_vertices(diameter(tone.sample(p)), pen_w, shape))
+        .sum();
+    if need > VERTEX_BUDGET {
+        return Err(StageError::Failed(format!(
+            "these dots need about {:.0} million vertices; use a wider pen, smaller or fewer dots",
+            need / 1e6
+        )));
+    }
+    let rect = tone.rect_mm();
+    Ok(Box::new(ChunkRun::new(
+        points.0.len(),
+        "dots",
+        Box::new(move |i, paths, _| {
+            let p = points.0[i];
+            let dot: Vec<[f64; 2]> = dot_path(p, diameter(tone.sample(p)), pen_w, shape)
+                .into_iter()
+                .map(|v| clamp_to(rect, v))
+                .collect();
+            paths.push(&dot);
+        }),
+    )))
 }
 
 #[cfg(test)]
@@ -243,7 +257,7 @@ mod tests {
     /// Run the renderer over `points` on a flat 10 x 10 px map (20 x 20 mm from (10, 10)) of `ink`.
     fn run(points: Vec<[f64; 2]>, ink: f32, patch: Value) -> (Vec<Frame>, Arc<Paths>) {
         let tone = Artifact::Tone(Arc::new(tone_map(10, 10, |_, _| ink)));
-        let points = Artifact::Points(Arc::new(Points(points)));
+        let points = Artifact::Points(Arc::new(Points(points, None)));
         match run_stage(&StippleRenderer, vec![points, tone, pens()], patch) {
             (frames, Artifact::Paths(p)) => (frames, p),
             (_, a) => panic!("expected paths, got {}", a.kind().name()),
@@ -379,7 +393,7 @@ mod tests {
         // 3000 dots of 10 mm with a 0.05 mm pen need about 21 million vertices.
         let start = |n: usize| {
             let tone = Artifact::Tone(Arc::new(tone_map(10, 10, |_, _| 1.0)));
-            let points = Artifact::Points(Arc::new(Points(vec![C; n])));
+            let points = Artifact::Points(Arc::new(Points(vec![C; n], None)));
             let inputs = Inputs::new(
                 [points, tone, pen(0.05)]
                     .into_iter()
@@ -425,7 +439,7 @@ mod tests {
         ] {
             let settings = crate::settings::merge(&StippleRenderer.defaults(), &patch);
             let tone = Artifact::Tone(Arc::new(tone_map(1, 1, |_, _| 1.0)));
-            let points = Artifact::Points(Arc::new(Points(vec![])));
+            let points = Artifact::Points(Arc::new(Points(vec![], None)));
             let inputs = Inputs::new(
                 [points, tone, pens()]
                     .into_iter()

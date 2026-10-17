@@ -307,7 +307,7 @@ mod tests {
         p.push(&[[0.0, 0.0], [1.0, 1.0]]);
         assert_eq!(Artifact::Paths(Arc::new(p)).bytes(), 2 * 16 + 2 * 4);
         assert_eq!(
-            Artifact::Points(Arc::new(Points(vec![[0.0, 0.0]; 3]))).bytes(),
+            Artifact::Points(Arc::new(Points(vec![[0.0, 0.0]; 3], None))).bytes(),
             48
         );
         let two = crate::test_util::tones(&[0.25, 0.5]);
