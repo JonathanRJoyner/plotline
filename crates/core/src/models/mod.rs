@@ -218,9 +218,11 @@ mod tests {
 
     /// What is wrong with `e`, if anything.
     ///
-    /// The overlap must be a multiple of 8 because `TILE - 2 * overlap`, the centre a tile keeps,
-    /// is then a multiple of 16, and so every tile's window starts on a multiple of 8, as the
-    /// tile side itself is. It must be under half a tile because the centre would be empty.
+    /// The overlap must be a multiple of 8, so that `TILE - 2 * overlap`, the centre a tile keeps,
+    /// is a multiple of 16 and every tile's window starts on a multiple of 8. Nothing in the tiler
+    /// depends on that alignment; it works for any overlap under half a tile. The rule is for
+    /// models whose layers halve the image: it keeps their windows aligned. The overlap must be
+    /// under half a tile because the centre would be empty.
     fn problem(e: &CatalogueEntry) -> Option<String> {
         const LICENCES: [&str; 7] = [
             "MIT",
