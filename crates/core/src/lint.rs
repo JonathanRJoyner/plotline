@@ -14,6 +14,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::analysis;
 use crate::coverage::{self, Coverage};
 use crate::fit::Density;
 use crate::machine::Machine;
@@ -50,6 +51,9 @@ const TRAVEL_SHARE: f64 = 0.3;
 /// at least `FINE_MIN` segments, over half of them that fine, holds needless vertices.
 const FINE: f64 = 1.0 / 8.0;
 const FINE_MIN: usize = 1000;
+/// A pen whose ink's BT.601 luma is over this is light: yellow, pale pink or light grey. The
+/// palette suggestion lists such a pen first, and alone it shows little.
+const LIGHT_PEN: f64 = 0.6;
 
 /// What one layer's pen lays down.
 #[derive(Clone, Debug, PartialEq)]
@@ -416,9 +420,9 @@ fn more_ink(cx: &Context, d: &Drawing, paths: usize) -> Option<Value> {
 
 const SPACING: &[&str] = &["spacing_mm", "min_spacing_mm"];
 
-/// The share of the plot time `st` spends on pen-up travel.
-fn travel_share(st: &Stats, speeds: Speeds) -> f64 {
-    st.pen_up_mm / speeds.travel_mm_s / st.estimated_seconds
+/// The share of the plot time spent on pen-up travel, from [`stats::timed`].
+fn travel_share((st, travel_s): (Stats, f64)) -> f64 {
+    travel_s / st.estimated_seconds
 }
 
 /// The travel share of `d` once the ordering stage has put every layer in nearest-neighbour order.
@@ -454,7 +458,7 @@ fn optimized_travel_share(d: &Drawing, speeds: Speeds) -> Option<f64> {
         tone: None,
         preset: None,
     };
-    Some(travel_share(&stats::compute(&ordered, speeds), speeds))
+    Some(travel_share(stats::timed(&ordered, speeds)))
 }
 
 /// The `vertices` number of `d` once the ordering stage simplifies every path to `tolerance` and
@@ -664,7 +668,8 @@ pub fn check(
         );
         add("dark", Severity::Info, message, c, patch);
     }
-    let st = stats::compute(d, speeds);
+    let timed = stats::timed(d, speeds);
+    let st = timed.0;
     if st.estimated_seconds > 0.0 {
         let lifts = paths as f64 * speeds.pen_lift_s / st.estimated_seconds;
         if lifts > LIFT_SHARE {
@@ -674,7 +679,7 @@ pub fn check(
             );
             add("lifts", Severity::Info, message, lifts, None);
         }
-        let travel = travel_share(&st, speeds);
+        let travel = travel_share(timed);
         if travel > TRAVEL_SHARE {
             let optimized = cx.settings["order"]["optimize"] != false;
             let mut message = format!(
@@ -732,10 +737,20 @@ pub fn check(
     let mode = cx.settings["split"]["mode"].as_str().unwrap_or("one_pen");
     if mode == "one_pen" && pens.len() > 1 {
         let patch = json!({"settings": {"split": {"mode": "light_to_dark"}}});
-        let message = "Pen use is set to one pen, so only the first pen draws.".to_string();
+        // A light first pen drawing alone is a drawing that barely shows, so it warns.
+        let (severity, message) = if analysis::luma(&pens[0].color) > LIGHT_PEN {
+            let message = format!(
+                "Pen use is set to one pen, so only {} draws, and a light ink alone shows little.",
+                pen_label(0, &pens[0])
+            );
+            (Severity::Warning, message)
+        } else {
+            let message = "Pen use is set to one pen, so only the first pen draws.";
+            (Severity::Info, message.to_string())
+        };
         add(
             "unused_pens",
-            Severity::Info,
+            severity,
             message,
             (pens.len() - 1) as f64,
             Some(patch),
@@ -1145,7 +1160,9 @@ mod tests {
     fn lifts_and_travel_take_a_share_of_the_time() {
         let all = lint(&page(dots(100)), "grid", |_| {});
         let lifts = find(&all, "lifts").unwrap();
-        assert!(lifts.value > 0.9, "{}", lifts.value);
+        // Each 0.9 mm hop never reaches travel speed and takes 2·sqrt(0.9 / 1000) s, about 0.06 s,
+        // against a 0.2 s lift.
+        assert!(lifts.value > 0.7, "{}", lifts.value);
         assert!(lifts.message.contains("(100 lifts)"), "{}", lifts.message);
         // Two short strokes at opposite corners: most of the time is travel.
         let far = page(vec![
@@ -1206,7 +1223,8 @@ mod tests {
         assert!(predicted < find(&found, "travel").unwrap().value);
         s.update("order", &patch["settings"]["order"]).unwrap();
         draw(&mut s);
-        assert_eq!(travel_share(&s.stats().unwrap(), s.speeds()), predicted);
+        let timed = stats::timed(&s.drawing().unwrap(), s.speeds());
+        assert_eq!(travel_share(timed), predicted);
     }
 
     #[test]
@@ -1369,6 +1387,25 @@ mod tests {
         assert_eq!(unused.message, message);
         let patch = json!({"settings": {"split": {"mode": "light_to_dark"}}});
         assert_eq!(unused.patch, Some(patch));
+        assert_eq!(unused.severity, Severity::Info);
+        // A light first pen alone warns, naming it.
+        let yellow = Pen::new("Yellow", 0.5, "#f5c400").unwrap();
+        let light = [yellow, red.clone()];
+        let found = check(
+            &d,
+            &measure(&d),
+            &style,
+            &settings,
+            &light,
+            Speeds::default(),
+            None,
+        );
+        let unused = find(&found, "unused_pens").unwrap();
+        let message = "Pen use is set to one pen, so only pen 1 (Yellow, yellow) draws, and a light ink alone shows little.";
+        assert_eq!(
+            (unused.message.as_str(), unused.severity),
+            (message, Severity::Warning)
+        );
         settings["split"]["mode"] = json!("light_to_dark");
         assert!(find(&all(&d, &settings), "unused_pens").is_none());
         d.layers.push(Layer {

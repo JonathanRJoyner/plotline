@@ -162,7 +162,7 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
 
 /* The compare view's controls: a card at the top left with the chip and its menu, the slider along
    the bottom and, between them, a handle on the divider that the canvas draws. The hint moves above the slider. */
-.preview .compare-pick, .preview .compare-swipe {
+.preview .compare-pick, .preview .compare-swipe, .preview .playback {
   position: absolute;
   z-index: 1;
   display: flex;
@@ -183,7 +183,11 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
 .preview .compare-pick select { height: 28px; min-width: 0; }
 .preview .compare-swipe { right: 10px; bottom: 10px; left: 10px; padding: 8px 12px; }
 .preview .compare-handle { position: absolute; top: 0; bottom: 0; width: 16px; margin-left: -8px; cursor: ew-resize; touch-action: none; }
-.preview.comparing .hint { bottom: 56px; }
+.preview.comparing .hint, .preview.playing .hint { bottom: 56px; }
+/* The plot playback's bar takes the compare slider's place: play or pause, the time slider and the times. */
+.preview .playback { right: 10px; bottom: 10px; left: 10px; padding: 4px 12px 4px 4px; }
+.preview .playback input[type="range"] { flex: 1; min-width: 0; }
+.preview .playback .time { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* The focus points over the preview: a dashed ring of the radius, a dot, and while focusing a
    target that takes the click which removes the point. The paper is white in both themes, so the
@@ -298,6 +302,7 @@ button.icon { width: 30px; padding: 0; justify-content: center; }
 .chip:has(:disabled) { opacity: 0.45; background: var(--field); cursor: not-allowed; }
 .chip:has(:checked) { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 fieldset > button, fieldset > .button { margin: 4px 6px 0 0; }
+.share-link { width: 100%; box-sizing: border-box; }
 .gcode { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .gcode .help { margin: 0; }
 .gcode button { width: 100%; min-width: 0; }

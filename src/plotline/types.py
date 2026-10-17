@@ -47,12 +47,15 @@ class Speeds:
 
     ``draw_mm_s`` is the speed with the pen down and ``travel_mm_s`` the speed with it up, both in
     mm per second. ``pen_lift_s`` is the time to lift the pen and set it down again, which every
-    path costs once. The class is not frozen, so a front end can edit the values in place.
+    path costs once. ``accel_mm_s2`` is how fast the pen speeds up and slows down, in mm per second
+    squared, so a move too short to reach full speed takes longer than its length over the speed.
+    The class is not frozen, so a front end can edit the values in place.
     """
 
     draw_mm_s: float = 50.0
     travel_mm_s: float = 100.0
     pen_lift_s: float = 0.2
+    accel_mm_s2: float = 1000.0
 
 
 @dataclass(frozen=True)

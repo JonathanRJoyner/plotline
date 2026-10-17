@@ -41,12 +41,12 @@ fn a_white_image_by_colour_draws_nothing() {
 #[test]
 fn a_light_grey_leaves_the_second_pen_light_to_dark_empty() {
     // Ink 0.4 fills the first band to 0.8, past the mid-grey thresholds of grid and ink, and leaves
-    // the second band empty.
+    // the second band empty. A flat map has no level lines, so contours draws nothing in either.
     for style in list_styles() {
         let counts = layer_paths(&style.name, 0.6, "light_to_dark");
         assert_eq!(counts.len(), 2, "{}: {counts:?}", style.name);
         assert!(
-            counts[0] > 0 && counts[1] == 0,
+            (counts[0] > 0 || style.name == "contours") && counts[1] == 0,
             "{}: {counts:?}",
             style.name
         );

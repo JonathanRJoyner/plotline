@@ -35,9 +35,12 @@ use plotline_core::settings::merge;
 use plotline_core::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
 use plotline_core::stages::split::SplitStage;
 use plotline_core::stages::tone::{flatten, guided, ToneStage};
+use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
 use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
-use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, ToneMap};
+use plotline_core::{
+    Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds, ToneMap,
+};
 use proptest::prelude::*;
 use proptest::sample::select;
 use proptest::test_runner::{Config, RngSeed, TestCaseError, TestRunner};
@@ -1188,11 +1191,22 @@ fn an_optimize_suggestion_keeps_the_limits() {
             return Ok(());
         }
         prop_assert_eq!(job.state(), RunState::Done);
-        let Some(found) = job.result() else {
-            return Ok(());
-        };
+        // A search that ends done always answers, if only to say why it has no suggestion.
+        let found = job.result();
+        prop_assert!(found.is_some());
+        let found = found.unwrap();
         prop_assert!(found.trials.len() <= TRIALS);
         prop_assert_eq!(found.current_minutes, minutes);
+        prop_assert!(!found.reason.is_empty());
+        let Some(error) = found.error else {
+            // Nothing scored: no trial within the limits had a tone error, and nothing is offered.
+            prop_assert!(found.patch.is_none() && found.beyond.is_none());
+            prop_assert!(found
+                .trials
+                .iter()
+                .all(|t| t.error.is_none() || t.over || t.slow || !t.warnings.is_empty()));
+            return Ok(());
+        };
         // It is the quickest of the trials within the limits whose tone error is within a tenth
         // of the lowest, and only a trial left out for its time beats it by more.
         let kept: Vec<_> = (found.trials.iter())
@@ -1202,7 +1216,7 @@ fn an_optimize_suggestion_keeps_the_limits() {
             .iter()
             .filter_map(|t| t.error)
             .fold(f64::INFINITY, f64::min);
-        prop_assert!(found.error <= (1.0 + CLOSE) * lowest);
+        prop_assert!(error <= (1.0 + CLOSE) * lowest);
         prop_assert!(
             kept.iter()
                 .all(|t| t.error.unwrap() > (1.0 + CLOSE) * lowest
@@ -1418,6 +1432,7 @@ fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
             pen_down_gcode: "M280 P0 S30".to_string(),
             pen_up_gcode: "M280 P0 S90".to_string(),
             max_segment_mm: None,
+            accel_mm_s2: DEFAULT_ACCEL_MM_S2,
         };
         let split = Machine {
             max_segment_mm: Some(max),
@@ -1541,6 +1556,94 @@ fn a_jittered_raster_covers_lines_at_their_width_at_any_angle_and_place() {
         let inked = c.count.iter().filter(|&&n| n > 0).count() as f64 * cell * cell;
         let area = 8.0 * (20.0 * pen + std::f64::consts::PI * pen * pen / 4.0);
         prop_assert!((inked / area - 1.0).abs() < 0.06, "{inked} mm2 of {area}");
+        Ok(())
+    });
+}
+
+/// The plot time with acceleration is never below the time at full speed all the way, the
+/// distances over the speeds plus the lifts, which is what it was before acceleration counted; and
+/// it comes to that time as the acceleration grows without limit.
+#[test]
+fn acceleration_never_shortens_the_plot_time() {
+    let speed = || 1.0..500.0f64;
+    let strategy = (
+        case(all_styles()),
+        speed(),
+        speed(),
+        0.0..2.0f64,
+        1.0..1e5f64,
+    );
+    check("accel", 12, strategy, |(c, draw, travel, lift, accel)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let speeds = Speeds {
+            draw_mm_s: draw,
+            travel_mm_s: travel,
+            pen_lift_s: lift,
+            accel_mm_s2: accel,
+        };
+        let st = stats::compute(&d, speeds);
+        let full = st.pen_down_mm / draw + st.pen_up_mm / travel + st.path_count as f64 * lift;
+        // The two sums add the same moves in another order, so they may differ by rounding.
+        let eps = 1e-9 * full.max(1.0);
+        prop_assert!(
+            st.estimated_seconds >= full - eps,
+            "{} s with acceleration, {full} s without",
+            st.estimated_seconds
+        );
+        let unbounded = Speeds {
+            accel_mm_s2: f64::INFINITY,
+            ..speeds
+        };
+        let limit = stats::compute(&d, unbounded).estimated_seconds;
+        prop_assert!((limit - full).abs() <= eps, "{limit} s against {full} s");
+        Ok(())
+    });
+}
+
+/// The plot playback's times, every pen-up move's start and end and every vertex's arrival, layer
+/// by layer, never go back, and the last one is the estimated plot time; each layer has one move
+/// per path and one time per vertex.
+#[test]
+fn the_timeline_rises_and_ends_at_the_plot_time() {
+    let strategy = (case(all_styles()), 0.0..2.0f64, 1.0..1e5f64);
+    check("timeline", 12, strategy, |(c, lift, accel)| {
+        let mut s = c.session();
+        s.set_speeds(Speeds {
+            pen_lift_s: lift,
+            accel_mm_s2: accel,
+            ..Speeds::default()
+        });
+        run(&mut s)?;
+        let (Some(d), Some(timeline)) = (s.drawing(), s.timeline()) else {
+            return Ok(());
+        };
+        let times = timeline.layers;
+        prop_assert_eq!(times.len(), d.layers.len());
+        let mut last = 0.0;
+        for (layer, t) in d.layers.iter().zip(&times) {
+            prop_assert_eq!(t.travel.len(), layer.paths.len());
+            prop_assert_eq!(t.vertices.len(), layer.paths.coords().len());
+            for (i, [up, down]) in t.travel.iter().copied().enumerate() {
+                let path = layer.paths.offsets()[i] as usize..layer.paths.offsets()[i + 1] as usize;
+                for at in [up, down]
+                    .into_iter()
+                    .chain(t.vertices[path].iter().copied())
+                {
+                    prop_assert!(at >= last, "{at} s comes after {last} s");
+                    last = at;
+                }
+            }
+        }
+        let total = s.stats().unwrap().estimated_seconds;
+        // The two add the same moves in another order, so they may differ by rounding.
+        prop_assert!(
+            (last - total).abs() <= 1e-9 * total.max(1.0),
+            "{last} s against {total} s"
+        );
         Ok(())
     });
 }

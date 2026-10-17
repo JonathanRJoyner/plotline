@@ -139,6 +139,61 @@ test("an exported SVG loads back as a preset", async ({ page }) => {
   await expect(count).toHaveValue(changed);
 });
 
+test("a copied link opens the same setup in a fresh browser, and the fragment is gone from its address", async ({ page, browser }) => {
+  let id = await pick(page, "stipple", await sample(page));
+  const count = page.getByRole("spinbutton", { name: /^count$/i });
+  const changed = String(Math.round(Number(await count.inputValue()) / 2));
+  await count.fill(changed);
+  await count.blur();
+  id = await ran(page, id);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy link", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Link copied.");
+  const link = await page.evaluate(() => navigator.clipboard.readText());
+  expect(link).toMatch(/^http:\/\/localhost:\d+\/#p=[A-Za-z0-9_-]+$/);
+  // A setup change makes the notice stale: it goes.
+  await count.fill(String(Number(changed) + 100));
+  await count.blur();
+  await ran(page, id);
+  await expect(page.getByRole("status")).toHaveCount(0);
+  // A fresh context remembers no setup, so what loads can only have come from the link.
+  const fresh = await browser.newContext();
+  try {
+    await fresh.addInitScript(() => localStorage.setItem("plotline.tour", "seen"));
+    const other = await fresh.newPage();
+    const failures: string[] = [];
+    other.on("pageerror", (e) => failures.push(e.message));
+    other.on("console", (m) => { if (m.type() === "error") failures.push(m.text()); });
+    await other.goto(link);
+    await expect(styleButton(other)).toHaveAttribute("value", "stipple");
+    await expect(other.getByRole("spinbutton", { name: /^count$/i })).toHaveValue(changed);
+    expect(new URL(other.url()).hash).toBe("");
+    expect(failures).toEqual([]);
+  } finally {
+    await fresh.close();
+  }
+});
+
+test("Copy link shows the link to copy by hand when the clipboard refuses", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, "clipboard", { value: { writeText: () => Promise.reject(new Error("denied")) } }));
+  await open(page);
+  await page.getByRole("button", { name: "Copy link", exact: true }).click();
+  const field = page.getByRole("textbox", { name: "Share link" });
+  await expect(field).toHaveValue(/^http:\/\/localhost:\d+\/#p=[A-Za-z0-9_-]+$/);
+  await expect(page.getByRole("status")).toHaveCount(0);
+});
+
+test("a link that cannot be read says so and leaves the remembered setup", async ({ page }) => {
+  await pick(page, "stipple", await sample(page));
+  // The page remembers a setup shortly after each change.
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("plotline.preset"))).toContain('"stipple"');
+  await page.goto("/#p=AAAA");
+  await page.reload(); // a change of fragment alone does not load the page again
+  await expect(page.locator("fieldset[data-tour=presets] .error")).toContainText("could not be read");
+  await expect(styleButton(page)).toHaveAttribute("value", "stipple");
+  expect(new URL(page.url()).hash).toBe("");
+});
+
 test("a look changes the density setting, Undo takes it back, and Reset to defaults shows Balanced", async ({ page }) => {
   let id = await sample(page);
   // The style the page opens on has a Fine look; the menu lists the labels the engine gives.
@@ -257,6 +312,25 @@ test("a colour image's palette suggestion sets the pens and Pen use", async ({ p
   for (const name of await names.allTextContents()) expect(name).toMatch(/ 0\.3$/);
   await expect(page.getByRole("combobox", { name: "Pen use" })).toHaveValue("by_colour");
   await expect(apply).toHaveCount(0);
+});
+
+test("Reset to defaults keeps Pen use with several pens, and a light first pen alone warns", async ({ page }) => {
+  await open(page);
+  await page.locator(".toolbar input[type=file]").setInputFiles(await coloursPng(page));
+  let id = await ran(page, 0);
+  await page.getByRole("button", { name: /^Apply: This is a colour image\./ }).click();
+  id = await ran(page, id);
+  const penUse = page.getByRole("combobox", { name: "Pen use" });
+  await expect(penUse).toHaveValue("by_colour");
+  // Pen use goes with the pens, which a reset leaves alone.
+  await page.getByRole("button", { name: "Reset to defaults" }).click();
+  id = await ran(page, id);
+  await expect(penUse).toHaveValue("by_colour");
+  // The palette lists the lightest ink first, so one pen leaves it to draw alone.
+  await penUse.selectOption("one_pen");
+  await ran(page, id);
+  const light = page.locator(".lint li[data-severity=warning]").filter({ hasText: /only pen 1 \(.+\) draws, and a light ink alone shows little/ });
+  await expect(light).toHaveCount(1);
 });
 
 test("a framing suggestion crops the image to its subject, and Remove crop takes it off", async ({ page }) => {
@@ -389,6 +463,74 @@ test("Optimize names a closer spacing the time limit left out", async ({ page })
   const found = page.locator("form.fit span");
   await expect(found).toContainText("follows the image's tones best for its plot time");
   await expect(found).toContainText(/Spacing at [\d.]+ mm follows them more closely, with a tone error of \d\.\d{3}, but takes [\d.]+ min to plot, over the limit of [\d.]+ min: type a target in minutes to allow it\./);
+});
+
+test("a lower acceleration lengthens the plot time, and a machine brings its own", async ({ page }) => {
+  await sample(page);
+  const stats = page.locator(".stats");
+  const seconds = async () => {
+    const [, m, s] = /about (\d+) min (\d+) s to plot/.exec((await stats.textContent()) ?? "") ?? [];
+    return 60 * Number(m) + Number(s);
+  };
+  const before = await seconds();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("button", { name: "Plot time", exact: true }).click();
+  const accel = dialog.getByRole("spinbutton", { name: /^Acceleration/ });
+  await expect(accel).toHaveValue("1000");
+  await accel.fill("0");
+  await accel.blur();
+  await expect(accel).toHaveValue("1000"); // no estimate at 0, so it snaps back
+  await accel.fill("20");
+  await accel.blur();
+  // The stats follow the speeds without a new run.
+  await expect.poll(seconds).toBeGreaterThan(before);
+  // A machine sets the acceleration with its feeds, and Plot time shows it read-only.
+  await dialog.getByRole("button", { name: "Machine", exact: true }).click();
+  await dialog.getByRole("combobox", { name: /^Machine/ }).selectOption("new");
+  const own = dialog.getByRole("spinbutton", { name: /^Acceleration/ });
+  await expect(own).toHaveValue("1000");
+  await own.fill("500");
+  await own.blur();
+  await dialog.getByRole("button", { name: "Plot time", exact: true }).click();
+  await expect(accel).toHaveValue("500");
+  await expect(accel).toBeDisabled();
+});
+
+// A white picture, on which the line styles draw nothing.
+async function whitePng(page: Page) {
+  const png = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 120;
+    canvas.height = 160;
+    const g = canvas.getContext("2d")!;
+    g.fillStyle = "#ffffff";
+    g.fillRect(0, 0, 120, 160);
+    const blob = await new Promise<Blob>((done) => canvas.toBlob((b) => done(b!), "image/png"));
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  });
+  return { name: "white.png", mimeType: "image/png", buffer: Buffer.from(png) };
+}
+
+test("Optimize says why it has no suggestion, the stages end done, and a new image clears the sentence", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  await page.locator(".toolbar input[type=file]").setInputFiles(await whitePng(page));
+  const id = await pick(page, "hatch", await ran(page, 0));
+  await fitSummary(page).click();
+  await page.getByRole("button", { name: "Optimize" }).click();
+  const searched = await ran(page, id);
+  const found = page.locator("form.fit span");
+  await expect(found).toContainText(/^No value of Spacing from [\d.]+ mm to [\d.]+ mm draws anything here/);
+  await expect(page.getByRole("button", { name: /^Apply: / })).toHaveCount(0);
+  // The search ends on the current settings' cached drawing, which sends no stage frames.
+  const chips = page.locator(".status li");
+  expect(await chips.count()).toBeGreaterThan(0);
+  await expect(chips.filter({ hasText: "waiting" })).toHaveCount(0);
+  // The same settings on another image: the sentence was about the last one.
+  await page.getByRole("button", { name: "Sample image", exact: true }).click();
+  await ran(page, searched);
+  await expect(found).toHaveCount(0);
 });
 
 test("Response auto corrects the tone map for the style", async ({ page }) => {
@@ -695,6 +837,47 @@ async function canvasHash(page: Page, from: number, to: number): Promise<number>
     return hash;
   }, [from, to]);
 }
+
+// The preview's opaque pixels darker than mid grey: the ink, give or take the pen's ring. The
+// paper's shadow is see-through, so it does not count.
+const inked = (page: Page) => page.locator(".preview canvas").evaluate((c: HTMLCanvasElement) => {
+  const { data } = c.getContext("2d")!.getImageData(0, 0, c.width, c.height);
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4) if (data[i + 3] === 255 && data[i] + data[i + 1] + data[i + 2] < 384) n++;
+  return n;
+});
+
+test("Play lays the drawing down over the plot time, the slider and its keys scrub it, and Compare takes its place", async ({ page }) => {
+  await sample(page);
+  const [, m, s] = /about (\d+) min (\d+) s to plot/.exec((await page.locator(".stats").textContent()) ?? "") ?? [];
+  const full = await inked(page);
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect(page.getByRole("checkbox", { name: "Play", exact: true })).toBeChecked();
+  const times = page.locator(".playback .time");
+  // The playback lasts the stats' plot time, and it plays at once.
+  await expect(times).toContainText(` of ${m}:${s.padStart(2, "0")}, `);
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  const slider = page.getByRole("slider", { name: "Plot time" });
+  await slider.focus();
+  await page.keyboard.press("Home");
+  await expect(times).toContainText(/^0:00 of /);
+  await expect.poll(() => inked(page)).toBeLessThan(full / 10);
+  await page.keyboard.press("ArrowRight");
+  await expect(times).not.toContainText(/^0:00 of /);
+  await page.keyboard.press("End");
+  await expect(times).toContainText(/, 0:00 left$/);
+  await expect.poll(() => inked(page)).toBeGreaterThan(full * 0.9);
+  // Play from the end starts again from the beginning.
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  await expect(page.getByRole("checkbox", { name: "Play", exact: true })).not.toBeChecked();
+  await expect(page.locator(".playback")).toHaveCount(0);
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect(page.getByRole("checkbox", { name: "Compare", exact: true })).not.toBeChecked();
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect.poll(() => inked(page)).toBeGreaterThan(full * 0.9);
+});
 
 test("Compare swipes the previous drawing against the current one", async ({ page }) => {
   test.setTimeout(120_000);

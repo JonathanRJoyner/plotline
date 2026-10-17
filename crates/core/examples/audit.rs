@@ -271,8 +271,10 @@ fn audit_image(name: &str, image: &Image, out: &Path) -> Result<Value, String> {
             Err(e) => cell["error"] = json!(e.to_string()),
             Ok(mut job) => match drive(&mut job) {
                 Err(e) => cell["error"] = json!(e),
-                // A finished search with no trial scored within its limits has no result.
-                Ok(()) if job.result().is_none() => cell["no_result"] = json!(true),
+                // A finished search with no trial scored within its limits has no tone error.
+                Ok(()) if job.result().is_some_and(|r| r.error.is_none()) => {
+                    cell["no_result"] = json!(true)
+                }
                 Ok(()) => {
                     let r = job.result().unwrap();
                     cell["result"] = serde_json::to_value(&r).unwrap();

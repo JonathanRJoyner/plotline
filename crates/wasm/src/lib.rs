@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use js_sys::{Array, Float64Array, Uint32Array, Uint8Array};
 use plotline_core::machine::Machine;
 use plotline_core::runner::Shared;
+use plotline_core::stats::{LayerTimes, Timeline};
 use plotline_core::{
     image, pens, presets, preview, registry, synthetic, Canvas, Drawing, Frame, Job, Layer, Pen,
     RunState, SessionError, DEFAULT_CACHE_BYTES,
@@ -190,7 +191,8 @@ impl Session {
         self.inner.look()
     }
 
-    /// Put every stage of the style, Pen use included, back to the style's defaults.
+    /// Put every stage of the style back to the style's defaults, Pen use too unless there is
+    /// more than one pen.
     #[wasm_bindgen(js_name = resetSettings)]
     pub fn reset_settings(&mut self) {
         self.inner.reset_settings();
@@ -207,14 +209,15 @@ impl Session {
         Ok(self.inner.update(stage, &patch)?)
     }
 
-    /// Time plots at the `{"draw_mm_s", "travel_mm_s", "pen_lift_s"}` in `json`.
+    /// Time plots at the `{"draw_mm_s", "travel_mm_s", "pen_lift_s", "accel_mm_s2"}` in `json`.
     #[wasm_bindgen(js_name = setSpeeds)]
     pub fn set_speeds(&mut self, json: &str) -> Result<(), JsError> {
         self.inner.set_speeds(serde_json::from_str(json)?);
         Ok(())
     }
 
-    /// The speeds the stats time a plot at, as `{"draw_mm_s", "travel_mm_s", "pen_lift_s"}` JSON.
+    /// The speeds the stats time a plot at, as
+    /// `{"draw_mm_s", "travel_mm_s", "pen_lift_s", "accel_mm_s2"}` JSON.
     pub fn speeds(&self) -> String {
         json!(self.inner.speeds()).to_string()
     }
@@ -340,6 +343,14 @@ impl Session {
         let preset: Value = serde_json::from_str(json)?;
         let warnings = self.inner.load_preset(&preset)?;
         Ok(warnings.iter().map(|w| JsValue::from_str(w)).collect())
+    }
+
+    /// When the pen gets where while the last finished drawing plots at the speeds, a layer at a
+    /// time.
+    pub fn timeline(&self) -> Option<TimelineHandle> {
+        self.inner
+            .timeline()
+            .map(|timeline| TimelineHandle { timeline })
     }
 
     /// The last finished drawing.
@@ -468,6 +479,48 @@ impl FrameHandle {
     pub fn offsets(&self) -> Option<Uint32Array> {
         let paths = self.frame.paths.as_ref()?;
         Some(Uint32Array::from(paths.offsets()))
+    }
+}
+
+/// The plot playback's times of a finished drawing, read a layer at a time, in seconds from the
+/// plot's start.
+#[wasm_bindgen]
+pub struct TimelineHandle {
+    timeline: Timeline,
+}
+
+impl TimelineHandle {
+    fn layer(&self, i: usize) -> Result<&LayerTimes, JsError> {
+        let n = self.timeline.layers.len();
+        (self.timeline.layers.get(i))
+            .ok_or_else(|| JsError::new(&format!("no layer {i}; the drawing has {n}")))
+    }
+}
+
+#[wasm_bindgen]
+impl TimelineHandle {
+    /// The number of layers.
+    #[wasm_bindgen(js_name = layerCount)]
+    pub fn layer_count(&self) -> usize {
+        self.timeline.layers.len()
+    }
+
+    /// Where the pen starts, lifted, as `[x, y]` in mm.
+    pub fn start(&self) -> Vec<f64> {
+        self.timeline.start.to_vec()
+    }
+
+    /// When each of layer `i`'s pen-up moves starts and ends, as `start0, end0, start1, ...`, one
+    /// move per path.
+    #[wasm_bindgen(js_name = layerTravel)]
+    pub fn layer_travel(&self, i: usize) -> Result<Float64Array, JsError> {
+        Ok(Float64Array::from(self.layer(i)?.travel.as_flattened()))
+    }
+
+    /// When the pen reaches each of layer `i`'s vertices, in the order of its coordinates.
+    #[wasm_bindgen(js_name = layerVertices)]
+    pub fn layer_vertices(&self, i: usize) -> Result<Float64Array, JsError> {
+        Ok(Float64Array::from(&self.layer(i)?.vertices[..]))
     }
 }
 

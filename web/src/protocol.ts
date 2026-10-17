@@ -8,7 +8,7 @@ import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch
 /** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
 export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } | Pick<Canvas, "crop"> };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
-export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
+export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number; accel_mm_s2: number };
 export type State = {
   image: boolean; style: string;
   /** The name of the style's look the settings match; null when they match none, which the page calls Custom. */
@@ -125,6 +125,18 @@ export class Protocol {
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
+      // When the pen gets where in the last drawing's plot at the current speeds, for the playback;
+      // null without a drawing.
+      timeline: () => {
+        const t = s().timeline();
+        if (!t) return null;
+        try {
+          const layers = Array.from({ length: t.layerCount() }, (_, i) => ({ travel: t.layerTravel(i), vertices: t.layerVertices(i) }));
+          return { start: Array.from(t.start()), layers };
+        } finally {
+          free(t);
+        }
+      },
       svg: () => s().svg(),
       json: () => s().json(),
     };

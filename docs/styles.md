@@ -1,6 +1,6 @@
 # Style guide
 
-Every style turns the image's tone into pen marks in its own way. This guide shows each one on the same picture, says what it is good for, which settings matter and what turning them does, and how to pick a pen for it.
+Every style turns the image's tone into pen marks in its own way. This guide shows each one on the same picture, says what it is good for, which settings matter and what turning them does, and how to pick a pen for it. New to plotline? The [first plot guide](guide.md) takes you from a picture to paper.
 
 Each picture is the code-rendered still life from the README, drawn on A4 with a 0.3 mm black pen at the style's defaults. The one exception is `ink`, drawn at a threshold of 0.3, because `ink` is made for line art and the still life is not. A setting is named as its stage and key, such as `hatch.spacing_mm`; the GUI shows the same settings under each stage's heading, `plotline describe STYLE` lists them with their ranges, and `plotline run` takes them as `--set stage.key=value`.
 
