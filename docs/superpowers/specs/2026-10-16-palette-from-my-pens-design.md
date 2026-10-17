@@ -43,7 +43,7 @@ The greedy fit over `n` distinct colours solves at most `n + (n-1) + (n-2) + (n-
 
 ## 2. Engine
 
-- `analysis::measure(image, library: &[Pen])` runs the fit over the candidates of §1.1. With an empty library it gives exactly today's result.
+- `analysis::measure_with(image, library: &[Pen])` runs the fit over the candidates of §1.1. `measure(image)` stays, as `measure_with(image, &[])`, and gives exactly today's result.
 - `ImageStats` changes as follows:
   - `palette` becomes a list of `{name, color}`, where `color` is `#rrggbb`. It was a list of ink names, and a library colour cannot be found again by name alone, since two library pens may share a name and differ in colour. Without a library the names are the ink names, as before.
   - New: `palette_additions` lists `{name, color, error}` for the inks of §1.3, where `error` is the mean ΔE*ab reached with that ink. It is empty without a library.
@@ -80,7 +80,7 @@ It stays until the user saves a pen close enough to the ink, which happens witho
   - That call does not redraw: it is left out of `REDRAWS`, but the suggestions are recomputed.
   - The tour's "Take a suggestion" step adds one sentence: with pens saved under My pens, the palette is chosen from them, and a note names inks worth adding.
 - **Python.** `Session.set_pen_library(pens)`.
-- **CLI.** `plotline analyse --library FILE` reads a `plotline-pens.json` file, version 1, the file the GUI exports. A bad file stops with a message in the GUI's words, such as "bad.json is not a pen library: its format must be 'plotline-pens'."
+- **CLI.** `plotline analyse --library FILE` reads a `plotline-pens.json` file, version 1, the file the GUI exports. A bad file stops with a message in the GUI's words, such as "bad.json: not a pen library: its format must be 'plotline-pens'."
 - **MCP.** A new tool, `set_pen_library(pens)`, takes the same pen specs as `set_pens`, ink names included. The `analyse_image` description and the server instructions say how the two meet.
 - **Wasm.** `setPenLibrary(json)`.
 
