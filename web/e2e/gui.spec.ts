@@ -20,7 +20,7 @@ const test = base.extend<{ errors: string[] }>({
 async function open(page: Page, { tour = false } = {}) {
   if (!tour) await page.addInitScript(() => localStorage.setItem("plotline.tour", "seen"));
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sample image", exact: true })).toBeVisible();
 }
 
 const status = (page: Page) => page.locator(".status > span").first();
@@ -41,7 +41,7 @@ async function ran(page: Page, after: number): Promise<number> {
 
 async function sample(page: Page): Promise<number> {
   await open(page);
-  await page.getByRole("button", { name: "Sample image" }).click();
+  await page.getByRole("button", { name: "Sample image", exact: true }).click();
   return ran(page, 0);
 }
 
@@ -50,7 +50,34 @@ async function pick(page: Page, style: string, after: number): Promise<number> {
   return ran(page, after);
 }
 
+// The Fit and optimize panel starts closed; a result opens it again by itself.
+const fitPanel = (page: Page) => page.locator("details.fit-panel");
+const fitSummary = (page: Page) => page.locator("details.fit-panel > summary");
+
 const styleNames = (page: Page) => styleSelect(page).locator("option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+
+test("the empty preview offers the sample image and opening one", async ({ page }) => {
+  await open(page);
+  const card = page.locator(".preview .empty");
+  await expect(card).toContainText("Start with an image");
+  await expect(card.getByRole("button", { name: "Use the sample image" })).toBeVisible();
+  await expect(card.locator("label.button")).toContainText("Open an image");
+  await expect(card).toContainText("Or drop or paste a PNG, JPEG or WebP anywhere on the page.");
+  // On a phone the card stays inside the preview.
+  await page.setViewportSize({ width: 375, height: 800 });
+  const [inner, outer] = [(await card.boundingBox())!, (await page.locator(".preview").boundingBox())!];
+  expect(inner.x).toBeGreaterThanOrEqual(outer.x);
+  expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width);
+  await card.getByRole("button", { name: "Use the sample image" }).click();
+  await ran(page, 0);
+  await expect(card).toHaveCount(0);
+  // The other way in: the card's own file input takes an image.
+  await page.reload();
+  await expect(card).toBeVisible();
+  await card.locator("input[type=file]").setInputFiles(await coloursPng(page));
+  await ran(page, 0);
+  await expect(card).toHaveCount(0);
+});
 
 test("the sample image draws in every style", async ({ page }) => {
   test.setTimeout(180_000);
@@ -142,6 +169,8 @@ test("Fit to target meets its target", async ({ page }) => {
   await pick(page, "hatch", await sample(page));
   const [, min, s] = /about (\d+) min (\d+) s/.exec((await page.locator(".stats").textContent()) ?? "") ?? [];
   const target = Math.round(((Number(min) * 60 + Number(s)) / 60) * 0.75 * 10) / 10;
+  await expect(fitPanel(page)).not.toHaveAttribute("open", "");
+  await fitSummary(page).click();
   await page.getByRole("spinbutton", { name: "Target", exact: true }).fill(String(target));
   await page.getByRole("combobox", { name: "Target unit" }).selectOption("minutes");
   await page.getByRole("button", { name: "Fit to target" }).click();
@@ -168,9 +197,8 @@ test("a plot lint finding's Apply clears it", async ({ page }) => {
   await expect(apply).toHaveCount(0);
 });
 
-test("a colour image's palette suggestion sets the pens and Pen use", async ({ page }) => {
-  await open(page);
-  // Four saturated stripes, drawn in the page and encoded as a PNG.
+// Four saturated stripes, drawn in the page and encoded as a PNG, as a file for setInputFiles.
+async function coloursPng(page: Page) {
   const png = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
     canvas.width = 240;
@@ -180,7 +208,12 @@ test("a colour image's palette suggestion sets the pens and Pen use", async ({ p
     const blob = await new Promise<Blob>((done) => canvas.toBlob((b) => done(b!), "image/png"));
     return Array.from(new Uint8Array(await blob.arrayBuffer()));
   });
-  await page.locator('input[type="file"][accept^="image/"]').setInputFiles({ name: "colours.png", mimeType: "image/png", buffer: Buffer.from(png) });
+  return { name: "colours.png", mimeType: "image/png", buffer: Buffer.from(png) };
+}
+
+test("a colour image's palette suggestion sets the pens and Pen use", async ({ page }) => {
+  await open(page);
+  await page.locator(".toolbar input[type=file]").setInputFiles(await coloursPng(page));
   const id = await ran(page, 0);
   const apply = page.getByRole("button", { name: /^Apply: This is a colour image\./ });
   await expect(apply).toBeVisible();
@@ -204,9 +237,11 @@ test("Optimize suggests a spacing and changes nothing until Apply", async ({ pag
   const id = await pick(page, "hatch", await sample(page));
   const spacing = page.getByRole("spinbutton", { name: /^spacing( mm)?$/i });
   const before = await spacing.inputValue();
+  await fitSummary(page).click();
   await page.getByRole("button", { name: "Optimize" }).click();
   // The search is a run of its own, which ends with the suggestion.
   const searched = await ran(page, id);
+  await expect(fitPanel(page)).toHaveAttribute("open", "");
   const found = page.locator("form.fit span");
   await expect(found).toContainText("follows the image's tones best");
   await expect(found).toContainText(/\d min to plot/);
@@ -276,6 +311,45 @@ test("Two quick clicks in Focus mode both land", async ({ page }) => {
   await ran(page, id);
   await page.locator("summary", { hasText: /^Image$/ }).click();
   await expect(page.locator(".focus-line")).toContainText("3 focus points");
+});
+
+test("Enter on the focused preview marks a focus point while Focus is on", async ({ page }) => {
+  let id = await sample(page);
+  const canvas = page.locator(".preview canvas");
+  const rings = page.locator(".focus-rings .ring");
+  const aim = () => canvasHash(page, 1 / 3, 2 / 3); // the middle third holds the canvas centre
+  const off = await aim();
+  // With Focus off Enter does nothing.
+  await canvas.focus();
+  await page.keyboard.press("Enter");
+  await page.locator("label.chip", { hasText: "Focus" }).click();
+  // With it on the canvas draws a crosshair at its centre, and says what Enter does.
+  await expect.poll(aim).not.toBe(off);
+  await expect(canvas).toHaveAttribute("aria-label", /, Enter marks a focus point at the centre$/);
+  await canvas.focus();
+  await page.keyboard.press("Enter");
+  await expect(rings).toHaveCount(1);
+  id = await ran(page, id);
+  const box = (await canvas.boundingBox())!;
+  const at = async (i: number) => [Number(await rings.nth(i).getAttribute("cx")), Number(await rings.nth(i).getAttribute("cy"))];
+  const [x, y] = await at(0);
+  expect(Math.abs(x - box.width / 2)).toBeLessThan(3);
+  expect(Math.abs(y - box.height / 2)).toBeLessThan(3);
+  // The arrow keys pan, so the next point is marked elsewhere on the page, again at the centre.
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(rings).toHaveCount(2);
+  await ran(page, id);
+  const [x1, y1] = await at(0);
+  const [x2, y2] = await at(1);
+  expect(Math.abs(x1 - (box.width / 2 - 40))).toBeLessThan(3);
+  expect(Math.abs(x2 - box.width / 2)).toBeLessThan(3);
+  expect(Math.abs(y2 - y1)).toBeLessThan(3);
+  await page.locator("summary", { hasText: /^Image$/ }).click();
+  await expect(page.locator(".focus-line")).toContainText("2 focus points");
+  // Focus off drops the hint again.
+  await page.locator("label.chip", { hasText: "Focus" }).click();
+  await expect(canvas).toHaveAttribute("aria-label", /0 fits the page$/);
 });
 
 test("Flatten paper changes the drawing", async ({ page }) => {
@@ -443,17 +517,21 @@ test("Compare swipes the previous drawing against the current one", async ({ pag
 
 test("Compare waits for a drawing, and says when there is nothing to compare with", async ({ page }) => {
   await open(page);
+  // In the page but hidden, so it does not offer a comparison of nothing.
+  const card = page.locator(".compare-pick");
   const chip = page.getByRole("checkbox", { name: "Compare", exact: true });
-  await expect(chip).toBeDisabled();
+  await expect(card).toBeAttached();
+  await expect(card).toBeHidden();
   // The test chart has no tone map, and nothing came before it.
   await page.getByRole("button", { name: "Test chart" }).click();
   const id = await ran(page, 0);
+  await expect(card).toBeVisible();
   await expect(chip).toBeEnabled();
   await page.locator("label.chip", { hasText: "Compare" }).click();
   await expect(page.getByText("Run again to compare with the previous drawing.")).toBeVisible();
   await expect(page.getByRole("slider", { name: "Swipe position" })).toHaveCount(0);
   // The next drawing has a tone map and the chart before it.
-  await page.getByRole("button", { name: "Sample image" }).click();
+  await page.getByRole("button", { name: "Sample image", exact: true }).click();
   await ran(page, id);
   const menu = page.getByRole("combobox", { name: "Compare with" });
   await expect(menu).toHaveValue("previous");
@@ -491,7 +569,7 @@ test("the test chart draws without an image", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Export SVG" })).toBeEnabled();
   // The passes patches are overdraw by design, and the next run replaces the chart.
   await expect(page.locator("ul.lint")).toContainText("drawn over");
-  await page.getByRole("button", { name: "Sample image" }).click();
+  await page.getByRole("button", { name: "Sample image", exact: true }).click();
   await ran(page, id);
 });
 
@@ -512,7 +590,7 @@ test("a machine lifted by G-code lines writes them, with long moves cut", async 
   await longest.blur();
   await expect(longest).toHaveValue("2"); // a refused value would snap back to empty
   await dialog.getByRole("button", { name: "Close" }).click();
-  await page.getByRole("button", { name: "Sample image" }).click();
+  await page.getByRole("button", { name: "Sample image", exact: true }).click();
   await ran(page, 0);
   const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "G-code", exact: true }).click()]);
   const lines = readFileSync(await file.path(), "utf8").split("\n").filter((l) => l && !l.startsWith(";"));
@@ -555,7 +633,7 @@ test("HPGL exports one file with a pen for the layer, at the resolution in Setti
   expect(small.length).toBeLessThan(text.length);
   // Kept in the browser, so a reload keeps it.
   await page.reload();
-  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sample image", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await dialog.getByRole("button", { name: "HPGL", exact: true }).click();
   await expect(units).toHaveValue("10");
@@ -564,7 +642,7 @@ test("HPGL exports one file with a pen for the layer, at the resolution in Setti
   await units.fill("2000");
   await units.blur();
   await dialog.getByRole("button", { name: "Close" }).click();
-  await page.getByRole("button", { name: "Sample image" }).click();
+  await page.getByRole("button", { name: "Sample image", exact: true }).click();
   await ran(page, 0);
   await page.getByRole("button", { name: "HPGL", exact: true }).click();
   await expect(page.getByText("plotter units per mm must be above 0 and at most 1000, not 2000")).toBeVisible();
@@ -601,7 +679,7 @@ test("a saved pen comes back from My pens after a reload, and exports as a file"
   await expect(width).toHaveValue("0.25");
   // Kept in the browser, so a reload keeps it.
   await page.reload();
-  await expect(page.getByRole("button", { name: "Sample image" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sample image", exact: true })).toBeVisible();
   await edit();
   await expect(mine.getByRole("button", { name: /^Fine red/ })).toHaveCount(1);
   const [file] = await Promise.all([page.waitForEvent("download"), mine.getByRole("button", { name: "Export" }).click()]);
@@ -634,4 +712,39 @@ test("every tour step rings its element", async ({ page }) => {
     await card.getByRole("button", { name: i === STEPS.length - 1 ? "Done" : "Next" }).click();
   }
   await expect(card).toBeHidden();
+});
+
+test("the tour gives focus back when it closes", async ({ page }) => {
+  await open(page, { tour: true }); // a first visit opens it with nothing focused
+  const card = page.locator("dialog.tour");
+  const tour = page.getByRole("button", { name: "Tour", exact: true });
+  await expect(card).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(card).toBeHidden();
+  await expect(tour).toBeFocused();
+  // Opened with another element focused, the X and Done go back to it. dispatchEvent leaves the focus where it was.
+  const style = styleSelect(page);
+  for (const by of ["X", "Done"]) {
+    await style.focus();
+    await tour.dispatchEvent("click");
+    await expect(card).toBeVisible();
+    if (by === "X") await card.getByRole("button", { name: "Close the tour" }).click();
+    else {
+      for (let i = 1; i < STEPS.length; i++) await card.getByRole("button", { name: "Next" }).click();
+      await card.getByRole("button", { name: "Done" }).click();
+    }
+    await expect(card).toBeHidden();
+    await expect(style, by).toBeFocused();
+  }
+  // The focused element gone by the close: the start card's button leaves with the image it opens.
+  const start = page.getByRole("button", { name: "Use the sample image" });
+  await start.focus();
+  await tour.dispatchEvent("click");
+  await expect(card).toBeVisible();
+  await start.dispatchEvent("click");
+  await ran(page, 0);
+  await expect(start).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(card).toBeHidden();
+  await expect(tour).toBeFocused();
 });
