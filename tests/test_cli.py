@@ -656,11 +656,11 @@ def test_explicit_files_are_a_batch_and_every_option_applies_to_each(tmp_path):
     assert len(r.stdout.splitlines()) == 2
 
 
-def test_a_folder_with_one_image_is_a_single_run(tmp_path):
+def test_a_folder_with_one_image_is_still_a_batch(tmp_path):
     photos = pictures(tmp_path / "photos", "only.png")
-    r = run("run", "grid", str(photos), "--out", str(tmp_path / "o.svg"), *FAST)
-    assert r.exit_code == 0 and (tmp_path / "o.svg").is_file(), r.output
-    assert r.stdout.startswith("paths: ") and "->" not in r.stdout
+    r = run("run", "grid", str(photos), "--out", str(tmp_path / "o"), *FAST)
+    assert r.exit_code == 0 and (tmp_path / "o" / "only.svg").is_file(), r.output
+    assert "->" in r.stdout
     empty = tmp_path / "empty"
     empty.mkdir()
     r = run("run", "grid", str(empty), "--out", str(tmp_path / "e.svg"), *FAST)

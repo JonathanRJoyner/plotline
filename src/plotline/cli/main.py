@@ -565,7 +565,7 @@ def run(
     or a folder of them. The tone match follows the stats, and the plot lint's findings follow on
     stderr, each with the --set options that fix it where a setting does.
 
-    With more than one image in all, a batch runs: --out and the other options that name an
+    With more than one image, or a folder, a batch runs: --out and the other options that name an
     output file name folders, which get one file named after each image, --gcode gets a subfolder
     for each, and every other option applies to every image. A line is printed for each image,
     and the exit status is 1 if any failed."""
@@ -669,7 +669,8 @@ def run(
         return strict and any(f["severity"] != "info" for f in findings)
 
     files = expand_images(images)
-    if len(files) == 1:
+    # A folder always runs a batch, so --out names a folder however many images it holds.
+    if len(files) == 1 and not Path(images[0]).is_dir():
         if one(files[0], out, json_out, preview, save_preset, gcode, hpgl, False):
             sys.exit(1)
         return
