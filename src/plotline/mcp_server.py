@@ -436,16 +436,18 @@ def build_server(session: Session | None = None) -> MCPServer:
         look: str | None = None,
     ) -> list[str | Image]:
         """Search the style's density setting for the value whose drawing's tones follow the
-        image most closely, by the tone match's error, in up to nine runs: the current value, then
-        half-octave steps from a quarter to four times it. A trial does not count when it plots for
-        over twice the current value's time or an hour, whichever is more, or has a plot lint
-        warning or error the current value does not. Given metric and target, as for fit, a trial
-        over the target does not count either, and a minutes target replaces the time limit.
-        style, look and settings apply first, as in run.
+        image most closely for its plot time, in up to nine runs: the current value, then
+        half-octave steps from a quarter to four times it. The suggestion is the quickest trial
+        whose tone match error is within a tenth of the lowest. A trial does not count when it
+        plots for over twice the current value's time or an hour, whichever is more, or has a
+        plot lint warning or error the current value does not. Given metric and target, as for
+        fit, a trial over the target does not count either, and a minutes target replaces the
+        time limit. style, look and settings apply first, as in run.
         Nothing else changes: returns {stage, key, value, error, minutes, current, current_error,
-        current_minutes, budget, trials, reason, patch} as JSON, with plot times in minutes, or
-        null when no trial stayed within the target, then the
-        stats and a preview of the current settings as run does. Apply the patch with
+        current_minutes, budget, limit_minutes, beyond, trials, reason, patch} as JSON, with plot
+        times in minutes and beyond the trial left out for its time that follows the tones more
+        than a tenth more closely, if any, or null when no trial stayed within the target, then
+        the stats and a preview of the current settings as run does. Apply the patch with
         run(settings=patch["settings"]) if it suits; fidelity to the image is not always the
         aim."""
         with _errors():
