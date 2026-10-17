@@ -21,8 +21,8 @@ use serde_json::Value;
 use crate::models::{ModelError, ModelRuntime, TILE};
 use crate::settings::{defaults_for, schema_for, validate, SettingsError};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
-use crate::stages::tone::{check_image, crop_to_aspect, resize};
-use crate::types::{Canvas, Fit, Image, ToneMap};
+use crate::stages::tone::{check_image, crop_to_source, resize};
+use crate::types::{Canvas, Image, ToneMap};
 
 // Each help text stays on one line: schemars keeps the line breaks of a doc comment.
 /// Settings for the model stage.
@@ -127,9 +127,9 @@ impl Stage for ModelStage {
     }
 }
 
-/// Colour channel `channel` of `image`, cropped to the drawing's aspect for `fill` and resized to
-/// `resolution` on the long side, as the tone stage does for luminance. Returns the plane and its
-/// width and height.
+/// Colour channel `channel` of `image`, cut to the canvas's crop and for `fill` to the drawing's
+/// aspect, and resized to `resolution` on the long side, as the tone stage does for luminance.
+/// Returns the plane and its width and height.
 fn plane(
     image: &Image,
     canvas: &Canvas,
@@ -138,12 +138,7 @@ fn plane(
 ) -> (Vec<f32>, usize, usize) {
     let (w, h) = (image.width as usize, image.height as usize);
     let plane: Vec<f32> = image.rgb.iter().skip(channel).step_by(3).copied().collect();
-    let (plane, w, h) = if canvas.fit == Fit::Fill {
-        let [_, _, dw, dh] = canvas.drawing_rect();
-        crop_to_aspect(&plane, w, h, dw / dh)
-    } else {
-        (plane, w, h)
-    };
+    let (plane, w, h) = crop_to_source(&plane, w, h, canvas);
     resize(&plane, w, h, resolution)
 }
 
@@ -262,6 +257,7 @@ mod tests {
     use crate::style::Style;
     use crate::synthetic::{gradient, still_life};
     use crate::test_util::{black, drain};
+    use crate::types::Fit;
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::atomic::AtomicBool;
