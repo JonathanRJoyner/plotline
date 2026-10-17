@@ -679,7 +679,7 @@ test("a model of your own stays after a reload, and Remove forgets it", async ({
   await expect(own).toContainText(name);
   await tab(page, "Get models").click();
   const row = picker(page).locator("li", { hasText: name });
-  await row.getByRole("button", { name: "Remove" }).click();
+  await row.getByRole("button", { name: `Remove ${name}`, exact: true }).click();
   await expect(row).toHaveCount(0);
   await tab(page, "Styles").click();
   await expect(card(page, "learned")).toContainText("needs a model");
@@ -702,9 +702,15 @@ test("Get models shows the licence before any download", async ({ page }) => {
   await card(page, "learned").click();
   await expect(tab(page, "Get models")).toHaveAttribute("aria-current", "true");
   const dialog = picker(page);
-  await expect(dialog).toContainText("Edges (TEED)");
-  await expect(dialog).toContainText("MIT");
-  await dialog.getByRole("button", { name: "Download" }).click();
+  // The listed model's card, and its button, named for the model.
+  const teed = dialog.locator(".catalogue li", { hasText: "Edges (TEED)" });
+  const download = teed.getByRole("button", { name: "Download Edges (TEED)", exact: true });
+  await expect(teed).toContainText("MIT");
+  // Cancel fetches nothing and puts the focus back on the tab.
+  await download.click();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(tab(page, "Get models")).toBeFocused();
+  await download.click();
   for (const text of ["Copyright (c) 2022 Xavier Soria Poma", "BIPED", "0.3 MB", "Provided as is, without warranty of any kind."]) await expect(dialog).toContainText(text);
   await expect(dialog.getByRole("link", { name: "https://github.com/xavysp/TEED" })).toBeVisible();
   await expect(dialog.getByRole("link", { name: "https://arxiv.org/abs/2308.06468" })).toBeVisible();
@@ -714,10 +720,11 @@ test("Get models shows the licence before any download", async ({ page }) => {
   await expect(accept).toBeEnabled();
   expect(requests).toEqual([]);
   await accept.click();
-  await expect(dialog.locator(".error")).toContainText("wrong size");
+  await expect(tab(page, "Get models")).toBeFocused();
+  await expect(teed.locator(".error")).toContainText("wrong size");
   expect(requests).toHaveLength(1);
   // Accepted once, the next download asks no more.
-  await dialog.getByRole("button", { name: "Download" }).click();
+  await download.click();
   await expect.poll(() => requests.length).toBe(2);
   await expect(dialog).not.toContainText("Provided as is");
 });

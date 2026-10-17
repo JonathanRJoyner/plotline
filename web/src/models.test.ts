@@ -170,10 +170,19 @@ test("fetchModel keeps a download only once the engine has taken it", async () =
 
 test("loadModel keeps a file of your own under the id the engine gives it, and nothing it refuses", async () => {
   const { files } = stubStorage();
-  await expect(loadModel(copy(), async () => { throw new Error("not a model"); })).rejects.toThrow("not a model");
+  await expect(loadModel(new Blob([copy()]), async () => { throw new Error("not a model"); })).rejects.toThrow("not a model");
   expect(files.size).toBe(0);
   const call = vi.fn(async () => reply({ id: "file-aaaaaaaaaaaa", label: "file-aaaaaaaaaaaa", overlap: 64, entry: null }));
-  await expect(loadModel(copy(), call)).resolves.toMatchObject({ id: "file-aaaaaaaaaaaa" });
+  await expect(loadModel(new Blob([copy()]), call)).resolves.toMatchObject({ id: "file-aaaaaaaaaaaa" });
   expect(call).toHaveBeenCalledWith("addModel", [null, expect.any(Uint8Array)]);
   expect([...files.keys()]).toEqual(["/kept/file-aaaaaaaaaaaa"]);
+});
+
+test("loadModel refuses a file over 200 MB without reading it or asking the engine", async () => {
+  const read = vi.fn();
+  const call = vi.fn();
+  const big = { size: 209_715_201, arrayBuffer: read } as unknown as Blob;
+  await expect(loadModel(big, call)).rejects.toThrow("the model file is 209715201 bytes, over the 200 MB limit");
+  expect(read).not.toHaveBeenCalled();
+  expect(call).not.toHaveBeenCalled();
 });

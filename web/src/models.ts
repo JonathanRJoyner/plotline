@@ -8,6 +8,7 @@ import type { CatalogueEntry, ModelInfo } from "./protocol";
 export type Call = (method: string, args?: unknown[]) => Promise<{ value: unknown }>;
 
 const CACHE = "plotline-models";
+const MAX_BYTES = 209_715_200; // the core's limit, MAX_BYTES in crates/core/src/models/mod.rs
 const KEPT = "/kept/"; // Cache Storage wants a URL for a key; the origin is the page's own and never fetched
 const ACCEPTED = "plotline.licence.";
 
@@ -117,8 +118,13 @@ export async function fetchModel(entry: CatalogueEntry, call: Call, onProgress?:
   await keep(entry.id, bytes);
 }
 
-/** Add a model file of the user's own to the engine, and keep it under the id the engine gives it. */
-export async function loadModel(bytes: ArrayBuffer, call: Call): Promise<ModelInfo> {
+/**
+ * Add a model file of the user's own to the engine, and keep it under the id the engine gives it.
+ * A file over the core's limit is refused, with the core's words, before it is read into memory.
+ */
+export async function loadModel(file: Blob, call: Call): Promise<ModelInfo> {
+  if (file.size > MAX_BYTES) throw new Error(`the model file is ${file.size} bytes, over the 200 MB limit`);
+  const bytes = await file.arrayBuffer();
   const info = (await call("addModel", [null, new Uint8Array(bytes)])).value as ModelInfo;
   await keep(info.id, bytes);
   return info;

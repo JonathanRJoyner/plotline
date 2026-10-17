@@ -162,7 +162,7 @@ export function StylePicker({ opens, styles, style, canvas, paper, hasImage, thu
   const loadOwn = async (file: File) => {
     report("");
     try {
-      await loadModel(await file.arrayBuffer(), send);
+      await loadModel(file, send);
       refresh();
       openTab("styles"); // where the model now shows
     } catch (e) {
@@ -177,7 +177,10 @@ export function StylePicker({ opens, styles, style, canvas, paper, hasImage, thu
   const listed = new Set(catalogue.map((e) => e.id));
   // Models of your own, and kept files the engine did not take, which Remove still forgets.
   const others = [...new Set([...models.filter((m) => !m.entry).map((m) => m.id), ...kept.filter((id) => !listed.has(id))])];
-  const removeButton = (id: string) => <button type="button" onClick={() => remove(id)}><Trash2 /> Remove</button>;
+  const labelOf = (id: string) => models.find((m) => m.id === id)?.label ?? id;
+  const actionOf = (id: string) => (id in progress ? `Downloading ${Math.round(progress[id] * 100)}%` : "Download");
+  // Each button names its model, so a list of them reads as more than "Remove, Remove".
+  const removeButton = (id: string, label: string) => <button type="button" aria-label={`Remove ${label}`} onClick={() => remove(id)}><Trash2 /> Remove</button>;
   const panels: Record<Tab, JSX.Element> = {
     "styles": (
       <div class="picker" onScroll={hide}>
@@ -224,8 +227,10 @@ export function StylePicker({ opens, styles, style, canvas, paper, hasImage, thu
       <div class="fields">
         {licence ? (
           <Licence
-            key={licence.id} entry={licence} onCancel={() => setLicence(null)}
-            onAccept={() => { setLicence(null); void accept(licence); void get(licence); }}
+            key={licence.id} entry={licence}
+            // The screen's buttons go with it, so the focus goes to the tab's own button.
+            onCancel={() => { setLicence(null); openTab("get-models"); }}
+            onAccept={() => { setLicence(null); openTab("get-models"); void accept(licence); void get(licence); }}
           />
         ) : (
           <>
@@ -236,9 +241,9 @@ export function StylePicker({ opens, styles, style, canvas, paper, hasImage, thu
                   <span class="name">{e.label}<span class="note">{e.licence}</span></span>
                   <span class="description">{e.description}</span>
                   <span class="help">{mb(e.bytes)}</span>
-                  {loaded.has(e.id) || kept.includes(e.id) ? removeButton(e.id) : (
-                    <button type="button" disabled={e.id in progress} onClick={async () => ((await accepted(e)) ? get(e) : setLicence(e))}>
-                      <Download /> {e.id in progress ? `Downloading ${Math.round(progress[e.id] * 100)}%` : "Download"}
+                  {loaded.has(e.id) || kept.includes(e.id) ? removeButton(e.id, e.label) : (
+                    <button type="button" aria-label={`${actionOf(e.id)} ${e.label}`} disabled={e.id in progress} onClick={async () => ((await accepted(e)) ? get(e) : setLicence(e))}>
+                      <Download /> {actionOf(e.id)}
                     </button>
                   )}
                   {kept.includes(e.id) && !loaded.has(e.id) && <p class="help">Kept in this browser, but it did not load.</p>}
@@ -252,9 +257,9 @@ export function StylePicker({ opens, styles, style, canvas, paper, hasImage, thu
                 <ul class="kept">
                   {others.map((id) => (
                     <li key={id}>
-                      {models.find((m) => m.id === id)?.label ?? id}
+                      {labelOf(id)}
                       {!loaded.has(id) && <span class="note">not loaded</span>}
-                      {removeButton(id)}
+                      {removeButton(id, labelOf(id))}
                       {failed[id] && <p class="error">{failed[id]}</p>}
                     </li>
                   ))}
