@@ -1,0 +1,1 @@
+- **Optimize:** suggests the quickest density whose tone error is within a tenth of the lowest it finds, rather than the lowest alone, which on flat stretches bought differences too small to see with up to twice the plot time. When the time limit left out a density that follows the tones clearly more closely, the suggestion names it with its plot time and says how to allow it.

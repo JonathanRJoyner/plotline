@@ -23,15 +23,18 @@ export type FitResult = {
 };
 /** How the drawing's tones follow its tone map, in the shape of the engine's `ToneMatch`. */
 export type ToneMatch = { error: number; ssim: number; floor: number; reach: number };
+/** One run of an optimize search, in the shape of the engine's `Trial`. */
+export type Trial = {
+  value: number; error: number | null; minutes: number | null; metric: number | null;
+  over: boolean; slow: boolean; warnings: string[]; failed: string | null;
+};
 /** What an optimize search found, in the shape of the engine's `Optimum`; nothing is applied. */
 export type Optimum = {
   stage: string; key: string; value: unknown; error: number; minutes: number;
   current: unknown; current_error: number | null; current_minutes: number;
   budget: { metric: string; target: number } | null;
-  trials: {
-    value: number; error: number | null; minutes: number | null; metric: number | null;
-    over: boolean; slow: boolean; warnings: string[]; failed: string | null;
-  }[];
+  limit_minutes: number | null; beyond: Trial | null;
+  trials: Trial[];
   reason: string; patch: Finding["patch"];
 };
 /** `fit` is set when a fit ends done, which the page applies with `update`, and `optimum` when a search does, which it only offers. */

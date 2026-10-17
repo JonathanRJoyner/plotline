@@ -284,8 +284,11 @@ def test_optimize_suggests_and_applies_nothing():
     found = handle.optimum
     assert found is not None and handle.fit is None
     assert (found["stage"], found["key"], found["current"]) == ("hatch", "spacing_mm", 1.0)
-    assert len(found["trials"]) == 9 and found["error"] <= found["current_error"]
+    # The quickest within a tenth of the lowest tone error, which is at most the current one's.
+    assert len(found["trials"]) == 9 and found["error"] <= 1.1 * found["current_error"]
     assert found["current_minutes"] == s.stats().estimated_seconds / 60
+    assert found["limit_minutes"] == max(2 * found["current_minutes"], 60)
+    assert found["beyond"] is None or found["beyond"]["slow"]
     assert "min to plot" in found["reason"]
     assert s.settings == before and s.result is handle.result
     if found["patch"] is not None:

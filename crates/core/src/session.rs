@@ -1307,7 +1307,7 @@ mod tests {
         drain(&mut s);
         let drawn = s.drawing().unwrap();
         assert_eq!(found.current, json!(1.0));
-        assert!(found.error <= found.current_error.unwrap());
+        assert!(found.error <= (1.0 + crate::optimize::CLOSE) * found.current_error.unwrap());
         assert_eq!(
             found.current_minutes,
             s.stats().unwrap().estimated_seconds / 60.0
