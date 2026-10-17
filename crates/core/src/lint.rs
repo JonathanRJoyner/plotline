@@ -114,7 +114,7 @@ pub fn measure(d: &Drawing) -> Measure {
     let [ax, ay, aw, ah] = d.canvas.drawing_rect();
     let thinnest = d.layers.iter().map(|l| l.pen.width_mm).reduce(f64::min);
     let cell = coverage::cell_size(thinnest.unwrap_or(0.3), page);
-    let mut grid = Coverage::new(page, cell);
+    let mut grid = Coverage::jittered(page, cell);
     let mut union = vec![false; grid.count.len()];
     let (mut off_page, mut off_area) = (0, 0);
     let mut laid = 0.0;
@@ -1438,7 +1438,39 @@ mod tests {
         let mut run = s.start().unwrap();
         while run.next_frame().is_some() {}
         let all = s.lint().unwrap();
-        assert_eq!(find(&all, "dark").unwrap().value, 0.015042735042735043);
+        assert_eq!(find(&all, "dark").unwrap().value, 0.017834757834757835);
+    }
+
+    #[test]
+    fn hatch_at_45_degrees_scores_as_steadily_as_off_the_raster() {
+        // Pale line art hatched by a 0.2 mm pen, on cells of 0.1 mm. Lines at exactly 45 degrees
+        // with a spacing near a whole number of cell diagonals all snapped the same way under
+        // centre sampling, so their tone error jumped between neighbouring spacings: by 131 %
+        // of the mean here, against 92 % at 44.7 degrees. Jittered, it is 11 % against 15 %.
+        let mut s = Session::new(256 << 20);
+        s.set_image(crate::synthetic::strokes(200, 200, 0.6, 1.0));
+        s.set_canvas(Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap());
+        s.set_pens(vec![Pen::new("Black 0.2", 0.2, "#000000").unwrap()])
+            .unwrap();
+        s.set_style("hatch").unwrap();
+        s.update("tone", &json!({"resolution": 200})).unwrap();
+        let mut spread = |angle: f64| {
+            let errors: Vec<f64> = (0..=12)
+                .map(|k| {
+                    let spacing = 0.55 + 0.0025 * f64::from(k);
+                    let hatch = json!({"spacing_mm": spacing, "angle_deg": angle, "levels": 3, "threshold": 0.12});
+                    s.update("hatch", &hatch).unwrap();
+                    draw(&mut s);
+                    s.tone_match().unwrap().error
+                })
+                .collect();
+            let mean = errors.iter().sum::<f64>() / errors.len() as f64;
+            let (lo, hi) =
+                (errors.iter()).fold((f64::INFINITY, 0.0), |(l, h), &e| (e.min(l), e.max(h)));
+            (hi - lo) / mean
+        };
+        let (on, off) = (spread(45.0), spread(44.7));
+        assert!(on <= off, "{on} at 45 degrees against {off} at 44.7");
     }
 
     /// Run `s` to the end.

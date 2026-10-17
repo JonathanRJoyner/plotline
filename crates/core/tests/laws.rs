@@ -19,6 +19,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use plotline_core::cache::StageCache;
+use plotline_core::coverage::{cell_size, Coverage};
 use plotline_core::export::hpgl::MAX_UNITS_PER_MM;
 use plotline_core::fit::{places_points, Density, MAX_TRIALS, TOLERANCE};
 use plotline_core::lint::Severity;
@@ -1503,6 +1504,36 @@ fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero(
         }
         // Nothing is collinear, so a tolerance of 0 drops nothing.
         prop_assert!(!no_collinear || out == line, "{out:?} lost vertices");
+        Ok(())
+    });
+}
+
+#[test]
+fn a_jittered_raster_covers_lines_at_their_width_at_any_angle_and_place() {
+    // Eight parallel lines 20 mm long and 2 mm apart, at an angle on the raster's lattice half the
+    // time. Centre sampling snaps every such line's width to whole cells the same way, by up to
+    // 84 % of the area for the thinnest pen; jittered sampling's noise stayed within 4 % over
+    // 10,000 cases.
+    let angle = prop_oneof![select(vec![0.0, 45.0, 90.0, 135.0]), 0.0..180.0f64];
+    let case = (angle, 0.1..1.0f64, 0.0..1.0f64, 0.0..1.0f64);
+    check("jittered raster", 256, case, |(angle, pen, x, y)| {
+        let rect = [0.0, 0.0, 40.0, 40.0];
+        let cell = cell_size(pen, rect);
+        let (ux, uy) = (angle.to_radians().cos(), angle.to_radians().sin());
+        let mut lines = Paths::new();
+        for k in 0..8 {
+            let o = 2.0 * (f64::from(k) - 3.5);
+            let (cx, cy) = (20.0 + x - o * uy, 20.0 + y + o * ux);
+            lines.push(&[
+                [cx - 10.0 * ux, cy - 10.0 * uy],
+                [cx + 10.0 * ux, cy + 10.0 * uy],
+            ]);
+        }
+        let mut c = Coverage::jittered(rect, cell);
+        c.stamp(&lines, pen);
+        let inked = c.count.iter().filter(|&&n| n > 0).count() as f64 * cell * cell;
+        let area = 8.0 * (20.0 * pen + std::f64::consts::PI * pen * pen / 4.0);
+        prop_assert!((inked / area - 1.0).abs() < 0.06, "{inked} mm2 of {area}");
         Ok(())
     });
 }
