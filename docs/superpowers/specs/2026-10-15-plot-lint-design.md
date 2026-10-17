@@ -56,7 +56,7 @@ Overdraw counts one pen against itself, because pens that share a drawing overla
 
 | `code` | Severity | When | Patch |
 |---|---|---|---|
-| `empty` | warning | no paths, or the laid ink is under 0.1 % of the drawing area | none for a blank tone map, a minimum length above 0, Pen use by colour or a held tone response; with no paths, a threshold setting lowered to the ink of the map's darkest pixels where enough of them lie to draw; with paths, the density setting one step denser (doubled or halved) where the marks' pixels have room; else none (amended on 2026-10-16) |
+| `empty` | warning | no paths, or the laid ink is under 0.1 % of the drawing area | none for a blank tone map, a minimum length above 0, Pen use by colour or a held tone response; with no paths, a threshold setting lowered to the ink of the map's darkest pixels where enough of them lie to draw; with paths, the density setting one step denser (doubled or halved) where the marks' pixels have room, and for truchet only where the closer spacing nests more arcs in a tile than the current one does; else none (amended on 2026-10-16) |
 | `off_page` | error | a vertex lies outside the page | none |
 | `off_machine` | error | a machine is set and the page does not fit its drawable area | the page turned, when that fits |
 | `off_area` | warning | a vertex lies past the margin by more than half its pen width | none |
