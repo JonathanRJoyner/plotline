@@ -888,6 +888,18 @@ fn metrics(s: &Session, run: &Run) -> [f64; 4] {
     ]
 }
 
+/// What the density setting `d` of `style` drives, from the `x-density-of` mark on its schema
+/// property: `points`, `lines` or `length`. Unmarked, a style that places points is judged on its
+/// points and any other on its length.
+fn drives(style: &Style, d: &Density) -> String {
+    let stage = style.stages.iter().find(|s| s.name() == d.stage).unwrap();
+    match stage.schema()["properties"][&d.key]["x-density-of"].as_str() {
+        Some(mark) => mark.to_string(),
+        None if places_points(style) => "points".to_string(),
+        None => "length".to_string(),
+    }
+}
+
 #[test]
 fn a_density_setting_moves_its_metrics_one_way() {
     let strategy = (case(dense_styles()), 0.0..1.0f64, 0.0..1.0f64);
@@ -920,33 +932,45 @@ fn a_density_setting_moves_its_metrics_one_way() {
         let (Some(a), Some(b)) = (measure(lo)?, measure(hi)?) else {
             return Ok(());
         };
-        // The pen-down length and the points of the denser drawing are at least those of the
-        // sparser one, give or take 1 percent. The length may also fall short by one of the
-        // sparser drawing's average paths: lines land on whole steps, so where they fall moves the
-        // length by about a line (waves 3.8 percent shorter at a 6.3 mm spacing than at 7.7 mm,
-        // with six lines), and a line ends within a tracing step of the edge (flow's step is half
-        // its minimum spacing). The path count is left out, because it follows where lines break,
-        // such as where a pen's share of the image runs out, and the time, because its pen-up
-        // travel follows the path order, as much as the density. A style that places points is
-        // judged on its points alone: its length follows how the renderer turns points into
-        // marks, since a dot no wider than the pen is one vertex with no length, and points
-        // crowding a small dark area sit on the pixel lattice, where a mesh with holes in it has
-        // longer edges than a fuller one.
+        // The denser drawing has at least as much of one measure as the sparser one, give or
+        // take 1 percent. The setting's `x-density-of` mark in its schema says which measure it
+        // drives: `points` (the points placed), `lines` (the path count) or `length` (the
+        // pen-down length). With no mark, a style that places points is judged on its points
+        // and any other on its length. A style that places points is not judged on length by
+        // default: its length follows how the renderer turns points into marks, since a dot no
+        // wider than the pen is one vertex with no length, and points crowding a small dark
+        // area sit on the pixel lattice, where a mesh with holes in it has longer edges than a
+        // fuller one. The length may also fall short by one of the sparser drawing's average
+        // paths: lines land on whole steps, so where they fall moves the length by about a line
+        // (waves 3.8 percent shorter at a 6.3 mm spacing than at 7.7 mm, with six lines), and a
+        // line ends within a tracing step of the edge (flow's step is half its minimum
+        // spacing). A style whose spacing sets how many lines there are, but not how long they
+        // are, marks `lines`, because its length does not follow the spacing: in waves and
+        // spiral the ripple swing is a share of the spacing, so closer lines ripple less and
+        // the total falls (waves with a 0.2 mm wavelength drew 0.99 m at one spacing and 0.53 m
+        // at a closer one, with 4 and 18 paths), and in mosaic lines join into one path across
+        // a gap of twice the spacing, so a sparser spacing joins with longer connectors. The
+        // path count is otherwise left out, because it follows where lines break, such as where
+        // a pen's share of the image runs out, and so is the time, because its pen-up travel
+        // follows the path order, as much as the density.
         let (sparse, dense) = if d.direct { (a, b) } else { (b, a) };
-        let slack = [0.0, 0.0, sparse[2] / sparse[1].max(1.0), 0.0];
-        for (i, name) in [(2, "metres"), (3, "dots")] {
-            if i == 2 && places_points(&style) {
-                continue;
+        let (i, name, floor) = match drives(&style, &d).as_str() {
+            "points" => (3, "dots", 0.99 * sparse[3]),
+            "lines" => (1, "paths", 0.99 * sparse[1]),
+            "length" => {
+                let slack = sparse[2] / sparse[1].max(1.0);
+                (2, "metres", (0.99 * sparse[2]).min(sparse[2] - slack))
             }
-            prop_assert!(
-                dense[i] >= (0.99 * sparse[i]).min(sparse[i] - slack[i]),
-                "{}.{} {lo} gives {} {name}, {hi} gives {}",
-                d.stage,
-                d.key,
-                a[i],
-                b[i]
-            );
-        }
+            other => panic!("{}.{} has x-density-of {other:?}", d.stage, d.key),
+        };
+        prop_assert!(
+            dense[i] >= floor,
+            "{}.{} {lo} gives {} {name}, {hi} gives {}",
+            d.stage,
+            d.key,
+            a[i],
+            b[i]
+        );
         Ok(())
     });
 }
