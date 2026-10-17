@@ -1273,7 +1273,12 @@ fn a_test_chart_is_made_on_the_page_or_refused_with_a_message() {
 fn focus_points_keep_the_ink_within_their_radius() {
     // Every tone-map pixel within `focus_mm` of a focus point has the ink it has without focus.
     let points = prop::collection::vec(prop::array::uniform2(0.0..=1.0f64), 1..=3);
-    check("focus", 12, (case(all_styles()), points), |(c, points)| {
+    // Focus points are a tone setting, so a style that makes its own tone map has none.
+    let toned = (list_styles().iter())
+        .filter(|s| s.stage_index("tone").is_some())
+        .map(|s| s.name.clone())
+        .collect();
+    check("focus", 12, (case(toned), points), |(c, points)| {
         let drawn = |focus: Value| -> Result<Option<Arc<Drawing>>, TestCaseError> {
             let mut s = c.session();
             s.update("tone", &json!({ "focus": focus })).unwrap();
@@ -1619,11 +1624,17 @@ fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_gri
     .to_vec();
     for mode in &modes {
         let mut s = Session::new(1 << 30);
+        s.set_model_runtime(Arc::new(StandIn::default()));
+        s.add_model(None, STANDIN_BYTES).unwrap();
         s.set_image(scene(300, 225));
         s.set_pens(pens.clone()).unwrap();
         for style in all_styles() {
             s.set_style(&style).unwrap();
             s.update("split", &json!({ "mode": mode })).unwrap();
+            if s.settings().get("model").is_some() {
+                s.update("model", &json!({"model": file_id(STANDIN_BYTES)}))
+                    .unwrap();
+            }
             for &(stage, key, cap) in SPEED_CAPS {
                 let now = &s.settings()[stage][key];
                 if now.as_f64().is_some_and(|v| v > cap) {
@@ -1640,6 +1651,11 @@ fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_gri
             let d = s.drawing().unwrap();
             let paths: usize = d.layers.iter().map(|l| l.paths.len()).sum();
             assert!(paths > 0, "{style} in {mode} draws nothing");
+            // The style grid leaves out a style that needs a downloaded model (`thumbs` in
+            // web/src/protocol.ts), so it has no cell to judge.
+            if s.settings().get("model").is_some() {
+                continue;
+            }
             let png = render_png_shrunk(&d, GRID_PX, s.paper(), GRID_SHRINK).unwrap();
             let picture = image::load_from_memory(&png).unwrap().to_luma8();
             let height = CELL_PX * picture.height() / picture.width();
