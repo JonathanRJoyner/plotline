@@ -157,7 +157,7 @@ A download goes through the same steps in every front end:
 2. Wait for the user to accept. Acceptance is kept per model id and per hash of the licence, the attribution and the training note, so a change to any of them asks again.
 3. Fetch the file from the catalogue URL.
 4. Check `bytes` and `sha256`. On a mismatch, discard the file and report a plain error.
-5. Keep the file, then load it into the session's store.
+5. Load the file into the session's store, and keep it only once the store has taken it. The command line, which holds no session while it downloads, keeps a file whose size and hash match and loads it when a run needs it.
 
 A model file of your own skips steps 1 to 4. The front end reads the file and loads it under its `file-` id. It never leaves the machine.
 
