@@ -9,6 +9,7 @@ import { Engine } from "./engine";
 import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, ResultEvent } from "./events";
 import { ACCEPT, download, imageFile } from "./files";
 import { History, setupOf } from "./history";
+import { loadLibrary, saveLibrary } from "./library";
 import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, StylesDialog, SuggestionsPanel, type Thumb } from "./panels";
 import { Preview } from "./preview";
 import type { Patch, State } from "./protocol";
@@ -336,6 +337,7 @@ export function App() {
   const [hpglUnits, setHpglUnits] = useState(savedHpglUnits);
   const [settingsOpens, setSettingsOpens] = useState(0);
   const [pensOpens, setPensOpens] = useState(0);
+  const [library, setLibrary] = useState(loadLibrary); // My pens, kept in this browser
   const [dismissed, setDismissed] = useState(new Set<string>()); // suggestion kinds hidden for this image
   const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
   const unsent = useRef<State["settings"]>({});
@@ -375,6 +377,8 @@ export function App() {
   }
 
   useEffect(() => {
+    // Before the setup loads, so the first image is measured with it; its state is not taken here.
+    engine.call("setPenLibrary", [library]).then(() => {}, () => {});
     engine.call<BankPen[]>("listPens").then((r) => setBank(r.value), () => {});
     engine.call<Ink[]>("listInks").then((r) => setInks(r.value), () => {});
     engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
@@ -649,6 +653,7 @@ export function App() {
       />
       <PensDialog
         opens={pensOpens} pens={state.pens} bank={bank} inks={inks} error={errors.pens} onChange={(p) => call("setPens", [p], "pens")}
+        library={library} onLibrary={(l) => { setLibrary(l); saveLibrary(l); void call("setPenLibrary", [l], "pens"); }}
       />
       <StylesDialog
         opens={stylesOpens} styles={styles} style={state.style} canvas={state.canvas} paper={state.paper} thumbs={thumbs}

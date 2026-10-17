@@ -871,6 +871,24 @@ test("a saved pen comes back from My pens after a reload, and exports as a file"
   expect(saved.pens[0]).toMatchObject({ name: "Fine red", width_mm: 0.25 });
 });
 
+test("pens saved under My pens choose a colour image's palette, and a note names an ink to add", async ({ page }) => {
+  const mine = [{ name: "Lemon fine", width_mm: 0.3, color: "#f5c400" }, { name: "Sky fine", width_mm: 0.3, color: "#1d4fb8" }];
+  await page.addInitScript((pens) => localStorage.setItem("plotline.pens", JSON.stringify({ format: "plotline-pens", version: 1, pens })), mine);
+  await open(page);
+  await page.locator(".toolbar input[type=file]").setInputFiles(await coloursPng(page));
+  const id = await ran(page, 0);
+  await expect(page.getByText(/^Pens you don't have would draw its colours closer: with an? \w+ pen/)).toBeVisible();
+  const apply = page.getByRole("button", { name: /^Apply: This is a colour image\. Your pens / });
+  await expect(apply).toBeVisible();
+  await apply.click();
+  await ran(page, id);
+  // Only the saved pens, each of them, as the image's yellow and blue need both.
+  const names = page.locator(".pen .name");
+  await expect.poll(async () => (await names.allTextContents()).sort()).toEqual(mine.map((p) => p.name).sort());
+  await expect(page.getByRole("combobox", { name: "Pen use" })).toHaveValue("by_colour");
+  await expect(apply).toHaveCount(0);
+});
+
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.
 const STEPS = [...readFileSync(new URL("../src/tour.tsx", import.meta.url), "utf8").matchAll(/\{ (?:target: "([^"]+)", )?title: "([^"]+)"/g)]
   .map(([, target, title]) => ({ target, title }));

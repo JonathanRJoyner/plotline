@@ -25,6 +25,7 @@ use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
 use plotline_core::optimize::{LONGEST, SLOWER, TRIALS};
+use plotline_core::pens::INKS;
 use plotline_core::preview::{render_png_shrunk, render_rgba};
 use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
@@ -779,6 +780,61 @@ fn an_applied_suggestion_goes_away() {
         }
         Ok(())
     });
+}
+
+/// One to six library pens, each in a listed ink's colour or in any colour.
+fn library() -> impl Strategy<Value = Vec<Pen>> {
+    let colour = prop_oneof![
+        select(INKS.to_vec()).prop_map(|(_, hex)| hex.to_string()),
+        any::<[u8; 3]>().prop_map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}")),
+    ];
+    prop::collection::vec((0.1..2.0f64, colour), 1..=6).prop_map(|pens| {
+        pens.into_iter()
+            .enumerate()
+            .map(|(i, (width, colour))| Pen::new(&format!("P{i}"), width, &colour).unwrap())
+            .collect()
+    })
+}
+
+#[test]
+fn a_library_palette_uses_owned_pens() {
+    // With a pen library the colour suggestion offers only library pens, and every ink it says is
+    // worth adding is one the library lacks that gains a just noticeable difference (2.3 ΔE*ab).
+    check(
+        "palette library",
+        64,
+        (picture(), library()),
+        |(picture, library)| {
+            let mut s = Session::new(64 << 20);
+            s.set_pen_library(library.clone());
+            s.set_image(picture.image());
+            let analysis = s.analysis().unwrap();
+            let stats = &analysis.stats;
+            let owns = |hex: &str| library.iter().any(|p| p.color.eq_ignore_ascii_case(hex));
+            prop_assert!(stats.palette_additions.len() <= 3);
+            for ink in &stats.palette_additions {
+                prop_assert!(!owns(&ink.color), "{ink:?} is in the library");
+                prop_assert!(
+                    stats.palette_error - ink.error >= 2.3,
+                    "{ink:?} gains too little on {}",
+                    stats.palette_error
+                );
+            }
+            if let Some(colour) = analysis.suggestions.iter().find(|g| g.kind == "colour") {
+                let patch = colour.patch.as_ref().unwrap();
+                for pen in patch["pens"].as_array().unwrap() {
+                    prop_assert!(
+                        library.iter().any(|p| json!(p) == *pen),
+                        "{pen} is not a library pen"
+                    );
+                }
+                apply(&mut s, patch)?;
+                let after = s.analysis().unwrap().suggestions;
+                prop_assert!(after.iter().all(|g| g.kind != "colour"));
+            }
+            Ok(())
+        },
+    );
 }
 
 #[test]

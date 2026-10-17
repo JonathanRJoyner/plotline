@@ -527,6 +527,28 @@ def test_a_colour_image_suggests_pens_that_set_pens_accepts():
     assert [p.name for p in s.pens] == [p["name"] for p in patch["pens"]]
 
 
+def test_a_pen_library_chooses_the_palette():
+    img = np.ones((48, 64, 3))
+    for i, rgb in enumerate([[1.0, 0.0, 0.0], [0.0, 0.7, 0.0], [0.0, 0.0, 1.0], [1.0, 0.9, 0.0]]):
+        img[:, i * 16 : (i + 1) * 16] = rgb
+    s = Session()
+    s.set_image(img)
+    library = [Pen("Ink", 0.3, "#000000"), Pen("Lemon 0.5", 0.5, "#f5c400")]
+    s.set_pen_library(library)
+    analysis = s.analysis()
+    owned = {(p.name, p.width_mm, p.color) for p in library}
+    for suggestion in analysis["suggestions"]:
+        for p in (suggestion["patch"] or {}).get("pens", []):
+            assert (p["name"], p["width_mm"], p["color"]) in owned
+    assert "pens_to_add" in [x["kind"] for x in analysis["suggestions"]]
+    assert all(
+        a["error"] < analysis["stats"]["palette_error"]
+        for a in analysis["stats"]["palette_additions"]
+    )
+    with pytest.raises(ValueError):
+        s.set_pen_library([Pen("Bad", 0.3, "red")])
+
+
 def test_fit_meets_a_budget_and_applies_the_value():
     s = Session()
     s.set_image(_core.synthetic_gradient(64, 48))

@@ -352,6 +352,54 @@ def test_analyse_turns_the_page(tmp_path):
     assert "orientation" not in kinds(tmp_path / "wide.png", "--width", "297", "--height", "210")
 
 
+def _bars(path):
+    img = np.ones((48, 64, 3))
+    for i, rgb in enumerate([[1.0, 0.0, 0.0], [0.0, 0.7, 0.0], [0.0, 0.0, 1.0], [1.0, 0.9, 0.0]]):
+        img[:, i * 16 : (i + 1) * 16] = rgb
+    write_png(path, img)
+
+
+def test_analyse_reads_a_library(tmp_path):
+    _bars(tmp_path / "bars.png")
+    pens = [
+        {"name": "Ink", "width_mm": 0.3, "color": "#000000"},
+        {"name": "Lemon", "width_mm": 0.5, "color": "#f5c400"},
+    ]
+    library = {"format": "plotline-pens", "version": 1, "pens": pens}
+    (tmp_path / "pens.json").write_text(json.dumps(library))
+    r = run("analyse", str(tmp_path / "bars.png"), "--library", str(tmp_path / "pens.json"))
+    assert r.exit_code == 0, r.output
+    stats = json.loads(r.stdout)["stats"]
+    assert {ink["name"] for ink in stats["palette"]} <= {"Ink", "Lemon"}
+    assert stats["palette_additions"]
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        ("{oops", "pens.json is not a pen library: it is not valid JSON."),
+        ('{"format": "x"}', "pens.json: not a pen library: its format must be 'plotline-pens'."),
+        (
+            '{"format": "plotline-pens", "version": 2, "pens": []}',
+            "unsupported pen library version 2",
+        ),
+        ('{"format": "plotline-pens", "version": 1}', "it has no list of pens"),
+        ('{"format": "plotline-pens", "version": 1, "pens": [{"name": "A"}]}', "every pen needs"),
+        (
+            '{"format": "plotline-pens", "version": 1, "pens": '
+            '[{"name": "A", "width_mm": 0.3, "color": "red"}]}',
+            "#rrggbb",
+        ),
+    ],
+)
+def test_analyse_refuses_a_bad_library(tmp_path, content, message):
+    _bars(tmp_path / "bars.png")
+    (tmp_path / "pens.json").write_text(content)
+    r = run("analyse", str(tmp_path / "bars.png"), "--library", str(tmp_path / "pens.json"))
+    assert r.exit_code == 1 and r.stderr.startswith("Error: "), r.output
+    assert message in r.stderr and "Traceback" not in r.output
+
+
 def write_disc(path, cx, cy, radius):
     """A dark disc on a light 256 x 256 field; the centre and radius are shares of the side."""
     y, x = np.mgrid[0:256, 0:256] / 256

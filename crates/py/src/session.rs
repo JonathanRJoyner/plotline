@@ -115,6 +115,19 @@ impl Session {
         self.inner.set_pens(pens).map_err(session_error)
     }
 
+    /// Use a list of `{"name", "width_mm", "color"}` as the user's own pens, which the image
+    /// analysis picks its palette from; an empty list clears it.
+    fn set_pen_library(&mut self, pens: &Bound<'_, PyAny>) -> PyResult<()> {
+        let pens: Vec<Pen> = from_py(pens)?;
+        let pens = pens
+            .iter()
+            .map(|p| Pen::new(&p.name, p.width_mm, &p.color))
+            .collect::<Result<_, _>>()
+            .map_err(value_error)?;
+        self.inner.set_pen_library(pens);
+        Ok(())
+    }
+
     fn style_name(&self) -> String {
         self.inner.style().name.clone()
     }

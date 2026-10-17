@@ -116,6 +116,9 @@ pub struct Session {
     image_stats: Option<ImageStats>,
     canvas: Canvas,
     pens: Vec<Pen>,
+    /// The user's own pens, which the image analysis picks a palette from. No stage, preset or
+    /// undo history reads it, so it never changes a drawing.
+    pen_library: Vec<Pen>,
     /// The colour of the paper, written as `#rrggbb`. Only the preview and the preset read it,
     /// so no stage's cache key holds it and changing it reruns nothing.
     paper: String,
@@ -147,6 +150,7 @@ impl Session {
             image_stats: None,
             canvas: Canvas::new(210.0, 297.0, 10.0, Fit::Fit).expect("A4 is a valid canvas"),
             pens: vec![Pen::new("Black 0.3", 0.3, "#000000").expect("the default pen is valid")],
+            pen_library: Vec::new(),
             paper: DEFAULT_PAPER.to_string(),
             machine: None,
             settings: style.defaults(),
@@ -169,7 +173,7 @@ impl Session {
 
     /// Use `image` as the source image and measure it.
     pub fn set_image(&mut self, image: Image) {
-        self.image_stats = Some(analysis::measure(&image));
+        self.image_stats = Some(analysis::measure_with(&image, &self.pen_library));
         self.image = Some(Arc::new(image));
     }
 
@@ -184,6 +188,7 @@ impl Session {
             &self.style.name,
             &self.settings,
             &self.pens,
+            &self.pen_library,
         );
         Some(Analysis { stats, suggestions })
     }
@@ -229,6 +234,21 @@ impl Session {
         }
         self.pens = pens;
         Ok(())
+    }
+
+    /// The user's own pens; see [`Session::set_pen_library`].
+    pub fn pen_library(&self) -> &[Pen] {
+        &self.pen_library
+    }
+
+    /// Use `pens` as the user's own pens, which the image analysis fits its palette to and finds
+    /// the inks worth adding to; an empty list clears it. The image, if any, is measured again.
+    /// Nothing else reads the library, so a run and the cache are not touched.
+    pub fn set_pen_library(&mut self, pens: Vec<Pen>) {
+        self.pen_library = pens;
+        if let Some(image) = &self.image {
+            self.image_stats = Some(analysis::measure_with(image, &self.pen_library));
+        }
     }
 
     /// The colour of the paper, written as `#rrggbb`: [`DEFAULT_PAPER`] until it is set.
@@ -755,6 +775,41 @@ mod tests {
         assert_eq!(pens.len(), analysis.stats.palette.len());
         assert!(pens.iter().all(|p| p["width_mm"] == 0.5));
         assert_eq!(patch["settings"]["split"]["mode"], "by_colour");
+    }
+    #[test]
+    fn a_new_library_measures_the_image_again() {
+        let mut s = Session::new(1 << 20);
+        s.set_image(color_bars(256, 64));
+        let kinds = |s: &Session| -> Vec<&str> {
+            s.analysis()
+                .unwrap()
+                .suggestions
+                .iter()
+                .map(|g| g.kind)
+                .collect()
+        };
+        assert!(!kinds(&s).contains(&"pens_to_add"));
+        let library = vec![
+            Pen::new("Lemon", 0.5, "#f5c400").unwrap(),
+            Pen::new("Ink", 0.3, "#000000").unwrap(),
+        ];
+        s.set_pen_library(library.clone());
+        assert_eq!(s.pen_library(), library.as_slice());
+        let stats = s.analysis().unwrap().stats;
+        assert!(stats.palette.iter().all(|ink| library
+            .iter()
+            .any(|p| p.color.eq_ignore_ascii_case(&ink.color))));
+        assert!(kinds(&s).contains(&"pens_to_add"));
+        // An empty library goes back to the inks.
+        s.set_pen_library(Vec::new());
+        assert_eq!(s.analysis().unwrap().stats, measure(&color_bars(256, 64)));
+    }
+    #[test]
+    fn the_library_is_not_in_the_preset() {
+        let mut s = Session::new(1 << 20);
+        let before = s.preset();
+        s.set_pen_library(vec![Pen::new("Lemon", 0.5, "#f5c400").unwrap()]);
+        assert_eq!(s.preset(), before);
     }
     #[test]
     fn a_refused_image_keeps_the_analysis() {

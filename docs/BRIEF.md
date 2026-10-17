@@ -161,7 +161,7 @@ The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D was chosen o
 
 ## 9. MCP server (decided: yes, kept thin)
 
-`plotline mcp` exposes the session through MCP so an assistant can work the same way a person does in the GUI. It was built on 2026-10-12 under [the MCP spec](superpowers/specs/2026-10-12-mcp-server-design.md). The server uses the official MCP Python SDK from the optional `mcp` extra, talks over stdio and holds one session. These are its fourteen tools:
+`plotline mcp` exposes the session through MCP so an assistant can work the same way a person does in the GUI. It was built on 2026-10-12 under [the MCP spec](superpowers/specs/2026-10-12-mcp-server-design.md). The server uses the official MCP Python SDK from the optional `mcp` extra, talks over stdio and holds one session. These are its sixteen tools:
 
 - `list_styles()` and `describe_style(style)`, which returns the generated settings schema with help text and the style's looks
 - `load_image(path)`, `set_page(width_mm, height_mm, margin_mm, fit, paper, crop)` and `set_pens(pens)`; a value left out of `set_page` stays as it was, and a pen's colour or the paper's (which only the previews and the preset use) is `#rrggbb` or an ink name
@@ -173,6 +173,7 @@ The frontend stack is TypeScript, Vite and Preact (§14). Canvas 2D was chosen o
 - `testchart()`, which draws the test chart for the page and the first pen, with no image, and returns the stats with the lint findings and a preview as `run` does ([test chart](decisions/2026-10-16-test-chart.md))
 - `get_session()`, which returns the style, its look, settings, page, paper, pens, machine, image size, run state and stats
 - `analyse_image()`, which returns the loaded image's statistics and suggested changes; each suggestion's patch applies with `run(style=..., settings=...)` or `set_page`, and its `pens` with `set_pens`
+- `set_pen_library(pens)`, which sets the pens the user owns, so a colour image's palette is picked from them and `analyse_image` names inks worth adding ([palette from my pens](decisions/2026-10-16-palette-from-my-pens.md))
 - `load_preset(path)`, which reads a preset, an exported SVG or an exported JSON drawing ([embedded presets](decisions/2026-10-16-embedded-presets.md)) and returns the style and the warnings for any settings it dropped
 - `export(path, format, overwrite, units_per_mm)`, where the format is `svg`, `json`, `png`, `preset`, `gcode` or `hpgl`; for `gcode` the path is a folder that gets one file per pen; `units_per_mm` is the plotter units to the millimetre of `hpgl`, 40 by default and at most 1000, and no other format reads it
 
