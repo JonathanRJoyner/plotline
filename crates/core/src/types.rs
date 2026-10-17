@@ -256,6 +256,16 @@ pub struct ToneMap {
     pub mm_per_px: f64,
     /// The page position of the map's top-left corner in mm.
     pub origin_mm: [f64; 2],
+    /// The tone gamma the map was made with, 1 for none. With the defaults the tone stage's ink
+    /// is `1 - (1 - x)^gamma` of the ink `x` the gamma found; the by-colour split undoes that
+    /// curve before it solves the colours and applies it to each pen's share after.
+    #[serde(default = "no_gamma")]
+    pub gamma: f32,
+}
+
+/// The gamma of a map with no midtone curve.
+fn no_gamma() -> f32 {
+    1.0
 }
 
 impl ToneMap {
@@ -658,6 +668,7 @@ mod tests {
             ink: vec![0.0, 1.0, 0.0, 1.0],
             mm_per_px: 10.0,
             origin_mm: [5.0, 5.0],
+            gamma: 1.0,
         };
         assert_eq!(t.rect_mm(), [5.0, 5.0, 20.0, 20.0]);
         assert_eq!(t.to_px([10.0, 10.0]), [0.5, 0.5]);

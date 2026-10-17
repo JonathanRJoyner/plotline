@@ -12,7 +12,13 @@
 //! green and blue are sampled on the tone map's grid. Each colour's channel inks are moved so their
 //! luma becomes the tone map's ink, which carries the Image settings over: they are shifted to the
 //! tone's ink and their spread about their luma is scaled down only as far as needed to stay in
-//! [0, 1], so a grey or white pixel becomes grey and the rule has no jump near white. The pens are
+//! [0, 1], so a grey or white pixel becomes grey and the rule has no jump near white. The tone
+//! gamma is the exception: the luma a colour moves to is the ink before the gamma's curve
+//! `1 - (1 - x)^gamma`, and the curve is applied to each pen's coverage after the solve. A darker
+//! midtone then asks for more of each pen's own colour, as the gamma asks a style for more line,
+//! rather than for the grey that moving every channel by the same ink adds, which the black pen
+//! would draw over every colour. With one black pen a grey still gets the ink `one_pen` gives it,
+//! since the curve and its inverse cancel. The pens are
 //! transparent inks laid at independent positions, which holds for marks turned against each
 //! other as for rotated print screens (Amidror and Hersch, "Neugebauer and Demichel: dependence
 //! and independence in n-screen superpositions for colour printing", Color Research and
@@ -45,6 +51,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::math;
 use crate::preview::rgb;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
@@ -93,7 +100,7 @@ impl Stage for SplitStage {
         "Pen use"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     // The image and the canvas are for the modes that read colour; the others leave them alone.
     fn requires(&self) -> &'static [Kind] {
@@ -214,13 +221,15 @@ pub(crate) fn bands(tone: &ToneMap, n: usize) -> Vec<ToneMap> {
                 .collect(),
             mm_per_px: tone.mm_per_px,
             origin_mm: tone.origin_mm,
+            gamma: tone.gamma,
         })
         .collect()
 }
 
 /// The colour lookup for the by-colour mode: for each pixel of the tone map, every pen's coverage
 /// of the pixel's colour. The colour is sampled on the tone map's grid with the tone stage's own
-/// crop and resize, and rescaled to the tone map's ink before the table lookup. [`prepare`]
+/// crop and resize, and rescaled, before the table lookup, to the ink the tone map had before its
+/// gamma; each coverage then goes through the gamma's curve. [`prepare`]
 /// samples the planes and solves the table one piece at a time, and [`look_up`] then covers a band
 /// of rows at a time.
 ///
@@ -306,10 +315,12 @@ impl ColourSplit {
             unreachable!("the planes are sampled");
         };
         let table = self.table.as_ref().expect("the table is solved");
+        let gamma = self.tone.gamma;
         for p in self.next_row * w..end * w {
-            table.lookup(rescale([r[p], g[p], b[p]], self.tone.ink[p]), &mut self.a);
+            let t = curve(self.tone.ink[p], 1.0 / gamma);
+            table.lookup(rescale([r[p], g[p], b[p]], t), &mut self.a);
             for (ink, &a) in self.inks.iter_mut().zip(&self.a) {
-                ink.push((a as f32).clamp(0.0, 1.0));
+                ink.push(curve((a as f32).clamp(0.0, 1.0), gamma));
             }
         }
         self.next_row = end;
@@ -326,6 +337,7 @@ impl ColourSplit {
                 ink,
                 mm_per_px: tone.mm_per_px,
                 origin_mm: tone.origin_mm,
+                gamma: tone.gamma,
             })
             .collect()
     }
@@ -360,6 +372,16 @@ pub(crate) fn rescale(c: [f32; 3], t: f32) -> [f64; 3] {
     }
     // The clamp only guards against rounding.
     ink.map(|k| 1.0 - (t + beta * (k - u)).clamp(0.0, 1.0))
+}
+
+/// The tone stage's gamma curve on the ink `x`, `1 - (1 - x)^gamma`; its inverse is the curve of
+/// `1 / gamma`. A gamma of 1 gives `x` itself, bit for bit.
+pub(crate) fn curve(x: f32, gamma: f32) -> f32 {
+    if gamma == 1.0 {
+        x
+    } else {
+        1.0 - math::powf32(1.0 - x, gamma)
+    }
 }
 
 /// How much of each channel a pen's colour absorbs: `1 - byte / 255`.
@@ -598,7 +620,12 @@ mod tests {
 
     /// The tone stage at `resolution` on `image`.
     fn tone_of(image: &Image, canvas: &Canvas, resolution: u32) -> Arc<ToneMap> {
-        let settings = merge(&ToneStage.defaults(), &json!({"resolution": resolution}));
+        tone_with(image, canvas, json!({ "resolution": resolution }))
+    }
+
+    /// The tone stage with `patch` over its defaults on `image`.
+    fn tone_with(image: &Image, canvas: &Canvas, patch: Value) -> Arc<ToneMap> {
+        let settings = merge(&ToneStage.defaults(), &patch);
         let inputs = Inputs::new(HashMap::from([
             (Kind::Image, Artifact::Image(Arc::new(image.clone()))),
             (Kind::Canvas, Artifact::Canvas(Arc::new(canvas.clone()))),
@@ -620,7 +647,17 @@ mod tests {
         canvas: Canvas,
         pens: Vec<Pen>,
     ) -> (Arc<ToneMap>, Vec<Arc<ToneMap>>) {
-        let tone = tone_of(&image, &canvas, 64);
+        split_image_at(image, canvas, pens, 1.0)
+    }
+
+    /// [`split_image`] with the tone stage at `gamma`.
+    fn split_image_at(
+        image: Image,
+        canvas: Canvas,
+        pens: Vec<Pen>,
+        gamma: f64,
+    ) -> (Arc<ToneMap>, Vec<Arc<ToneMap>>) {
+        let tone = tone_with(&image, &canvas, json!({"resolution": 64, "gamma": gamma}));
         let patch = json!({"mode": "by_colour"});
         let maps = run_split(image, canvas, pens, (*tone).clone(), patch)
             .unwrap()
@@ -636,6 +673,60 @@ mod tests {
         for (p, (&a, &t)) in maps[0].ink.iter().zip(&tone.ink).enumerate() {
             assert!((a - t).abs() < 1e-3, "pixel {p}: {a} for tone {t}");
         }
+    }
+
+    #[test]
+    fn one_black_pen_matches_the_tone_at_any_gamma() {
+        // The ink penalty leaves the black pen about 2e-4 short of full ink, which a gamma under
+        // 1 steepens near black.
+        for (gamma, within) in [(0.5, 0.02), (1.9, 2e-3), (3.0, 2e-3)] {
+            let (tone, maps) = split_image_at(gradient(64, 48), a4(), vec![black()], gamma);
+            assert_eq!(tone.gamma, gamma as f32);
+            for (p, (&a, &t)) in maps[0].ink.iter().zip(&tone.ink).enumerate() {
+                assert!(
+                    (a - t).abs() < within,
+                    "gamma {gamma}, pixel {p}: {a} for tone {t}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_gamma_curves_each_pen_s_share_and_adds_no_grey() {
+        // A darker gamma once moved every colour towards grey before the solve, which gave the
+        // black pen ink in every bar. Now each pen's share goes through the curve after it.
+        let canvas = Canvas::new(100.0, 100.0, 0.0, Fit::Fit).unwrap();
+        let (_, flat) = split_image_at(color_bars(64, 48), canvas.clone(), pens(&CMYK), 1.0);
+        let (tone, dark) = split_image_at(color_bars(64, 48), canvas, pens(&CMYK), 1.9);
+        assert_eq!(tone.gamma, 1.9);
+        for (a, b) in flat.iter().zip(&dark) {
+            for (p, (&a, &b)) in a.ink.iter().zip(&b.ink).enumerate() {
+                let want = curve(a, 1.9);
+                assert!((b - want).abs() < 1e-3, "pixel {p}: {b}, want {want}");
+            }
+        }
+        // Red is magenta and yellow, with no black.
+        let p = 24 * tone.width as usize + 8 * 5 + 4;
+        let [c, m, y, k] = [0, 1, 2, 3].map(|pen| dark[pen].ink[p]);
+        assert!(
+            m > 0.9 && y > 0.9 && c < 0.05 && k < 0.05,
+            "red: {:?}",
+            [c, m, y, k]
+        );
+    }
+
+    #[test]
+    fn the_curve_and_its_inverse_cancel() {
+        assert_eq!(curve(0.3, 1.0), 0.3);
+        for gamma in [0.1_f32, 0.5, 1.9, 5.0] {
+            assert_eq!((curve(0.0, gamma), curve(1.0, gamma)), (0.0, 1.0));
+            for x in [0.05_f32, 0.3, 0.5, 0.8] {
+                let back = curve(curve(x, gamma), 1.0 / gamma);
+                assert!((back - x).abs() < 1e-4, "{x} at {gamma}: {back}");
+            }
+        }
+        // Above 1 the curve darkens, as the tone stage's gamma does.
+        assert!(curve(0.5, 1.9) > 0.5 && curve(0.5, 0.5) < 0.5);
     }
 
     #[test]

@@ -144,6 +144,8 @@ Also cap or hide the tone error when the gain is small: `contours` reports tone 
 
 ### F4. Waves, Spiral and Mosaic muddy every colour by colour (confirmed)
 
+**Status:** fixed on 2026-10-17 with the recommended fix ([decision](../decisions/2026-10-17-colour-lanes.md)).
+
 **What a person sees.** With pens chosen by the colour suggestion and Pen use by colour, Waves (the style the GUI opens on), Spiral and Mosaic draw black lines across red and yellow areas and red and yellow lines across black. The red disc of the poster comes out brown, the yellow square mustard. Hatching, at the same pens, is clean.
 
 **Cause.** These styles default to a tone gamma of 1.9 ("Rippling gamma" in the brief). In `by_colour` mode the split stage carries the Image settings over to colour by the luminance rule `ink'_k = t + beta (ink_k - u)` (`crates/core/src/stages/split.rs`): a darker tone `t` than the colour's own luma `u` adds the same ink to every channel, which is grey, which the solver gives to the black pen. Gamma 1.9 darkens every mid-tone, so every colour gains black. Verified on the poster with Yellow, Red and Black pens: at gamma 1.9 the black pen draws 29.0 m, at gamma 1.0 15.3 m, and the red disc and yellow square are clean only at 1.0.
@@ -151,6 +153,8 @@ Also cap or hide the tone error when the gain is small: `contours` reports tone 
 **Fix (recommended).** In `by_colour` mode, solve the colours from the untouched image and apply the style's tone curve to each lane's coverage afterwards, `a' = 1 - (1 - a)^gamma` (the curve the tone stage applies to ink, `crates/core/src/stages/tone.rs`), rather than darkening the colour before the solve. That keeps the reason for the rippling gamma (the lines ink in proportion, so mid-tones need more) without inventing grey. Simpler stop-gap: a style default of gamma 1 when the split is by colour, which the GUI's style switch and the colour suggestion's patch can carry (`settings.tone.gamma` in the suggestion).
 
 ### F5. Line styles ink areas that should stay white, worst with several pens (confirmed)
+
+**Status:** the lane rule fixed on 2026-10-17, lifting below half of a bare line's cover rather than all of it ([decision](../decisions/2026-10-17-colour-lanes.md)); one pen and the backgrounds are open.
 
 **What a person sees.** Waves and Spiral cover the whole page, white areas included, with a 15 % grey of straight lines; with several pens, every pen draws its own lines over every area that has 2 % of its ink, so colours mix where the image has one colour. Halftone draws an even field of pen-wide dots over the fox's light grey background (ink about 0.06): true to the grey, but it reads as texture where the artist meant white.
 
@@ -164,6 +168,8 @@ Also cap or hide the tone error when the gain is small: `contours` reports tone 
 - For backgrounds, let the analysis suggest auto levels (or a white point) when the border tone is near white but not white, as for the fox, so the paper stays paper in every style. Raising `halftone`'s threshold to about 0.05 is the style-local alternative.
 
 ### F6. Every pen gets the same point budget, whatever share of the colour it draws (confirmed)
+
+**Status:** fixed on 2026-10-17 as recommended ([decision](../decisions/2026-10-17-colour-lanes.md)); with the total equal to `count`, a by-colour drawing at the default count is lighter until F7 is fixed.
 
 **What a person sees.** By colour, Stipple, Single line, Dashes, Tree, Mesh, Cells and Scribble draw 5,000 points for each pen. A pen whose colour covers a tenth of the image crowds 5,000 dots into it, so minor colours come out too strong, and the pen that carries most of the picture is too sparse.
 

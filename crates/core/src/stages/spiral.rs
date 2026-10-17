@@ -7,8 +7,8 @@
 //! is up, so it breaks into as few paths as the map's shape allows.
 //!
 //! When the drawing is split between pens, each pen's spiral starts at its share of a full turn, so
-//! that the pens' turns do not lie on each other, and the pen is up where its lane has almost no
-//! ink, as it is off the map.
+//! that the pens' turns do not lie on each other, and the pen is up where its lane's ink is under
+//! half of what a bare line covers (see [`lane_floor`]), as it is off the map.
 
 use std::f64::consts::PI;
 
@@ -16,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::lines::{clamp_to, inside, ChunkRun, LANE_MIN_INK};
+use super::lines::{clamp_to, inside, lane_floor, ChunkRun};
 use crate::math;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Inputs, Kind, RunContext, Stage, StageError, StageRun};
@@ -58,10 +58,11 @@ impl Stage for SpiralStage {
         "Spiral"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
+    // The pen's width sets where a lane lifts it.
     fn requires(&self) -> &'static [Kind] {
-        &[Kind::Tone]
+        &[Kind::Tone, Kind::Pens]
     }
     fn provides(&self) -> Kind {
         Kind::Paths
@@ -89,8 +90,13 @@ impl Stage for SpiralStage {
         let turns = ((math::hypot(w, h) / 2.0 / s.spacing_mm).ceil() as usize).max(1);
         let swing = s.amplitude * s.spacing_mm / 2.0;
         let step = s.wavelength_mm / 12.0;
-        // Split between pens, a lane lifts the pen over no ink as it does off the map.
-        let lift = lane.count > 1;
+        // Split between pens, a lane lifts the pen where a bare line would cover more than the ink
+        // asks, as it does off the map; alone, only off the map.
+        let floor = if lane.count > 1 {
+            lane_floor(inputs.pens()[0].width_mm, s.spacing_mm)
+        } else {
+            0.0
+        };
         // Where the spiral has got to, carried from one turn to the next: angle and arc length.
         let (mut theta, mut arc) = (0.0_f64, 0.0_f64);
         Ok(Box::new(ChunkRun::new(
@@ -103,7 +109,7 @@ impl Stage for SpiralStage {
                     let (sin, cos) = (math::sin(theta + phi), math::cos(theta + phi));
                     let base = [centre[0] + r * cos, centre[1] + r * sin];
                     let ink = inside(rect, base).then(|| tone.sample(base));
-                    if let Some(ink) = ink.filter(|&ink| !lift || ink >= LANE_MIN_INK) {
+                    if let Some(ink) = ink.filter(|&ink| ink >= floor) {
                         let off =
                             swing * f64::from(ink) * math::sin(2.0 * PI * arc / s.wavelength_mm);
                         let rr = (r + off).max(0.0);
@@ -183,6 +189,18 @@ mod tests {
         let lane = Lane { index: 0, count: 2 };
         let (_, paths) =
             run_tone_stage_in_lane(&SpiralStage, tone_map(10, 5, half), json!({}), lane);
+        assert!(paths.len() > 1);
+        assert!(paths.coords().iter().all(|v| v[0] < 21.0));
+    }
+
+    #[test]
+    fn a_shared_lane_lifts_where_a_bare_line_is_twice_the_ink() {
+        // Turns 2 mm apart with the 0.3 mm pen cover 15 %: a lane draws the left half's 10 % and
+        // lifts over the right half's 5 %.
+        let pale = |x: u32, _| if x < 5 { 0.1 } else { 0.05 };
+        let lane = Lane { index: 0, count: 2 };
+        let (_, paths) =
+            run_tone_stage_in_lane(&SpiralStage, tone_map(10, 5, pale), json!({}), lane);
         assert!(paths.len() > 1);
         assert!(paths.coords().iter().all(|v| v[0] < 21.0));
     }

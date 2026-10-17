@@ -16,7 +16,8 @@
 //! is the rect's centre; when the seeds run out, a coarse grid at `max_spacing` is scanned for
 //! points with every sample at least `d(q)` away. A line shorter than `2 * min_spacing` is
 //! dropped, and its samples are taken back out of the bucket grid, so it blocks nothing. When the
-//! drawing is split between pens, a kept line breaks where its lane has almost no ink.
+//! drawing is split between pens, a kept line breaks where its lane's ink is under half of what the
+//! lines cover over white, at `max_spacing` (see [`lines::lane_floor`]).
 //!
 //! Split between pens, pen `i` of `n` also moves the centre and each coarse-grid point `i / n` of
 //! the separation there to the side, along the field's normal, before seeding from it. Every other
@@ -30,7 +31,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::lines::{self, inside, LANE_MIN_INK};
+use super::lines::{self, inside};
 use crate::math;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
@@ -93,10 +94,11 @@ impl Stage for FlowStage {
         "Flow lines"
     }
     fn version(&self) -> u32 {
-        2
+        3
     }
+    // The pen's width sets where a lane lifts it.
     fn requires(&self) -> &'static [Kind] {
-        &[Kind::Tone]
+        &[Kind::Tone, Kind::Pens]
     }
     fn provides(&self) -> Kind {
         Kind::Paths
@@ -116,10 +118,18 @@ impl Stage for FlowStage {
         let s = validate::<FlowSettings>(self.name(), &self.schema(), settings)?;
         let lane = ctx.lane();
         let aside = lane.index as f64 / lane.count as f64;
+        // Split between pens, a lane lifts the pen where the lines over white would cover more
+        // than the ink asks; alone, each line is drawn whole.
+        let floor = if lane.count > 1 {
+            let max = s.max_spacing_mm.max(s.min_spacing_mm);
+            lines::lane_floor(inputs.pens()[0].width_mm, max)
+        } else {
+            0.0
+        };
         Ok(Box::new(FlowRun::new(
             inputs.tone().clone(),
             &s,
-            lane.count > 1,
+            floor,
             aside,
         )))
     }
@@ -166,15 +176,16 @@ struct FlowRun {
     paths: Paths,
     /// About how long the lines will be in all, for progress.
     expected: f64,
-    /// Whether the pen lifts over no ink, as it does when the drawing is split between pens.
-    lift: bool,
+    /// The ink below which the pen lifts: when the drawing is split between pens, where the lines
+    /// over white would cover more than the ink asks; 0 alone, when each line is drawn whole.
+    floor: f32,
     /// The share of a separation the centre and the coarse-grid points move to the side: the
     /// lane's `index / count`.
     aside: f64,
 }
 
 impl FlowRun {
-    fn new(tone: Arc<ToneMap>, s: &FlowSettings, lift: bool, aside: f64) -> FlowRun {
+    fn new(tone: Arc<ToneMap>, s: &FlowSettings, floor: f32, aside: f64) -> FlowRun {
         let (w, h) = (tone.width as usize, tone.height as usize);
         let b = math::blur(&tone.ink, w, h, s.smooth_mm / tone.mm_per_px);
         let at = |x: usize, y: usize| f64::from(b[y * w + x]);
@@ -193,6 +204,7 @@ impl FlowRun {
             ink,
             mm_per_px: tone.mm_per_px,
             origin_mm: tone.origin_mm,
+            gamma: tone.gamma,
         };
         let rect = tone.rect_mm();
         let min = s.min_spacing_mm;
@@ -221,7 +233,7 @@ impl FlowRun {
             scan: 0,
             paths: Paths::new(),
             expected: 0.0,
-            lift,
+            floor,
             aside,
             tone,
         };
@@ -403,10 +415,8 @@ impl FlowRun {
         path.reverse();
         path.extend(ahead);
         if Paths::path_length(&path) >= 2.0 * self.min {
-            // Split between pens, a lane lifts the pen over no ink; alone, each line is drawn whole.
-            let lift = self.lift;
-            let tone = &self.tone;
-            for run in path.split(|&p| lift && tone.sample(p) < LANE_MIN_INK) {
+            let (tone, floor) = (&self.tone, self.floor);
+            for run in path.split(|&p| tone.sample(p) < floor) {
                 if run.len() >= 2 {
                     self.paths.push(run);
                 }
@@ -470,10 +480,10 @@ mod tests {
             (FlowStage.name(), FlowStage.label()),
             ("flow", "Flow lines")
         );
-        assert_eq!(FlowStage.version(), 2);
+        assert_eq!(FlowStage.version(), 3);
         assert_eq!(
             (FlowStage.requires(), FlowStage.provides()),
-            (&[Kind::Tone][..], Kind::Paths)
+            (&[Kind::Tone, Kind::Pens][..], Kind::Paths)
         );
         let _: FlowSettings = serde_json::from_value(FlowStage.defaults()).unwrap();
     }
@@ -496,6 +506,21 @@ mod tests {
             let (dx, dy) = (s[1][0] - s[0][0], s[1][1] - s[0][1]);
             assert!(dx * dy < 0.0 && (dx + dy).abs() < 1e-9, "{s:?}");
         }
+    }
+
+    #[test]
+    fn a_shared_lane_lifts_where_the_lines_over_white_are_twice_the_ink() {
+        // Lines over white 1 mm apart with the 0.3 mm pen cover 30 %: a lane keeps the left
+        // half's 20 % and lifts over the right half's 10 %, which one pen draws.
+        let pale = |x: u32, _| if x < 15 { 0.2 } else { 0.1 };
+        let patch = json!({"min_spacing_mm": 0.5, "max_spacing_mm": 1.0, "angle_deg": 0.0});
+        let (_, alone) = run_tone_stage(&FlowStage, tone_map(30, 20, pale), patch.clone());
+        assert!(alone.coords().iter().any(|v| v[0] > 60.0));
+        let lane = Lane { index: 0, count: 2 };
+        let (_, shared) = run_tone_stage_in_lane(&FlowStage, tone_map(30, 20, pale), patch, lane);
+        assert!(!shared.is_empty());
+        // The halves meet at 40 mm.
+        assert!(shared.coords().iter().all(|v| v[0] < 41.0), "{shared:?}");
     }
 
     #[test]

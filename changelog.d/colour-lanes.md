@@ -1,0 +1,5 @@
+Section: Pens
+
+- **Truer colours by colour:** with Pen use by colour, the tone gamma now darkens each pen's own share of a colour instead of adding grey, so Waves, Spiral and Mosaic no longer draw black lines over red and yellow areas (on a red, yellow and black poster, Waves' black pen fell from 18.6 m of line to 7.7 m).
+- **Pens lift over too little ink:** when the pens share a drawing, Waves, Spiral, Flow lines and Hilbert lift a pen wherever its share of the ink is under half of what their lines cover over white, rather than only below 2 %, so a pen leaves white paper and other pens' colours alone.
+- **Points shared between pens:** with several pens, the Voronoi styles (Stipple, Single line, Dashes, Tree, Mesh, Cells, Scribble) share `voronoi.count` between the pens by their ink instead of giving every pen all of it, so a minor colour no longer gets as many dots as the main one. The count is now the points of the whole drawing, so a drawing with three pens places a third of the points it did and plots faster; raise the count to get the old darkness back.

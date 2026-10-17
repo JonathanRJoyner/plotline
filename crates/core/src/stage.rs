@@ -185,19 +185,22 @@ impl Lane {
     pub const SINGLE: Lane = Lane { index: 0, count: 1 };
 }
 
-/// What a running stage may use besides its inputs: the cancel flag, seeded randomness and the
-/// lane it runs in.
+/// What a running stage may use besides its inputs: the cancel flag, seeded randomness, the lane
+/// it runs in and the lane's part of the run's ink.
 pub struct RunContext {
     cancel: Arc<AtomicBool>,
     lane: Lane,
+    ink: [f64; 2],
 }
 
 impl RunContext {
-    /// A context in [`Lane::SINGLE`] that reports cancelled once `cancel` is set.
+    /// A context in [`Lane::SINGLE`], with all of the ink, that reports cancelled once `cancel` is
+    /// set.
     pub fn new(cancel: Arc<AtomicBool>) -> RunContext {
         RunContext {
             cancel,
             lane: Lane::SINGLE,
+            ink: [0.0, 1.0],
         }
     }
 
@@ -206,9 +209,23 @@ impl RunContext {
         RunContext { lane, ..self }
     }
 
+    /// The context for the same run whose lane holds `ink` of the run's ink; see [`ink`].
+    ///
+    /// [`ink`]: RunContext::ink
+    pub fn with_ink(self, ink: [f64; 2]) -> RunContext {
+        RunContext { ink, ..self }
+    }
+
     /// The lane the stage runs in.
     pub fn lane(&self) -> Lane {
         self.lane
+    }
+
+    /// The lane's part of the run's ink, as `[start, end]` of 0 to 1: the lanes before it hold
+    /// up to `start` of the ink summed over every lane's map, and it holds up to `end`, so a
+    /// stage can share a budget between the pens by their ink. `[0, 1]` outside a split.
+    pub fn ink(&self) -> [f64; 2] {
+        self.ink
     }
 
     /// Whether the run has been cancelled.
@@ -317,8 +334,10 @@ mod tests {
     fn a_context_is_single_unless_put_in_a_lane() {
         let ctx = RunContext::new(Arc::default());
         assert_eq!(ctx.lane(), Lane::SINGLE);
+        assert_eq!(ctx.ink(), [0.0, 1.0]);
         let lane = Lane { index: 1, count: 3 };
-        assert_eq!(ctx.in_lane(lane).lane(), lane);
+        let ctx = ctx.in_lane(lane).with_ink([0.25, 0.5]);
+        assert_eq!((ctx.lane(), ctx.ink()), (lane, [0.25, 0.5]));
     }
     #[test]
     fn tones_input_is_declared_by_kind() {

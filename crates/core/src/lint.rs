@@ -827,6 +827,7 @@ mod tests {
             ink: vec![ink; (side * side) as usize],
             mm_per_px: 100.0 / f64::from(side),
             origin_mm: [0.0; 2],
+            gamma: 1.0,
         })
     }
 
@@ -1061,6 +1062,7 @@ mod tests {
             ink: vec![1.0; 384],
             mm_per_px: 100.0 / 64.0,
             origin_mm: [0.0; 2],
+            gamma: 1.0,
         };
         d.tone = Some(Arc::new(coarse));
         assert_eq!(dark_patch(&d, "stipple", |_| {}), None);
@@ -1082,6 +1084,7 @@ mod tests {
             ink: vec![0.5],
             mm_per_px: 100.0,
             origin_mm: [0.0; 2],
+            gamma: 1.0,
         };
         d.tone = Some(Arc::new(grey));
         assert!(!finds(&d, "hatch", "dark"));
@@ -1310,9 +1313,11 @@ mod tests {
     #[test]
     fn the_vertices_share_lint_predicts_is_the_one_after_its_patch() {
         // Waves sample far finer than a wide pen can show. One wide pen has its finding go away;
-        // a thin and a wide pen, a layer each, leave the wide layer a lower share than before.
+        // a thin and a wide pen, a layer each, leave the wide layer a lower share than before. The
+        // wide pen's lane lifts where its lines would cover more than its ink asks, so it draws
+        // only the darkest band, where a small swing keeps its segments fine.
         for (widths, stays) in [(vec![1.0], false), (vec![0.2, 2.0], true)] {
-            let mut s = session(false, "waves", json!({}));
+            let mut s = session(false, "waves", json!({"waves": {"amplitude": 0.3}}));
             if widths.len() > 1 {
                 s.update("split", &json!({"mode": "light_to_dark"}))
                     .unwrap();
