@@ -15,6 +15,7 @@ use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{
     Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
 };
+use crate::stats::DEFAULT_ACCEL_MM_S2;
 use crate::style::Style;
 use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneMap};
 
@@ -268,6 +269,7 @@ pub(crate) fn machine() -> Machine {
         pen_down_gcode: String::new(),
         pen_up_gcode: String::new(),
         max_segment_mm: None,
+        accel_mm_s2: DEFAULT_ACCEL_MM_S2,
     }
 }
 

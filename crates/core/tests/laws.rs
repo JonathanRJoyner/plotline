@@ -33,9 +33,10 @@ use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
 use plotline_core::stages::tone::{flatten, guided};
+use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
 use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
-use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session};
+use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds};
 use proptest::prelude::*;
 use proptest::sample::select;
 use proptest::test_runner::{Config, RngSeed, TestCaseError, TestRunner};
@@ -1427,6 +1428,7 @@ fn split_moves_stay_on_the_move_they_cut_and_in_the_area() {
             pen_down_gcode: "M280 P0 S30".to_string(),
             pen_up_gcode: "M280 P0 S90".to_string(),
             max_segment_mm: None,
+            accel_mm_s2: DEFAULT_ACCEL_MM_S2,
         };
         let split = Machine {
             max_segment_mm: Some(max),
@@ -1631,6 +1633,50 @@ fn dots_sized_by_their_grid_ink_their_share_of_a_dark_page_at_any_spacing() {
             Ok(())
         },
     );
+}
+
+/// The plot time with acceleration is never below the time at full speed all the way, the
+/// distances over the speeds plus the lifts, which is what it was before acceleration counted; and
+/// it comes to that time as the acceleration grows without limit.
+#[test]
+fn acceleration_never_shortens_the_plot_time() {
+    let speed = || 1.0..500.0f64;
+    let strategy = (
+        case(all_styles()),
+        speed(),
+        speed(),
+        0.0..2.0f64,
+        1.0..1e5f64,
+    );
+    check("accel", 12, strategy, |(c, draw, travel, lift, accel)| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(d) = s.drawing() else {
+            return Ok(());
+        };
+        let speeds = Speeds {
+            draw_mm_s: draw,
+            travel_mm_s: travel,
+            pen_lift_s: lift,
+            accel_mm_s2: accel,
+        };
+        let st = stats::compute(&d, speeds);
+        let full = st.pen_down_mm / draw + st.pen_up_mm / travel + st.path_count as f64 * lift;
+        // The two sums add the same moves in another order, so they may differ by rounding.
+        let eps = 1e-9 * full.max(1.0);
+        prop_assert!(
+            st.estimated_seconds >= full - eps,
+            "{} s with acceleration, {full} s without",
+            st.estimated_seconds
+        );
+        let unbounded = Speeds {
+            accel_mm_s2: f64::INFINITY,
+            ..speeds
+        };
+        let limit = stats::compute(&d, unbounded).estimated_seconds;
+        prop_assert!((limit - full).abs() <= eps, "{limit} s against {full} s");
+        Ok(())
+    });
 }
 
 /// The `x,y` pairs of the argument list of an HPGL `PU` or `PD`; a lone `PD;` has none.
