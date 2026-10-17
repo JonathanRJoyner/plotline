@@ -41,23 +41,33 @@ const CLICK_PX = 4;
 // A path object past about a million subpaths draws nothing, so long layers stroke in chunks.
 const CHUNK = 200_000;
 
-// Adds vertices a..b of `c` (x, y pairs) to `p`. A one-vertex path becomes a 0.1 µm segment,
-// which the round cap draws as a dot; the canvas spec does not promise a dot for a zero-length one.
-function trace(p: Path2D, c: Float64Array, a: number, b: number) {
+// The lines and the dots of a chunk, and the radius of a dot, half the pen's width.
+export type Chunk = { lines: Path2D; dots: Path2D; r: number };
+
+// Adds vertices a..b of `c` (x, y pairs) to the chunk. A one-vertex path is a pen-wide disc,
+// filled rather than stroked: Chrome drew no round cap on a near-zero segment under about a pixel
+// wide, so a dot style's page went blank at overview zooms while lines still showed.
+export function trace({ lines, dots, r }: Chunk, c: Float64Array, a: number, b: number) {
   if (b <= a) return;
-  p.moveTo(c[2 * a], c[2 * a + 1]);
-  if (b - a === 1) p.lineTo(c[2 * a] + 1e-4, c[2 * a + 1]);
-  for (let v = a + 1; v < b; v++) p.lineTo(c[2 * v], c[2 * v + 1]);
+  if (b - a === 1) {
+    dots.moveTo(c[2 * a] + r, c[2 * a + 1]);
+    dots.arc(c[2 * a], c[2 * a + 1], r, 0, 2 * Math.PI);
+    return;
+  }
+  lines.moveTo(c[2 * a], c[2 * a + 1]);
+  for (let v = a + 1; v < b; v++) lines.lineTo(c[2 * v], c[2 * v + 1]);
 }
 
-// Strokes `n` paths with one pen, `add` putting path i into the chunk's path object.
-function strokeChunks(ctx: CanvasRenderingContext2D, pen: Pen, n: number, add: (p: Path2D, i: number) => void) {
+// Draws `n` paths with one pen, `add` putting path i into the chunk.
+function strokeChunks(ctx: CanvasRenderingContext2D, pen: Pen, n: number, add: (chunk: Chunk, i: number) => void) {
   ctx.strokeStyle = pen.color;
+  ctx.fillStyle = pen.color;
   ctx.lineWidth = pen.width_mm;
   for (let i = 0; i < n; i += CHUNK) {
-    const p = new Path2D();
-    for (let j = i; j < Math.min(n, i + CHUNK); j++) add(p, j);
-    ctx.stroke(p);
+    const chunk = { lines: new Path2D(), dots: new Path2D(), r: pen.width_mm / 2 };
+    for (let j = i; j < Math.min(n, i + CHUNK); j++) add(chunk, j);
+    ctx.stroke(chunk.lines);
+    ctx.fill(chunk.dots);
   }
 }
 
@@ -66,7 +76,7 @@ function strokeChunks(ctx: CanvasRenderingContext2D, pen: Pen, n: number, add: (
 function strokeLayers(ctx: CanvasRenderingContext2D, layers: Layer[]) {
   ctx.save();
   ctx.globalCompositeOperation = "multiply";
-  for (const l of layers) strokeChunks(ctx, l.pen, pathCount(l.offsets), (p, i) => trace(p, l.coords, l.offsets[i], l.offsets[i + 1]));
+  for (const l of layers) strokeChunks(ctx, l.pen, pathCount(l.offsets), (chunk, i) => trace(chunk, l.coords, l.offsets[i], l.offsets[i + 1]));
   ctx.restore();
 }
 
@@ -185,7 +195,7 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
   ctx.globalCompositeOperation = "multiply";
   live.forEach((f, i) => {
     const pts = f?.points;
-    if (pts && !s.hidden.has(i)) strokeChunks(ctx, penOf(i), pts.length / 2, (p, k) => trace(p, pts, k, k + 1));
+    if (pts && !s.hidden.has(i)) strokeChunks(ctx, penOf(i), pts.length / 2, (chunk, k) => trace(chunk, pts, k, k + 1));
   });
   ctx.restore();
   strokeLayers(ctx, layers);

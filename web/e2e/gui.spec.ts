@@ -302,6 +302,21 @@ test("Smooth, keep edges changes the drawing", async ({ page }) => {
   await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
 });
 
+test("a dot style's marks show at the fit zoom, where the pen is under a pixel", async ({ page }) => {
+  const id = await sample(page);
+  await pick(page, "grid", id);
+  await expect(page.getByText("the pen is under a pixel wide")).toBeVisible();
+  // Grey pixels darker than the margin's outline are the black pen's dots. Headless Chromium drew
+  // the old near-zero strokes too, so preview.test.ts pins the dots as filled discs.
+  const dots = await page.locator(".preview canvas").evaluate((cv: HTMLCanvasElement) => {
+    const d = cv.getContext("2d")!.getImageData(0, 0, cv.width, cv.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] === d[i + 1] && d[i] === d[i + 2] && d[i] < 215) n++;
+    return n;
+  });
+  expect(dots).toBeGreaterThan(1000);
+});
+
 test("the thumbnail grid picks a style", async ({ page }) => {
   test.setTimeout(120_000);
   const id = await sample(page);

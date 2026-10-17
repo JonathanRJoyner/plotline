@@ -25,7 +25,7 @@ use plotline_core::lint::Severity;
 use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
 use plotline_core::optimize::{LONGEST, SLOWER, TRIALS};
-use plotline_core::preview::render_rgba;
+use plotline_core::preview::{render_png_shrunk, render_rgba};
 use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
@@ -1448,4 +1448,69 @@ fn the_paper_shows_where_nothing_is_drawn_and_ink_only_darkens_it() {
         }
         Ok(())
     });
+}
+
+/// How the GUI's style grid draws its pictures (`THUMB_PX` and `THUMB_SHRINK` in
+/// web/src/app.tsx): 600 px wide with every mark at least 2 px, for a cell about 150 px wide.
+const GRID_PX: u32 = 600;
+const GRID_SHRINK: f64 = 2.0;
+const CELL_PX: u32 = 150;
+
+#[test]
+fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_grid() {
+    // A colour scene on A4 with three coloured pens, in every Pen use mode. A dot style once drew
+    // there but showed a blank cell: 0.3 mm dots 1 mm apart, a pixel wide in a 600 px picture,
+    // average to almost white at the cell's size. A visible mark is a cell pixel at least 10 %
+    // darker than the paper, and every style's cell has them on at least 3 % of its pixels.
+    let first = &list_styles()[0];
+    let split = first.stages[first.stage_index("split").unwrap()].schema();
+    let modes = choices(&split["properties"]["mode"], &split["$defs"]).unwrap();
+    let pens = [
+        ("Red", "#d0202e"),
+        ("Black", "#000000"),
+        ("Yellow", "#f5d000"),
+    ]
+    .map(|(name, color)| Pen::new(name, 0.3, color).unwrap())
+    .to_vec();
+    for mode in &modes {
+        let mut s = Session::new(1 << 30);
+        s.set_image(scene(300, 225));
+        s.set_pens(pens.clone()).unwrap();
+        for style in all_styles() {
+            s.set_style(&style).unwrap();
+            s.update("split", &json!({ "mode": mode })).unwrap();
+            for &(stage, key, cap) in SPEED_CAPS {
+                let now = &s.settings()[stage][key];
+                if now.as_f64().is_some_and(|v| v > cap) {
+                    let cap = if now.is_u64() {
+                        json!(cap as u64)
+                    } else {
+                        json!(cap)
+                    };
+                    s.update(stage, &json!({ key: cap })).unwrap();
+                }
+            }
+            let mut r = s.start().unwrap();
+            while r.next_frame().is_some() {}
+            let d = s.drawing().unwrap();
+            let paths: usize = d.layers.iter().map(|l| l.paths.len()).sum();
+            assert!(paths > 0, "{style} in {mode} draws nothing");
+            let png = render_png_shrunk(&d, GRID_PX, s.paper(), GRID_SHRINK).unwrap();
+            let picture = image::load_from_memory(&png).unwrap().to_luma8();
+            let height = CELL_PX * picture.height() / picture.width();
+            let cell = image::imageops::resize(
+                &picture,
+                CELL_PX,
+                height,
+                image::imageops::FilterType::Triangle,
+            );
+            let marked = cell.pixels().filter(|p| p.0[0] <= 230).count() as f64
+                / f64::from(CELL_PX * height);
+            assert!(
+                marked >= 0.03,
+                "{style} in {mode} marks {:.1} % of its cell",
+                100.0 * marked
+            );
+        }
+    }
 }

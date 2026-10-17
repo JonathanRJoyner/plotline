@@ -400,12 +400,13 @@ impl Trial {
     }
 
     /// The drawing as PNG bytes `width` pixels wide on the paper the session had when the trial
-    /// was made, once the run is done.
+    /// was made, once the run is done, for showing `shrink` times smaller: every mark is at least
+    /// `shrink` pixels wide; see [`preview::render_png_shrunk`].
     #[wasm_bindgen(js_name = previewPng)]
-    pub fn preview_png(&self, width: u32) -> Result<Option<Vec<u8>>, JsError> {
+    pub fn preview_png(&self, width: u32, shrink: f64) -> Result<Option<Vec<u8>>, JsError> {
         let drawing = self.slot.lock().unwrap().drawing.clone();
         Ok(drawing
-            .map(|d| preview::render_png(&d, width, &self.paper, false, false, None))
+            .map(|d| preview::render_png_shrunk(&d, width, &self.paper, shrink))
             .transpose()?)
     }
 }
