@@ -7,6 +7,7 @@ import time
 from functools import partial
 
 import anyio
+import numpy as np
 import pytest
 from looks import off_look, style_with_looks
 from machines import MACHINE
@@ -511,6 +512,28 @@ async def test_analyse_image(tmp_path):
         assert set(data(r)) == {"stats", "suggestions"}
 
 
+async def test_a_pen_library_chooses_the_palette(tmp_path):
+    path = tmp_path / "bars.png"
+    img = np.ones((48, 64, 3))
+    for i, rgb in enumerate([[1.0, 0.0, 0.0], [0.0, 0.7, 0.0], [0.0, 0.0, 1.0], [1.0, 0.9, 0.0]]):
+        img[:, i * 16 : (i + 1) * 16] = rgb
+    write_png(path, img)
+    async with Client(build_server(Session())) as c:
+        await call(c, "load_image", path=str(path))
+        library = [
+            {"name": "Ink", "width_mm": 0.3, "color": "black"},
+            {"name": "Lemon", "width_mm": 0.5, "color": "#f5c400"},
+        ]
+        r = await call(c, "set_pen_library", pens=library)
+        assert not r.is_error
+        assert data(r)[0] == {"name": "Ink", "width_mm": 0.3, "color": "#000000"}
+        analysis = data(await call(c, "analyse_image"))
+        assert {ink["name"] for ink in analysis["stats"]["palette"]} <= {"Ink", "Lemon"}
+        assert "pens_to_add" in [s["kind"] for s in analysis["suggestions"]]
+        r = await call(c, "set_pen_library", pens=[{"name": "X", "width_mm": 0.3, "color": "x"}])
+        assert r.is_error
+
+
 async def test_preview_limits(tmp_path):
     path = tmp_path / "i.png"
     write_png(path, _core.synthetic_gradient(64, 48))
@@ -641,6 +664,7 @@ async def test_stdio_server_lists_the_tools():
         "analyse_image",
         "set_page",
         "set_pens",
+        "set_pen_library",
         "set_machine",
         "run",
         "testchart",

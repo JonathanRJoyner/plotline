@@ -232,8 +232,11 @@ class Session:
     def analysis(self) -> dict[str, Any]:
         """What the image looks like and what would suit it, as ``{"stats", "suggestions"}``.
         ``stats`` holds numbers measured when the image was set, among them ``palette`` (the
-        ink names that draw a colour image best, lightest first, empty for a grey one) and
-        ``palette_error`` (its mean colour difference). Each suggestion is
+        ``{name, color}`` inks that draw a colour image best, lightest first, empty for a grey
+        one, and taken from the pen library when one is set with :meth:`set_pen_library`),
+        ``palette_error`` (its mean colour difference) and ``palette_additions`` (``{name,
+        color, error}`` inks the library lacks that would lower it, which a ``pens_to_add``
+        suggestion names). Each suggestion is
         ``{"kind", "reason", "patch"}``, where ``patch`` is ``None`` or any of ``style``, ``pens``
         (a list of ``{name, width_mm, color}``, for :meth:`set_pens`), ``settings``
         (``{stage: {key: value}}``) and ``page`` (``{width_mm, height_mm}``), which the caller
@@ -265,6 +268,12 @@ class Session:
         """Use ``pens``, in drawing order. Raises ``ValueError`` when there are none, because
         every result needs a pen, and for a pen the engine refuses."""
         self._core.set_pens([asdict(pen) for pen in pens])
+
+    def set_pen_library(self, pens: Sequence[Pen]) -> None:
+        """Use ``pens`` as the user's own pens. With any, :meth:`analysis` picks a colour image's
+        palette from their colours and lists inks worth adding; an empty list clears them. They
+        never change a drawing or a preset. Raises ``ValueError`` for a pen the engine refuses."""
+        self._core.set_pen_library([asdict(pen) for pen in pens])
 
     @property
     def machine(self) -> dict[str, Any] | None:

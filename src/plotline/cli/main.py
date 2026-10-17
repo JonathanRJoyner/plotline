@@ -2,7 +2,8 @@
 and serve the web interface and the MCP server.
 
 ``run`` sets a ``Session`` up from its options, runs the style and writes the outputs. ``testchart``
-writes a calibration chart for a pen. ``analyse`` prints the session's analysis of an image.
+writes a calibration chart for a pen. ``analyse`` prints the session's analysis of an image, with
+the palette picked from a pen library file when one is given.
 ``styles`` and ``describe`` read the style registry.
 ``gui`` serves the web bundle that a release wheel carries. ``mcp`` serves a session to an AI
 assistant on stdio. The work all happens in the session layer, so this module holds no algorithm
@@ -219,9 +220,43 @@ def set_page(
         session.set_paper(inks().get(paper.lower(), paper))
 
 
+def read_library(path: str) -> list[Pen]:
+    """The pens of the pen library file at ``path``: ``{"format": "plotline-pens", "version": 1,
+    "pens": [...]}``, the file the web interface's My pens exports. Raises ``ValueError`` saying
+    what is wrong, in the web interface's words, for a file that is not one, and ``OSError`` for a
+    file that cannot be read. The engine checks each pen's width and colour."""
+    name = Path(path).name
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        raise ValueError(f"{name} is not a pen library: it is not valid JSON.") from None
+    file = value if isinstance(value, dict) else {}
+    pens = file.get("pens")
+    fields = {"name", "width_mm", "color"}
+    if file.get("format") != "plotline-pens":
+        reason = "not a pen library: its format must be 'plotline-pens'"
+    elif file.get("version") != 1:
+        reason = f"unsupported pen library version {file.get('version')}"
+    elif not isinstance(pens, list):
+        reason = "not a pen library: it has no list of pens"
+    elif not all(isinstance(p, dict) and fields <= p.keys() for p in pens):
+        reason = "not a pen library: every pen needs a name, a width_mm and a color"
+    else:
+        return [Pen(p["name"], p["width_mm"], p["color"]) for p in pens]
+    raise ValueError(f"{name}: {reason}.")
+
+
 @main.command()
 @click.argument("image", type=click.Path())
 @page_options
+@click.option(
+    "--library",
+    type=click.Path(),
+    help=(
+        "A pen library file, as the web interface's My pens exports it. A colour image's "
+        "palette is then picked from those pens, and inks worth adding are named."
+    ),
+)
 def analyse(
     image: str,
     width: float | None,
@@ -229,10 +264,13 @@ def analyse(
     margin: float | None,
     fit: str | None,
     paper: str | None,
+    library: str | None,
 ) -> None:
     """Print what IMAGE looks like and the changes that would suit it, as JSON."""
     session = Session()
     with _errors():
+        if library is not None:
+            session.set_pen_library(read_library(library))
         session.load_image(image)
         set_page(session, width, height, margin, fit, paper)
         click.echo(json.dumps(session.analysis(), indent=2))

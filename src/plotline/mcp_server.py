@@ -39,8 +39,10 @@ INSTRUCTIONS = (
     "then set_page and set_pens if the defaults do not fit, then list_styles and describe_style "
     "to choose a style and see its settings and looks. Call analyse_image to see the image's "
     "statistics and suggested changes; apply a suggestion with run(style=..., settings=...) or "
-    "set_page, and set_pens first when its patch holds pens. run draws the image and returns its "
-    "stats, the tone match, the plot lint's findings and a preview at true pen width; apply a "
+    "set_page, and set_pens first when its patch holds pens. If the user lists the pens they "
+    "own, pass them to set_pen_library first, so the colour suggestion picks from them. run "
+    "draws the image and returns its stats, the tone match, the plot lint's findings and a "
+    "preview at true pen width; apply a "
     "finding's patch the same way as a suggestion's. Look at the preview, change settings with "
     "run(settings=...), and repeat; only the stages after a changed setting run again. To meet a "
     "budget of plot time, paths, pen-down metres or dots, call fit, which sets the style's "
@@ -184,7 +186,9 @@ def build_server(session: Session | None = None) -> MCPServer:
     @server.tool()
     async def analyse_image() -> dict[str, Any]:
         """Measure the loaded image and suggest changes for it. stats are numbers about its tones,
-        noise and colour; for a colour image, palette lists the inks that draw it best. Each
+        noise and colour; for a colour image, palette lists the {name, color} inks that draw it
+        best, picked from the pen library when set_pen_library set one, and palette_additions the
+        inks the library lacks that would draw it better, which a pens_to_add note names. Each
         suggestion has a kind, a reason and a patch, which holds any of style, pens (a list of
         {name, width_mm, color}), settings ({stage: {setting: value}}) and page ({width_mm,
         height_mm}), or none for a note. Apply a patch with set_pens for its pens, then
@@ -238,6 +242,20 @@ def build_server(session: Session | None = None) -> MCPServer:
                 ]
             )
             return _array([asdict(pen) for pen in session.pens])
+
+    @server.tool()
+    async def set_pen_library(pens: list[PenSpec]) -> TextContent:
+        """Set the pens the user owns, or clear them with an empty list. A pen has a name, a line
+        width in mm and a colour, which is #rrggbb or an ink name such as blue. analyse_image then
+        picks a colour image's palette from these pens and names inks worth adding. The library
+        changes no drawing; set_pens sets the pens a drawing uses."""
+        inks = plotline.inks()
+        library = [
+            Pen(p["name"], p["width_mm"], inks.get(p["color"].lower(), p["color"])) for p in pens
+        ]
+        with _errors():
+            session.set_pen_library(library)
+            return _array([asdict(pen) for pen in library])
 
     @server.tool()
     async def set_machine(machine: MachineSpec | None) -> dict[str, Any]:

@@ -134,6 +134,19 @@ impl Session {
         Ok(self.inner.set_pens(pens)?)
     }
 
+    /// Use a list of `{"name", "width_mm", "color"}` as the user's own pens, which the image
+    /// analysis picks its palette from; `[]` clears it.
+    #[wasm_bindgen(js_name = setPenLibrary)]
+    pub fn set_pen_library(&mut self, json: &str) -> Result<(), JsError> {
+        let pens: Vec<Pen> = serde_json::from_str(json)?;
+        let pens = pens
+            .iter()
+            .map(|p| Pen::new(&p.name, p.width_mm, &p.color))
+            .collect::<Result<_, _>>()?;
+        self.inner.set_pen_library(pens);
+        Ok(())
+    }
+
     /// Use the machine in `json` for G-code export, or `null` for none. A machine also sets the
     /// speeds the stats time plots at.
     #[wasm_bindgen(js_name = setMachine)]
