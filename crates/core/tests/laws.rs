@@ -1546,6 +1546,35 @@ fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero(
 }
 
 #[test]
+fn a_higher_cells_edge_limit_never_removes_a_wall() {
+    // The limit only leaves walls out, so with joining off a higher one draws at least as much.
+    check(
+        "cells edge",
+        8,
+        (0.5..20.0f64, 1.0..4.0f64),
+        |(limit, factor)| {
+            let mut s = Session::new(64 << 20);
+            s.set_image(scene(60, 80));
+            s.set_style("cells").unwrap();
+            s.update("voronoi", &json!({"count": 300, "iterations": 10}))
+                .unwrap();
+            s.update("order", &json!({"join": "off"})).unwrap();
+            let mut drawn = |max: f64| -> Result<f64, TestCaseError> {
+                s.update("cells", &json!({"max_edge_mm": max})).unwrap();
+                run(&mut s)?;
+                Ok(s.stats().unwrap().pen_down_mm)
+            };
+            let (low, high) = (drawn(limit)?, drawn((limit * factor).min(50.0))?);
+            prop_assert!(
+                low <= high + 1e-9,
+                "{low} mm at {limit}, {high} mm at {factor} times it"
+            );
+            Ok(())
+        },
+    );
+}
+
+#[test]
 fn styles_that_join_points_place_them_by_ink_squared() {
     // A line through points darkens with the square root of their density, so these styles
     // default to an exponent of 2 (see docs/decisions/2026-10-17-ink-squared-for-joined-points.md).

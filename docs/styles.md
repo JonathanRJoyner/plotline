@@ -230,7 +230,9 @@ The outlines of the points' Voronoi cells: small cells where it is dark, large o
 
 **Use it for** a cellular, organic texture.
 
-**Settings.** The cells have none of their own; `voronoi.exponent` is 2, as for every style that joins its points.
+**Settings**
+- `cells.max_edge_mm`: leaves out the wall between two points farther apart than this, 8 mm by default, so the cells at the edge of an inked area do not reach across white paper ([decision](decisions/2026-10-17-cells-edge-limit.md)).
+- `voronoi.exponent` is 2, as for every style that joins its points.
 
 **Pens.** A fine pen. Every corner of a cell joins three edges, so the outlines cannot be drawn in fewer pieces than half the corners; `order.join` is `retrace`, which draws some short edges twice to join the pieces and lifts the pen about a seventh as often. Set it to `on` to draw every edge once, with many more lifts.
 
