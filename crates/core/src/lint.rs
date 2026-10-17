@@ -20,6 +20,7 @@ use crate::machine::Machine;
 use crate::raster;
 use crate::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
 use crate::stages::order::OrderStage;
+use crate::stages::truchet::nest_limit;
 use crate::stats::{self, Speeds, Stats};
 use crate::style::Style;
 use crate::tone_match::{self, ToneMatch};
@@ -448,7 +449,9 @@ fn simplified_fine_share(d: &Drawing, tolerance: f64, min_length: f64) -> Option
 /// more points or strokes, aiming at [`DARK_TARGET`]. But the dark parts must have room for the
 /// marks to land in them (see [`room`]), the order stage must keep every path, and the raster must
 /// see the pens: a pen thinner than a cell is undercounted (a dot counts only when a cell centre
-/// lies within half the pen of it), so what a patch would reach cannot be told.
+/// lies within half the pen of it), so what a patch would reach cannot be told. Truchet's arcs nest
+/// a spacing apart within half a tile, so its closer spacing must fit more arcs than the one it
+/// has (see [`nest_limit`]).
 fn more_dark(
     cx: &Context,
     (d, m): (&Drawing, &Measure),
@@ -464,7 +467,17 @@ fn more_dark(
     });
     if let Some((stage, key, s, s2)) = closer {
         let fits = room(tone, DARK_TONE, false, s.max(cx.scale(stage)));
-        return fits.then(|| cx.set(stage, key, s2))?;
+        let patch = fits.then(|| cx.set(stage, key, s2)).flatten()?;
+        if stage == "truchet" {
+            // Arcs nest a spacing apart, within half a tile, so a closer spacing that fits no
+            // extra arc draws the same.
+            let tile = cx.number(stage, "tile_mm")?;
+            let to = patch["settings"][stage][key].as_f64()?;
+            if nest_limit(tile, to) <= nest_limit(tile, s) {
+                return None;
+            }
+        }
+        return Some(patch);
     }
     let (stage, key, n) = cx.find(&["count", "max_lines"])?;
     let mut to = (n * DARK_TARGET / c).round();
@@ -1042,6 +1055,24 @@ mod tests {
         };
         d.tone = Some(Arc::new(grey));
         assert!(!finds(&d, "hatch", "dark"));
+    }
+
+    #[test]
+    fn truchet_is_offered_a_closer_spacing_only_if_it_nests_another_arc() {
+        let d = drawing_100_with_tone(lines(2.0));
+        let truchet = |tile: f64, spacing: f64| {
+            let set = |s: &mut Value| {
+                s["truchet"]["tile_mm"] = json!(tile);
+                s["truchet"]["spacing_mm"] = json!(spacing);
+            };
+            dark_patch(&d, "truchet", set)
+        };
+        // A 2 mm tile nests only its middle arc at any spacing above 0.28 mm, so a closer
+        // spacing from 5 mm draws the same.
+        assert_eq!(truchet(2.0, 5.0), None);
+        // A 6 mm tile nests only its middle arc at 1 mm, and three each side at 0.3 mm.
+        let patch = json!({"settings": {"truchet": {"spacing_mm": 0.3}}});
+        assert_eq!(truchet(6.0, 1.0), Some(patch));
     }
 
     #[test]

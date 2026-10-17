@@ -78,7 +78,7 @@ impl Default for TruchetSettings {
 /// The most arcs either side of the middle one that a corner of a tile of side `side` can nest,
 /// `spacing` apart, without meeting the arcs of the opposite corner: the outermost arcs of the
 /// two corners then stay at least `spacing` apart along the tile's diagonal.
-fn nest_limit(side: f64, spacing: f64) -> usize {
+pub(crate) fn nest_limit(side: f64, spacing: f64) -> usize {
     (((SQRT_2 - 1.0) * side / spacing - 1.0) / 2.0)
         .floor()
         .max(0.0) as usize
