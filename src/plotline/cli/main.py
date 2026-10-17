@@ -511,12 +511,11 @@ def run(
             if handle.error is not None:
                 raise handle.error
             found = handle.optimum
-            if found is None:
-                click.echo("optimize: no trial stayed within the target", err=True)
-            else:
-                click.echo(f"optimize: {found['reason']}")
-                if fix := _options(found["patch"]):
-                    click.echo(f"  apply: {fix}")
+            assert found is not None  # a search that ended without an error is done
+            # With no trial scored, the reason says why and there is no patch.
+            click.echo(f"optimize: {found['reason']}")
+            if fix := _options(found["patch"]):
+                click.echo(f"  apply: {fix}")
         elif fits:
             [(metric, target)] = fits
             handle = session.fit(metric, target)

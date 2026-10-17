@@ -298,6 +298,7 @@ button.icon { width: 30px; padding: 0; justify-content: center; }
 .chip:has(:disabled) { opacity: 0.45; background: var(--field); cursor: not-allowed; }
 .chip:has(:checked) { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 fieldset > button, fieldset > .button { margin: 4px 6px 0 0; }
+.share-link { width: 100%; box-sizing: border-box; }
 .gcode { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .gcode .help { margin: 0; }
 .gcode button { width: 100%; min-width: 0; }

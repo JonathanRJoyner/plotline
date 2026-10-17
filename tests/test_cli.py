@@ -308,6 +308,17 @@ def test_run_prints_the_tone_match_and_an_optimize_suggestion(tmp_path, image):
     assert len(apply) == ("already follows" not in line)
 
 
+def test_optimize_on_a_blank_drawing_says_why_and_offers_nothing(tmp_path):
+    white = tmp_path / "white.png"
+    write_png(white, np.ones((30, 40, 3)))
+    args = ["run", "hatch", str(white), "--out", str(tmp_path / "o.svg"), "--quiet"]
+    r = run(*args, "--width", "40", "--height", "30", "--margin", "0", "--optimize")
+    assert r.exit_code == 0, r.output
+    line = next(x for x in r.stdout.splitlines() if x.startswith("optimize: "))
+    assert "draws anything here" in line and "target" not in line
+    assert not any(x.startswith("  apply: ") for x in r.stdout.splitlines())
+
+
 def test_run_rejects_bad_inputs(tmp_path, image):
     out = str(tmp_path / "o.svg")
     r = run("run", "grid", image, "--out", out, "--set", "order.min_length_mm=abc")

@@ -28,9 +28,9 @@ export type Trial = {
   value: number; error: number | null; minutes: number | null; metric: number | null;
   over: boolean; slow: boolean; warnings: string[]; failed: string | null;
 };
-/** What an optimize search found, in the shape of the engine's `Optimum`; nothing is applied. */
+/** What an optimize search found, in the shape of the engine's `Optimum`; nothing is applied. `error` is null when no trial scored. */
 export type Optimum = {
-  stage: string; key: string; value: unknown; error: number; minutes: number;
+  stage: string; key: string; value: unknown; error: number | null; minutes: number;
   current: unknown; current_error: number | null; current_minutes: number;
   budget: { metric: string; target: number } | null;
   limit_minutes: number | null; beyond: Trial | null;
