@@ -64,8 +64,6 @@ pub fn grid_style() -> Style {
         Arc::new(GridPlacer),
         Arc::new(DotRenderer),
     )
-    .with_look("quick", json!({"points": {"spacing_mm": 2.0}}))
-    .with_look("fine", json!({"points": {"spacing_mm": 0.7}}))
 }
 
 /// A style of tone, the split between pens, one stage that turns the tone map into paths, and
@@ -94,7 +92,6 @@ pub fn hatch_style() -> Style {
          darker areas.",
         Arc::new(HatchStage),
     )
-    .with_look("fine", json!({"hatch": {"spacing_mm": 0.7}}))
 }
 
 /// The tone gamma the rippling styles start from. Images store grey gamma-encoded while ink and
@@ -111,7 +108,11 @@ pub fn waves_style() -> Style {
         Arc::new(WaveStage),
     )
     .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
-    .with_look("faithful", json!({"waves": {"spacing_mm": 2.8}}))
+    .with_look(
+        "faithful",
+        json!({"tone": {"response": "auto"}, "waves": {"spacing_mm": 1.7}}),
+    )
+    .with_look("quick", json!({"waves": {"spacing_mm": 4.0}}))
     .with_look("fine", json!({"waves": {"spacing_mm": 1.0}}))
 }
 
@@ -124,7 +125,11 @@ pub fn spiral_style() -> Style {
         Arc::new(SpiralStage),
     )
     .with_defaults("tone", json!({"gamma": RIPPLE_GAMMA}))
-    .with_look("fine", json!({"spiral": {"spacing_mm": 1.4}}))
+    .with_look(
+        "faithful",
+        json!({"spiral": {"spacing_mm": 2.0}, "tone": {"response": "auto"}}),
+    )
+    .with_look("fine", json!({"spiral": {"spacing_mm": 1.2}}))
 }
 
 /// An image's own marks, outlined and filled: tone, split, ink, order. A finer tone map than the
@@ -151,7 +156,7 @@ pub fn stipple_style() -> Style {
         Arc::new(VoronoiPlacer),
         Arc::new(StippleRenderer),
     )
-    .with_look("fine", json!({"voronoi": {"count": 12000}}))
+    .with_look("faithful", json!({"voronoi": {"count": 10000}}))
 }
 
 /// `style`, whose renderer joins its points with lines, with the points' density following ink
@@ -172,10 +177,7 @@ pub fn line_style() -> Style {
         Arc::new(VoronoiPlacer),
         Arc::new(TspRenderer),
     ))
-    .with_look(
-        "faithful",
-        json!({"tone": {"response": "auto"}, "voronoi": {"count": 20000}}),
-    )
+    .with_look("faithful", json!({"voronoi": {"count": 20000}}))
 }
 
 /// Loops traced along the one line through evenly spread points: tone, split, voronoi, tsp,
@@ -209,7 +211,7 @@ pub fn dashes_style() -> Style {
         Arc::new(VoronoiPlacer),
         Arc::new(DashRenderer),
     )
-    .with_look("faithful", json!({"voronoi": {"count": 12000}}))
+    .with_look("faithful", json!({"voronoi": {"count": 8400}}))
 }
 
 /// Straight strokes chained from dark to dark: tone, split, sketch, order.
@@ -222,9 +224,9 @@ pub fn sketch_style() -> Style {
     )
     .with_look(
         "faithful",
-        json!({"tone": {"response": "auto"}, "sketch": {"max_lines": 20000}}),
+        json!({"sketch": {"max_lines": 17000}, "tone": {"response": "auto"}}),
     )
-    .with_look("fine", json!({"sketch": {"max_lines": 10000}}))
+    .with_look("fine", json!({"sketch": {"max_lines": 7100}}))
 }
 
 /// The shortest tree joining evenly spread points: tone, split, voronoi, mst, order.
@@ -253,11 +255,7 @@ pub fn mesh_style() -> Style {
         Arc::new(DelaunayRenderer),
     ))
     .with_defaults("order", json!({"join": "retrace"}))
-    .with_look(
-        "faithful",
-        json!({"tone": {"response": "auto"}, "voronoi": {"count": 6000}}),
-    )
-    .with_look("fine", json!({"voronoi": {"count": 20000}}))
+    .with_look("fine", json!({"voronoi": {"count": 7100}}))
 }
 
 /// The outlines of the points' Voronoi cells: tone, split, voronoi, cells, order.
@@ -270,11 +268,7 @@ pub fn cells_style() -> Style {
         Arc::new(CellsRenderer),
     ))
     .with_defaults("order", json!({"join": "retrace"}))
-    .with_look(
-        "faithful",
-        json!({"tone": {"response": "auto"}, "voronoi": {"count": 8400}}),
-    )
-    .with_look("fine", json!({"voronoi": {"count": 12000}}))
+    .with_look("faithful", json!({"voronoi": {"count": 14000}}))
 }
 
 /// Dots on a regular grid, each sized by the ink: tone, split, points, stipple, order.
@@ -299,7 +293,7 @@ pub fn dither_style() -> Style {
         Arc::new(DitherPlacer),
         Arc::new(DotRenderer),
     )
-    .with_look("faithful", json!({"dither": {"spacing_mm": 0.8}}))
+    .with_look("fine", json!({"dither": {"spacing_mm": 0.7}}))
 }
 
 /// Circles packed without overlapping: tone, split, poisson, stipple, order.
@@ -316,7 +310,7 @@ pub fn circles_style() -> Style {
         "stipple",
         json!({"size_mm": 3.0, "vary": 1.0, "shape": "circle"}),
     )
-    .with_look("faithful", json!({"poisson": {"spacing_mm": 1.5}}))
+    .with_look("faithful", json!({"poisson": {"spacing_mm": 2.1}}))
 }
 
 /// Level lines of the image, like a topographic map: tone, split, contours, order.
@@ -337,10 +331,6 @@ pub fn flow_style() -> Style {
         "Evenly spaced lines that follow the image's edges, closer together where it is darker.",
         Arc::new(FlowStage),
     )
-    .with_look(
-        "faithful",
-        json!({"tone": {"response": "auto"}, "flow": {"min_spacing_mm": 0.3}}),
-    )
 }
 
 /// One space-filling curve over the whole page that folds tighter where it is darker: tone, split,
@@ -353,10 +343,8 @@ pub fn hilbert_style() -> Style {
          image.",
         Arc::new(HilbertStage),
     )
-    .with_look(
-        "faithful",
-        json!({"tone": {"response": "auto"}, "hilbert": {"cell_mm": 0.3}}),
-    )
+    .with_look("faithful", json!({"hilbert": {"cell_mm": 0.4}}))
+    .with_look("quick", json!({"hilbert": {"cell_mm": 0.9}}))
 }
 
 /// The image cut into patches, each filled with lines at its own angle: tone, split, mosaic, order.

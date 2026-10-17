@@ -59,7 +59,7 @@ pub struct CellsSettings {
 
 impl Default for CellsSettings {
     fn default() -> Self {
-        CellsSettings { max_edge_mm: 8.0 }
+        CellsSettings { max_edge_mm: 16.0 }
     }
 }
 
