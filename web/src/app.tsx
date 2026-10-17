@@ -167,7 +167,7 @@ function OpenInput({ onOpen }: { onOpen: (file: File | undefined) => void }) {
 }
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "compare" | "previous" | "view" | "onView" | "fits" | "focusing"> & {
-  engine: Engine; status: StatusStore; stages: Stage[]; settings: State["settings"]; error?: string; fitError?: string;
+  engine: Engine; status: StatusStore; stages: Stage[]; settings: State["settings"]; image: number; error?: string; fitError?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
   onSettings: () => void; onTour: () => void; onUndo?: () => void; onRedo?: () => void;
   onApply: (patch: Patch) => void; lintError?: string;
@@ -177,7 +177,7 @@ type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "r
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, settings, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onOptimize, onApply, lintError, ...preview }: RunViewProps) {
+function RunView({ engine, status, stages, settings, image, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onOptimize, onApply, lintError, ...preview }: RunViewProps) {
   const { run, stats, lint, tone } = useStatus(status);
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
@@ -306,7 +306,7 @@ function RunView({ engine, status, stages, settings, error, fitError, onOpen, on
         <StatsPanel stats={stats} tone={tone} />
         <LintList findings={lint} error={lintError} onApply={onApply} />
         <FitPanel
-          disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} settings={settings} stages={stages}
+          image={image} disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} settings={settings} stages={stages}
           onFit={(metric, target) => { setFitted(null); setOptimum(null); onFit(metric, target); }}
           onOptimize={(metric, target) => { setFitted(null); setOptimum(null); onOptimize(metric, target); }}
           onApply={(patch) => { setOptimum(null); onApply(patch); }}
@@ -340,6 +340,7 @@ export function App() {
   const [pensOpens, setPensOpens] = useState(0);
   const [library, setLibrary] = useState(loadLibrary); // My pens, kept in this browser
   const [dismissed, setDismissed] = useState(new Set<string>()); // suggestion kinds hidden for this image
+  const [images, setImages] = useState(0); // the images opened, so what was said of one goes with it
   const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -483,9 +484,15 @@ export function App() {
     }, 150);
   }
 
+  // A new image starts with every suggestion, and with no Optimize sentence from the last one.
+  function newImage() {
+    setDismissed(new Set());
+    setImages((n) => n + 1);
+  }
+
   async function openImage(file: File | undefined) {
     if (!file) return;
-    setDismissed(new Set());
+    newImage();
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       await call("setImageBytes", [bytes], "image", [bytes.buffer]);
@@ -586,12 +593,12 @@ export function App() {
       {/* Before the settings in the page, so Tab reaches the toolbar first; the grid puts it between the columns. */}
       <main>
         <RunView
-          engine={engine} status={status} stages={stages} settings={settings} canvas={state.canvas} paper={state.paper} hidden={hidden}
+          engine={engine} status={status} stages={stages} settings={settings} image={images} canvas={state.canvas} paper={state.paper} hidden={hidden}
           pens={state.pens} hasImage={state.image} onOpen={openImage}
           focus={state.focus} radius={Number(settings.tone?.focus_mm ?? 40)}
           onFocusAt={addFocus} onFocusRemove={(i) => removeFocus((state.settings.tone?.focus as number[][] | undefined)?.[i])}
           error={errors[""] || (errors.image && `Could not open the image (${errors.image}).${state.image ? " The previous image is still open." : ""}`)}
-          onSample={() => { setDismissed(new Set()); call("sample", [], "image"); }} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
+          onSample={() => { newImage(); call("sample", [], "image"); }} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
           onSettings={() => {
             setErrors((es) => ({ ...es, machine: "" })); // an old refusal would show over a good machine
             setSettingsOpens((n) => n + 1);
