@@ -168,9 +168,8 @@ test("a plot lint finding's Apply clears it", async ({ page }) => {
   await expect(apply).toHaveCount(0);
 });
 
-test("a colour image's palette suggestion sets the pens and Pen use", async ({ page }) => {
-  await open(page);
-  // Four saturated stripes, drawn in the page and encoded as a PNG.
+// Opens four saturated stripes, drawn in the page and encoded as a PNG, as the image.
+async function openStripes(page: Page) {
   const png = await page.evaluate(async () => {
     const canvas = document.createElement("canvas");
     canvas.width = 240;
@@ -181,6 +180,11 @@ test("a colour image's palette suggestion sets the pens and Pen use", async ({ p
     return Array.from(new Uint8Array(await blob.arrayBuffer()));
   });
   await page.locator('input[type="file"][accept^="image/"]').setInputFiles({ name: "colours.png", mimeType: "image/png", buffer: Buffer.from(png) });
+}
+
+test("a colour image's palette suggestion sets the pens and Pen use", async ({ page }) => {
+  await open(page);
+  await openStripes(page);
   const id = await ran(page, 0);
   const apply = page.getByRole("button", { name: /^Apply: This is a colour image\./ });
   await expect(apply).toBeVisible();
@@ -610,6 +614,24 @@ test("a saved pen comes back from My pens after a reload, and exports as a file"
   expect(saved.format).toBe("plotline-pens");
   expect(saved.pens).toHaveLength(1);
   expect(saved.pens[0]).toMatchObject({ name: "Fine red", width_mm: 0.25 });
+});
+
+test("pens saved under My pens choose a colour image's palette, and a note names an ink to add", async ({ page }) => {
+  const mine = [{ name: "Lemon fine", width_mm: 0.3, color: "#f5c400" }, { name: "Sky fine", width_mm: 0.3, color: "#1d4fb8" }];
+  await page.addInitScript((pens) => localStorage.setItem("plotline.pens", JSON.stringify({ format: "plotline-pens", version: 1, pens })), mine);
+  await open(page);
+  await openStripes(page);
+  const id = await ran(page, 0);
+  await expect(page.getByText(/^Pens you don't have would draw its colours closer: with an? \w+ pen/)).toBeVisible();
+  const apply = page.getByRole("button", { name: /^Apply: This is a colour image\. Your pens / });
+  await expect(apply).toBeVisible();
+  await apply.click();
+  await ran(page, id);
+  // Only the saved pens, each of them, as the image's yellow and blue need both.
+  const names = page.locator(".pen .name");
+  await expect.poll(async () => (await names.allTextContents()).sort()).toEqual(mine.map((p) => p.name).sort());
+  await expect(page.getByRole("combobox", { name: "Pen use" })).toHaveValue("by_colour");
+  await expect(apply).toHaveCount(0);
 });
 
 // The steps as tour.tsx lists them, so a step added there is checked here with no change.

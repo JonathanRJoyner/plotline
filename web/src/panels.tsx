@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
 import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Optimum, Pen, Stats, ToneMatch } from "./events";
 import { download } from "./files";
-import { addPen, libraryFile, loadLibrary, mergeLibraries, parseLibrary, removePen, samePen, saveLibrary, usable } from "./library";
+import { addPen, libraryFile, mergeLibraries, parseLibrary, removePen, samePen, usable } from "./library";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 import { controlsFor } from "./schema";
 import { place } from "./tour";
@@ -206,15 +206,18 @@ export function StylesDialog({ opens, styles, style, canvas, paper, thumbs, onPi
   );
 }
 
-type PensDialogProps = { opens: number; pens: Pen[]; bank: BankPen[]; inks: Ink[]; error?: string; onChange: (pens: Pen[]) => void };
+type PensDialogProps = {
+  opens: number; pens: Pen[]; bank: BankPen[]; inks: Ink[]; error?: string; onChange: (pens: Pen[]) => void;
+  /** My pens, the saved pen library, and where a changed one goes. */
+  library: Pen[]; onLibrary: (library: Pen[]) => void;
+};
 
 // Your pens in drawing order on the left, the chosen one's name, width and colour on the right,
 // and under them your saved pens and the pen bank to give it a pen. Changes apply as they are made.
-export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDialogProps): JSX.Element {
+export function PensDialog({ opens, pens, bank, inks, error, onChange, library, onLibrary }: PensDialogProps): JSX.Element {
   const [chosen, choose] = useState(0);
   const [kind, setKind] = useState("");
   const [query, setQuery] = useState("");
-  const [library, setLibrary] = useState(loadLibrary);
   const [importError, setImportError] = useState<string>();
   const i = Math.min(chosen, pens.length - 1); // the list can shrink under it, as on a refused change
   const pen = pens[i];
@@ -226,7 +229,7 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
     [list[i], list[i + by]] = [list[i + by], list[i]];
     put(list, i + by);
   };
-  const keep = (list: Pen[]) => { setLibrary(list); saveLibrary(list); };
+  const keep = onLibrary;
   // Merges the pens of a library file in, or says why it cannot.
   const importFile = async (file: File) => {
     let value: unknown;
@@ -286,7 +289,7 @@ export function PensDialog({ opens, pens, bank, inks, error, onChange }: PensDia
         </div>
         <div data-tour="library">
           <h3>My pens</h3>
-          <p class="help">Pens you save stay in this browser. Choosing one gives this pen its name, line width and colour.</p>
+          <p class="help">Pens you save stay in this browser. Choosing one gives this pen its name, line width and colour. A colour image's suggested pens come from them.</p>
           {library.length === 0 ? <p class="help">No saved pens yet. Save this pen keeps the pen above for next time.</p> : (
             <ul class="library">
               {library.map((p, j) => (
