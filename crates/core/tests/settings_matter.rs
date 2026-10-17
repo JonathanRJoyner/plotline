@@ -572,6 +572,12 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "fill rings are drawn only in fill mode, and learned starts in centreline mode",
     ),
     (
+        "learned",
+        "order",
+        "join",
+        "on the noise image the stand-in model's lines are dots and short strokes, and no two share a vertex",
+    ),
+    (
         "hilbert",
         "order",
         "optimize",
