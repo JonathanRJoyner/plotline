@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from functools import partial
+from pathlib import Path
 
 import anyio
 import pytest
@@ -12,10 +13,12 @@ from machines import MACHINE
 from mcp import Client, StdioServerParameters
 from pngs import write_png
 
-from plotline import RunState, Session, _core, inks
+from plotline import RunState, Session, _core, inks, models
 from plotline.mcp_server import build_server
 
 pytestmark = pytest.mark.anyio
+
+TINY_MODEL = Path(__file__).parent.parent / "web" / "e2e" / "fixtures" / "tiny-conv.onnx"
 
 
 @pytest.fixture
@@ -453,6 +456,43 @@ async def test_a_superseded_run_returns_no_drawing():
     assert all("the run was cancelled" in text(r) for r in results)
 
 
+async def test_list_models_reports_downloaded_and_available(monkeypatch):
+    entry = {
+        "id": "demo-1",
+        "label": "Demo lines",
+        "description": "Draws demo lines.",
+        "url": "https://example.test/demo-1.onnx",
+        "sha256": "0" * 64,
+        "licence": "MIT",
+        "attribution": "Demo authors",
+        "source": "https://example.test/source",
+        "paper": "https://example.test/paper",
+        "training": "Trained on demo photos.",
+        "bytes": 2_500_000,
+        "overlap": 64,
+    }
+    monkeypatch.setattr(_core, "catalogue", lambda: [entry])
+    own = models.add_file(TINY_MODEL)
+    async with Client(build_server(Session())) as c:
+        names = {tool.name for tool in (await c.list_tools()).tools}
+        listed = data(await call(c, "list_models"))
+    assert listed == {
+        "downloaded": [{"id": own, "label": own}],
+        "available": [
+            {
+                "id": "demo-1",
+                "label": "Demo lines",
+                "description": "Draws demo lines.",
+                "licence": "MIT",
+                "bytes": 2_500_000,
+            }
+        ],
+    }
+    # A person accepts each licence, in the GUI or the CLI: no tool fetches a model.
+    assert "list_models" in names
+    assert {n for n in names if "model" in n or "download" in n} == {"list_models"}
+
+
 async def test_stdio_server_lists_the_tools():
     # The real thing: `plotline mcp` as a subprocess speaking the protocol over its pipes.
     command = ["-c", "from plotline.cli.main import main; main()", "mcp"]
@@ -475,4 +515,5 @@ async def test_stdio_server_lists_the_tools():
         "get_session",
         "load_preset",
         "export",
+        "list_models",
     }
