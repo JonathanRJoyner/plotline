@@ -3,6 +3,10 @@
 //! Each stage declares one settings struct deriving `JsonSchema`. Its schema, with help text,
 //! bounds, defaults and `x-` UI hints, is the only description of settings that clients see, and
 //! [`validate`] checks a JSON object against it before the stage ever receives the values.
+//!
+//! The schema lists `properties` alphabetically. A stage that wants its form in another order adds
+//! a root-level `"x-order": [key, ...]` to its schema; clients show those settings first, in that
+//! order, then any left over in the schema's order.
 
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;

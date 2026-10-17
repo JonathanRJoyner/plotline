@@ -53,6 +53,8 @@ npx playwright install chromium
 npm run e2e
 ```
 
+The flows serve the bundle on a free port, or on `PLOTLINE_E2E_PORT` when it is set, so two worktrees can run them at once.
+
 ## Property laws
 
 `crates/core/tests/laws.rs` checks laws that every style and setting keeps, on random cases that proptest draws from the registry and the settings schemas: a run ends with a drawing or a message, the same inputs give the same bytes, every mark stays on the drawing area, a cancel ends a run, and the laws of features with a contract, such as the budget fit and the style switch. `cargo test` runs a fixed, seeded number of cases, and a new style or setting is covered with no edit. A failing law prints the shrunk case. To run more cases, or other ones:

@@ -249,6 +249,8 @@ export function Preview(props: Props): JSX.Element {
   const drag = useRef<{ x: number; y: number; travel: number } | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [tone, setTone] = useState<{ result: ResultEvent; bitmap: ImageBitmap } | null>(null);
+  // Counts the theme changes, so the divider, which reads the accent colour when it paints, repaints in the new one.
+  const [themes, setThemes] = useState(0);
   const bitmap = tone?.result === result ? tone.bitmap : null; // a closed bitmap never matches the new result
 
   const fit = (w: number, h: number) => setView(() => fitView(canvas.width_mm, canvas.height_mm, w, h));
@@ -287,6 +289,19 @@ export function Preview(props: Props): JSX.Element {
     };
   }, [result]);
 
+  // The theme changes with the system's colour scheme or the root's data-theme, which the theme button sets.
+  useEffect(() => {
+    const changed = () => setThemes((n) => n + 1);
+    const scheme = matchMedia("(prefers-color-scheme: dark)");
+    scheme.addEventListener("change", changed);
+    const root = new MutationObserver(changed);
+    root.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      scheme.removeEventListener("change", changed);
+      root.disconnect();
+    };
+  }, []);
+
   // One animation frame per change; a newer change cancels the pending one.
   useEffect(() => {
     const id = requestAnimationFrame(() => {
@@ -294,7 +309,7 @@ export function Preview(props: Props): JSX.Element {
       paint(ctx, props, view, size.w, size.h, window.devicePixelRatio || 1, bitmap);
     });
     return () => cancelAnimationFrame(id);
-  }, [props.canvas, props.paper, props.frames, props.result, props.running, props.showSource, props.showTravel, props.compare?.against, props.compare?.at, props.previous, props.hidden, props.pens, props.focusing, view, size, bitmap]);
+  }, [props.canvas, props.paper, props.frames, props.result, props.running, props.showSource, props.showTravel, props.compare?.against, props.compare?.at, props.previous, props.hidden, props.pens, props.focusing, view, size, bitmap, themes]);
 
   // Zooms by `k`, keeping the page point under (px, py) in place.
   const zoom = (k: number, px: number, py: number) => setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));

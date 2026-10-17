@@ -1,0 +1,1 @@
+- **Tidier details:** the stats read in metres and say "1 path". The Image settings keep Levels, Black and White together, and suggestions can be dismissed. Test chart lives with the pens, Tab reaches the toolbar first, and a phone shows the style menu in the first screen. A Fit message clears once its value is undone.

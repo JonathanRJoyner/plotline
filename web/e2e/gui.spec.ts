@@ -87,7 +87,7 @@ test("the sample image draws in every style", async ({ page }) => {
   const first = await styleSelect(page).inputValue();
   for (const style of styles.filter((s) => s !== first)) {
     id = await pick(page, style, id);
-    await expect(page.locator(".stats"), style).toContainText("paths");
+    await expect(page.locator(".stats"), style).toContainText(/paths?/);
   }
 });
 
@@ -164,8 +164,8 @@ test("a style with no look but Balanced hides the Look menu", async ({ page }) =
   await expect(page.getByRole("combobox", { name: "Look", exact: true })).toHaveCount(0);
 });
 
-test("Fit to target meets its target", async ({ page }) => {
-  test.setTimeout(120_000);
+// Starts Fit to target for three quarters of the hatch drawing's plot time, and returns the target in minutes.
+async function fitHatch(page: Page): Promise<number> {
   await pick(page, "hatch", await sample(page));
   const [, min, s] = /about (\d+) min (\d+) s/.exec((await page.locator(".stats").textContent()) ?? "") ?? [];
   const target = Math.round(((Number(min) * 60 + Number(s)) / 60) * 0.75 * 10) / 10;
@@ -174,12 +174,31 @@ test("Fit to target meets its target", async ({ page }) => {
   await page.getByRole("spinbutton", { name: "Target", exact: true }).fill(String(target));
   await page.getByRole("combobox", { name: "Target unit" }).selectOption("minutes");
   await page.getByRole("button", { name: "Fit to target" }).click();
+  return target;
+}
+
+test("Fit to target meets its target", async ({ page }) => {
+  test.setTimeout(120_000);
+  const target = await fitHatch(page);
   const fitted = page.locator("form.fit span");
   await expect(fitted).toContainText("for a target of", { timeout: 100_000 });
   const [, achieved, aimed] = /: ([\d.e+-]+) min for a target of ([\d.]+) min/.exec((await fitted.textContent()) ?? "") ?? [];
   expect(Number(aimed)).toBe(target);
   // The solver stops within 2 % of the target (TOLERANCE in crates/core/src/fit.rs).
   expect(Math.abs(Number(achieved) / target - 1)).toBeLessThanOrEqual(0.02);
+});
+
+test("a Fit message clears after Undo", async ({ page }) => {
+  test.setTimeout(120_000);
+  await fitHatch(page);
+  const spacing = page.getByRole("spinbutton", { name: /^spacing( mm)?$/i });
+  const fitted = page.locator("form.fit span");
+  // The message shows once the fit's value is applied, so the spacing holds it by then.
+  await expect(fitted).toContainText("for a target of", { timeout: 100_000 });
+  const chosen = await spacing.inputValue();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(spacing).not.toHaveValue(chosen);
+  await expect(fitted).toHaveCount(0);
 });
 
 test("a plot lint finding's Apply clears it", async ({ page }) => {
@@ -227,6 +246,37 @@ test("a colour image's palette suggestion sets the pens and Pen use", async ({ p
   await expect(apply).toHaveCount(0);
 });
 
+test("a suggestion can be dismissed, and comes back with the next image", async ({ page }) => {
+  await open(page);
+  const file = page.locator(".toolbar input[type=file]");
+  await file.setInputFiles(await coloursPng(page));
+  const id = await ran(page, 0);
+  const suggestions = page.getByRole("group", { name: "Suggestions" });
+  const apply = page.getByRole("button", { name: /^Apply: This is a colour image\./ });
+  await expect(apply).toBeVisible();
+  // The cross is named for its reason and hides only that suggestion.
+  const dismiss = page.getByRole("button", { name: /^Dismiss: This is a colour image\./ });
+  await dismiss.click();
+  await expect(apply).toHaveCount(0);
+  // The panel goes with its last suggestion, and a redraw does not bring the dismissed one back.
+  await expect(suggestions).toHaveCount(0);
+  await pick(page, "hatch", id);
+  await expect(apply).toHaveCount(0);
+  // A new image starts with every suggestion.
+  await file.setInputFiles(await coloursPng(page));
+  await expect(apply).toBeVisible();
+});
+
+test("the stats read in metres and a single path", async ({ page }) => {
+  const id = await pick(page, "line", await sample(page));
+  const stats = page.locator(".stats");
+  // The line style draws one path, whose length is metres.
+  await expect(stats).toContainText(/^1 path · pen down \d+\.\d{2} m · pen up (\d+\.\d mm|\d+\.\d{2} m) · about \d+ min \d+ s to plot/);
+  // Thousands of paths are grouped.
+  await pick(page, "stipple", id);
+  await expect(stats).toContainText(/^\d{1,3}(,\d{3})+ paths · /);
+});
+
 test("the stats show the tone match", async ({ page }) => {
   await sample(page);
   await expect(page.locator(".stats")).toContainText(/tone error \d\.\d{3} · SSIM -?\d\.\d{2}/);
@@ -249,8 +299,17 @@ test("Optimize suggests a spacing and changes nothing until Apply", async ({ pag
   // The still life's best hatch spacing is wider than the default (brief §14, "Optimize").
   const [, value] = /^Spacing at ([\d.]+) mm follows/.exec((await found.textContent()) ?? "") ?? [];
   expect(Number(value)).toBeGreaterThan(Number(before));
+  // A changed setting takes the suggestion back, and the settings as they were bring it again.
+  await spacing.fill((Number(before) + 0.1).toFixed(2));
+  await spacing.blur();
+  const changed = await ran(page, searched);
+  await expect(found).toHaveCount(0);
+  await spacing.fill(before);
+  await spacing.blur();
+  const restored = await ran(page, changed);
+  await expect(found).toContainText("follows the image's tones best");
   await page.getByRole("button", { name: /^Apply: Spacing at/ }).click();
-  await ran(page, searched);
+  await ran(page, restored);
   await expect(spacing).toHaveValue(value);
 });
 
@@ -515,6 +574,27 @@ test("Compare swipes the previous drawing against the current one", async ({ pag
   expect(await canvasHash(page, 2 / 3, 1)).toBe(right);
 });
 
+// The divider's pixel at the middle of the preview, where the swipe starts, as r, g, b.
+const dividerColour = (page: Page) => page.locator(".preview canvas").evaluate((c: HTMLCanvasElement) =>
+  Array.from(c.getContext("2d")!.getImageData(Math.round(c.width / 2), Math.round(c.height / 2), 1, 1).data.slice(0, 3)));
+
+test("the compare divider takes the accent of the theme it is in", async ({ page }) => {
+  await sample(page);
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  const [light, dark] = [[79, 70, 229], [139, 143, 249]]; // --accent in style.css
+  await expect.poll(() => dividerColour(page)).toEqual(light);
+  // The system's colour scheme, while the theme follows it.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(() => dividerColour(page)).toEqual(dark);
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect.poll(() => dividerColour(page)).toEqual(light);
+  // The theme button: system, then light, then dark.
+  await page.getByRole("button", { name: "System theme" }).click();
+  await page.getByRole("button", { name: "Light theme" }).click();
+  await expect(page.getByRole("button", { name: "Dark theme" })).toBeVisible();
+  await expect.poll(() => dividerColour(page)).toEqual(dark);
+});
+
 test("Compare waits for a drawing, and says when there is nothing to compare with", async ({ page }) => {
   await open(page);
   // In the page but hidden, so it does not offer a comparison of nothing.
@@ -560,12 +640,58 @@ test("the toolbar keeps to one row on a wide window and two on a phone, its butt
   }
 });
 
+test("Tab reaches the toolbar first, and the skip link jumps to the style settings", async ({ page }) => {
+  await open(page);
+  const skip = page.getByRole("link", { name: "Skip to the style settings" });
+  await page.keyboard.press("Tab");
+  await expect(skip).toBeFocused();
+  await page.keyboard.press("Tab");
+  expect(await page.evaluate(() => !!document.activeElement?.closest(".toolbar"))).toBe(true);
+  // The columns keep their places on screen: the settings left of the preview and the page panels right of it.
+  const [left, middle, right] = await Promise.all(["aside.side-left", "main", "aside.side-right"].map((c) => page.locator(c).boundingBox()));
+  expect(left!.x + left!.width).toBeLessThanOrEqual(middle!.x + 1);
+  expect(middle!.x + middle!.width).toBeLessThanOrEqual(right!.x + 1);
+  // The link lands on the Style card, and Tab goes on to the menu in it.
+  await skip.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#style-settings")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(styleSelect(page)).toBeFocused();
+});
+
+test("on a phone the style menu shows without scrolling", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await sample(page);
+  await expect(fitPanel(page)).not.toHaveAttribute("open", "");
+  const menu = (await styleSelect(page).boundingBox())!;
+  expect(menu.y + menu.height, "bottom of the Style menu").toBeLessThanOrEqual(812);
+  expect(await page.evaluate(() => scrollY)).toBe(0);
+});
+
+test("two pen edits made before the first reply both land", async ({ page }) => {
+  await open(page);
+  await page.getByRole("button", { name: "Edit pens" }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Pens", exact: true }) });
+  // Both changes fire in one task, so the engine cannot have answered the first when the second is made.
+  await dialog.evaluate((d) => {
+    for (const [label, value] of [["Name", "Quick"], ["Line width", "0.25"]]) {
+      const input = [...d.querySelectorAll("label")].find((l) => l.textContent?.trim().startsWith(label))!.querySelector("input")!;
+      input.value = value;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+  await expect(dialog.locator("ol.pens")).toContainText("Quick");
+  await expect(dialog.locator("ol.pens")).toContainText("0.25");
+});
+
 test("the test chart draws without an image", async ({ page }) => {
   await open(page);
-  await page.getByRole("button", { name: "Test chart" }).click();
+  // It calibrates the first pen, so it sits with the pens and not with the exports.
+  await expect(page.getByRole("group", { name: "Export" }).getByRole("button", { name: "Test chart" })).toHaveCount(0);
+  await page.getByRole("group", { name: "Pens" }).getByRole("button", { name: "Test chart" }).click();
   const id = await ran(page, 0);
-  const [, paths] = /(\d+) paths/.exec((await page.locator(".stats").textContent()) ?? "") ?? [];
-  expect(Number(paths)).toBeGreaterThan(0);
+  const [, paths] = /([\d,]+) paths?/.exec((await page.locator(".stats").textContent()) ?? "") ?? [];
+  expect(Number(paths.replaceAll(",", ""))).toBeGreaterThan(0);
   await expect(page.getByRole("button", { name: "Export SVG" })).toBeEnabled();
   // The passes patches are overdraw by design, and the next run replaces the chart.
   await expect(page.locator("ul.lint")).toContainText("drawn over");
