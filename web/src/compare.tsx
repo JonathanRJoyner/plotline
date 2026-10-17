@@ -30,7 +30,7 @@ export function choice(want: Against, offered: Record<Against, boolean>): Agains
 
 type Props = {
   on: boolean;
-  /** False while there is no drawing at all. */
+  /** False while there is no drawing at all: the controls stay in the page, hidden. */
   enabled: boolean;
   /** What is compared, or null when there is nothing to compare with yet. */
   against: Against | null;
@@ -59,9 +59,9 @@ export function CompareControls({ on, enabled, against, offered, at, onOn, onAga
           }}
         />
       )}
-      <div class="compare-pick">
+      <div class="compare-pick" hidden={!enabled}>
         <label class="chip" title="Compare" data-tour="compare">
-          <input class="visually-hidden" type="checkbox" checked={on} disabled={!enabled} onChange={(e) => onOn(e.currentTarget.checked)} />
+          <input class="visually-hidden" type="checkbox" checked={on} onChange={(e) => onOn(e.currentTarget.checked)} />
           <Columns2 /> <span class="label">Compare</span>
         </label>
         {on && against === null && <span>Run again to compare with the previous drawing.</span>}
