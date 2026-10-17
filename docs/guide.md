@@ -78,12 +78,11 @@ The marks cover too little of the paper. The plot lint may say "Where the image 
 - Or lower the style's density setting by hand, such as `waves.spacing_mm`, or raise the count, such as `voronoi.count`. The style guide marks each style's density setting.
 - Raise Gamma (`tone.gamma`) in Image: above 1 it darkens the midtones. For a washed-out image set Levels (`tone.levels`) to auto, which sets black and white from the image.
 - Try the Faithful look, or set Response (`tone.response`) to auto, which corrects the image for how much paper the style covers at each grey.
-- `grid` and `dither` draw each dot as one touch of the pen, so a dot is only as big as the pen is wide. A wider pen gives more ink, and so do `halftone` and `stipple`, which draw bigger dots where the image is darker.
 - If the lint says "No marks at these settings", lower the style's threshold (such as `points.threshold`) or change the tone settings it names.
 
 ### The plot would take too long
 
-There are too many marks, pen lifts or moves for the machine's speed. The stats' plot time leaves out acceleration, so styles of dots or short strokes plot slower than it says.
+There are too many marks, pen lifts or moves for the machine's speed.
 
 - Type the minutes you can spare as the Target in Fit and optimize and click Fit to target. On the command line use `--fit-minutes`.
 - Choose the Quick look, where the style has one.
@@ -97,7 +96,6 @@ There are too many marks, pen lifts or moves for the machine's speed. The stats'
 Very short paths each cost a pen lift. The lint says "N paths are shorter than the pen is wide; each costs a pen lift for a speck."
 
 - Click Apply on that finding. It sets Path order's Min length (`order.min_length_mm`) to about the pen's width, so the shorter paths are dropped.
-- Do not use Min length with a style whose dots are one touch of the pen. A dot has no length, so any Min length above 0 removes it.
 - On `grid` and `halftone`, raise `points.threshold` to leave out the dots in the lightest areas.
 - If the lifts themselves are the problem, choose a style of long strokes, as under "The plot would take too long".
 
@@ -115,10 +113,8 @@ The pen passes the same spot too often. The lint says "N % of what pen X inks is
 
 There are two causes.
 
-- Pen use is "one pen", the default, so only the first pen draws. The lint says "Pen use is set to one pen, so only the first pen draws." Apply sets "light to dark", and for colours set "by colour" in the Pens panel. Reset to defaults puts Pen use back to "one pen", so set it again after a reset.
+- Pen use is "one pen", the default, so only the first pen draws. The plot lint notes it, and its Apply sets "light to dark". For colours, set "by colour" in the Pens panel.
 - The pens do not match the image. With "by colour", each pen draws the part of the image its colour makes up. Apply the colour suggestion in Suggestions, which picks two to four inks that draw the image's colours best. The lint says "These pens draw nothing at these settings" for a pen whose colour the image lacks, and you can remove that pen.
-
-`waves`, `spiral` and `mosaic` start at Gamma 1.9, and by colour that adds black ink to every colour. `waves` is the style the page opens on at a first visit. Set `tone.gamma` to 1, or choose `hatch`, which stayed clean with the same pens in the [colour and styles audit](audits/2026-10-16-colour-styles-audit.md#f4-waves-spiral-and-mosaic-muddy-every-colour-by-colour-confirmed). The midtones then draw lighter, so you may close the spacing a little.
 
 ### Long straight moves curve on a hanging plotter
 
