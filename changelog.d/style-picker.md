@@ -1,0 +1,1 @@
+- **Style picker:** the Style button opens a picker of every style grouped by family, each drawn small on your image with its label and what it does. It replaces the style menu and Try all styles, and works from the keyboard and at phone width.
