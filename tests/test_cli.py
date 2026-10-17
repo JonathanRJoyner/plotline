@@ -194,6 +194,22 @@ def test_testchart_takes_a_machine_and_refuses_a_small_page(tmp_path):
     assert not out.exists()
 
 
+def test_accel_slows_the_estimate_and_overrides_the_machine(tmp_path):
+    machine, out = tmp_path / "m.json", tmp_path / "c.svg"
+    machine.write_text(json.dumps(MACHINE))
+
+    def seconds(*args):
+        r = run("testchart", "--out", str(out), *args)
+        assert r.exit_code == 0, r.output
+        return float(r.output.split("estimated: ")[1].split(" s")[0])
+
+    default = seconds()
+    assert seconds("--accel", "10") > default
+    assert seconds("--machine", str(machine), "--accel", "10") > seconds("--machine", str(machine))
+    r = run("testchart", "--out", str(out), "--accel", "0")
+    assert r.exit_code == 2 and "--accel" in r.output
+
+
 def test_preset_is_applied_and_style_kept(tmp_path, image):
     run(
         "run",

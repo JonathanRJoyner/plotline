@@ -282,7 +282,8 @@ class Session:
     def machine(self) -> dict[str, Any] | None:
         """The machine that ``gcode`` writes for, as the dict of a preset's ``machine`` (``name``,
         ``area``, the heights and feeds, ``start_gcode`` and ``end_gcode``, and when used
-        ``pen_lift``, ``pen_down_gcode``, ``pen_up_gcode`` and ``max_segment_mm``), or ``None``."""
+        ``pen_lift``, ``pen_down_gcode``, ``pen_up_gcode``, ``max_segment_mm`` and
+        ``accel_mm_s2``), or ``None``."""
         return self._core.machine()
 
     def set_machine(self, machine: dict[str, Any] | None) -> None:
@@ -370,11 +371,9 @@ class Session:
         of pen-down length, or ``dots`` for a style that places points. The style reruns with the
         setting changed, up to eight times, until the metric is within 2 % of the target, and the
         trial nearest it is kept: when the handle is ``done``, the setting holds its value,
-        ``result`` its drawing and the handle's ``fit`` the search. The time estimate leaves out
-        acceleration, so a time target runs optimistic on styles of short strokes or dots.
-        Raises ``RuntimeError`` when no image is loaded and ``ValueError`` for an unknown
-        metric, a target that is not above 0, a style with no density setting, or ``dots`` for
-        a style that places none.
+        ``result`` its drawing and the handle's ``fit`` the search. Raises ``RuntimeError`` when
+        no image is loaded and ``ValueError`` for an unknown metric, a target that is not above 0,
+        a style with no density setting, or ``dots`` for a style that places none.
         """
         self._core.set_speeds(asdict(self.speeds))
         return self._spawn(self._start(lambda: self._core.fit(metric, target), applies=True))

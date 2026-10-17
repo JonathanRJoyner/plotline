@@ -22,6 +22,8 @@ fn grid_matches_the_golden_file() {
         .unwrap();
     let speeds: serde_json::Value = serde_json::from_str(&s.speeds()).unwrap();
     assert_eq!(speeds["draw_mm_s"], 10.0);
+    // Speeds saved before acceleration counted take the default.
+    assert_eq!(speeds["accel_mm_s2"], 1000.0);
     let stats: serde_json::Value = serde_json::from_str(&s.stats().unwrap()).unwrap();
     assert!(stats["estimated_seconds"].as_f64().unwrap() > 0.0);
     // The exact value is pinned through the core below, since serde_json's parser can move a
