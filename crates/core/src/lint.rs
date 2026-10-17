@@ -615,7 +615,16 @@ pub fn check(
         let levels = cx.number("hatch", "levels").filter(|&n| n > 1.0);
         let patch = match (levels, spacing) {
             (Some(n), _) => cx.set("hatch", "levels", n - 1.0),
-            (None, Some((stage, key, s))) => cx.set(stage, key, step_up(s * 1.5)),
+            (None, Some((stage, key, s))) => {
+                // Dots wider than the new spacing overlap whatever the spacing, so it gains
+                // nothing.
+                let fit = |p: &Value| {
+                    let to = p["settings"][stage][key].as_f64().unwrap_or(f64::MAX);
+                    cx.number("stipple", "size_mm")
+                        .is_none_or(|size| size <= to)
+                };
+                cx.set(stage, key, step_up(s * 1.5)).filter(fit)
+            }
             _ => None,
         };
         let message = format!(
@@ -1101,6 +1110,21 @@ mod tests {
         // Half of 1 mm nests one arc each side of a 6 mm tile's middle one, where 1 mm nests none.
         let patch = json!({"settings": {"truchet": {"spacing_mm": 0.5}}});
         assert_eq!(truchet(6.0, 1.0), Some(patch));
+    }
+
+    #[test]
+    fn overdraw_raises_the_spacing_only_if_the_dots_fit_in_it() {
+        let d = page((0..4).flat_map(|_| lines(2.0)).collect());
+        let patch = |size: f64| {
+            let all = lint(&d, "halftone", |s| s["stipple"]["size_mm"] = json!(size));
+            find(&all, "overdraw").unwrap().patch.clone()
+        };
+        // Halftone's 2 mm spacing is raised to 3 mm: dots up to that width fit, wider ones overlap
+        // at any spacing.
+        let raised = json!({"settings": {"points": {"spacing_mm": 3.0}}});
+        assert_eq!(patch(2.0), Some(raised.clone()));
+        assert_eq!(patch(3.0), Some(raised));
+        assert_eq!(patch(3.1), None);
     }
 
     #[test]
