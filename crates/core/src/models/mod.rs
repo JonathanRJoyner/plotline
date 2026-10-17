@@ -372,6 +372,33 @@ mod tests {
     }
 
     #[test]
+    fn a_removed_model_no_longer_draws_from_the_cache() {
+        let (mut s, _) = session();
+        let id = s.add_model(None, STANDIN_BYTES).unwrap().id;
+        s.set_image(crate::synthetic::still_life(120, 90));
+        s.set_style("learned").unwrap();
+        s.update(
+            "model",
+            &serde_json::json!({"model": id, "resolution": 256}),
+        )
+        .unwrap();
+        let mut drain = |s: &mut Session| {
+            let mut run = s.start().unwrap();
+            while run.next_frame().is_some() {}
+            (run.state(), s.error())
+        };
+        assert_eq!(drain(&mut s).0, crate::runner::RunState::Done);
+        s.remove_model(&id);
+        let (state, error) = drain(&mut s);
+        assert_eq!(state, crate::runner::RunState::Error);
+        let error = error.unwrap();
+        assert!(
+            error.contains(&format!("model {id} is not loaded")),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn a_new_runtime_starts_with_no_models() {
         let (mut s, _) = session();
         s.add_model(None, STANDIN_BYTES).unwrap();

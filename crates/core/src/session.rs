@@ -307,9 +307,16 @@ impl Session {
         self.models.add(id, bytes)
     }
 
-    /// Unload the model `id`. An id the session does not hold changes nothing.
+    /// Unload the model `id` and empty the stage cache, so a later run cannot draw the model's
+    /// lines from it. An id the session does not hold changes nothing.
     pub fn remove_model(&mut self, id: &str) {
+        if self.models.get(id).is_none() {
+            return;
+        }
         self.models.remove(id);
+        // shortcut: the cache has no index by model, so all of it goes and the next run starts
+        // from the image; add one if removing models while other styles are cached gets common.
+        self.cache.lock().unwrap().clear();
     }
 
     /// The models the session holds, in id order.
