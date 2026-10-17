@@ -247,7 +247,8 @@ impl Session {
         self.inner.look()
     }
 
-    /// Put every stage of the style, Pen use included, back to the style's defaults.
+    /// Put every stage of the style back to the style's defaults, Pen use too unless there is
+    /// more than one pen.
     #[wasm_bindgen(js_name = resetSettings)]
     pub fn reset_settings(&mut self) {
         self.inner.reset_settings();

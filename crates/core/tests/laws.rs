@@ -1195,11 +1195,22 @@ fn an_optimize_suggestion_keeps_the_limits() {
             return Ok(());
         }
         prop_assert_eq!(job.state(), RunState::Done);
-        let Some(found) = job.result() else {
-            return Ok(());
-        };
+        // A search that ends done always answers, if only to say why it has no suggestion.
+        let found = job.result();
+        prop_assert!(found.is_some());
+        let found = found.unwrap();
         prop_assert!(found.trials.len() <= TRIALS);
         prop_assert_eq!(found.current_minutes, minutes);
+        prop_assert!(!found.reason.is_empty());
+        let Some(error) = found.error else {
+            // Nothing scored: no trial within the limits had a tone error, and nothing is offered.
+            prop_assert!(found.patch.is_none() && found.beyond.is_none());
+            prop_assert!(found
+                .trials
+                .iter()
+                .all(|t| t.error.is_none() || t.over || t.slow || !t.warnings.is_empty()));
+            return Ok(());
+        };
         // It is the quickest of the trials within the limits whose tone error is within a tenth
         // of the lowest, and only a trial left out for its time beats it by more.
         let kept: Vec<_> = (found.trials.iter())
@@ -1209,7 +1220,7 @@ fn an_optimize_suggestion_keeps_the_limits() {
             .iter()
             .filter_map(|t| t.error)
             .fold(f64::INFINITY, f64::min);
-        prop_assert!(found.error <= (1.0 + CLOSE) * lowest);
+        prop_assert!(error <= (1.0 + CLOSE) * lowest);
         prop_assert!(
             kept.iter()
                 .all(|t| t.error.unwrap() > (1.0 + CLOSE) * lowest

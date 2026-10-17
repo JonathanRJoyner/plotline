@@ -119,7 +119,8 @@ class RunHandle:
         than a tenth more closely, if any, ``trials`` as ``{value, error, minutes, metric, over,
         slow, warnings, failed}`` in order, a sentence, and ``patch``, which
         ``{"settings": {stage: {key: value}}}`` applies, or ``None`` when the current value is
-        best. Nothing is applied."""
+        best. When no trial scored, ``value`` is the current one, ``error`` and ``patch`` are
+        ``None`` and ``reason`` says why. Nothing is applied."""
         return self._optimum
 
     def cancel(self) -> None:
@@ -336,7 +337,8 @@ class Session:
         self._core.set_style(name)
 
     def reset_settings(self) -> None:
-        """Put every stage of the style, Pen use included, back to the style's defaults."""
+        """Put every stage of the style back to the style's defaults, Pen use too unless there
+        is more than one pen."""
         self._core.reset_settings()
 
     def update(self, stage: str, **values: Any) -> None:

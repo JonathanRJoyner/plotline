@@ -379,7 +379,7 @@ fn absorb(hex: &str) -> [f64; 3] {
 }
 
 /// BT.601 luma of the colour `hex`, written as `#rrggbb`.
-fn luma(hex: &str) -> f64 {
+pub(crate) fn luma(hex: &str) -> f64 {
     let [r, g, b] = rgb(hex).map(|byte| f64::from(byte) / 255.0);
     0.299 * r + 0.587 * g + 0.114 * b
 }
