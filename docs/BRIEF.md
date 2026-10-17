@@ -42,7 +42,7 @@ The same workflow must also work through the CLI and the MCP.
 
 - **Machine-specific output**, such as G-code tuned to one particular printer or its firmware quirks. plotline outputs plain vector data, plus generic G-code for a machine the user describes (§14, "G-code adapter"). Nothing is built in for any particular machine, and tuning the output to one is the downstream user's job.
 - **Driving plotters directly** (serial control, job queues).
-- **Image editing** beyond what tone mapping needs (crop, levels, contrast, gamma, blur, invert, paper flattening).
+- **Image editing** beyond what tone mapping needs (crop, levels, contrast, gamma, blur, invert, paper flattening, edge-keeping smoothing).
 - **Generative art from nothing.** plotline is image-driven.
 - **A hosted service.** Nothing runs on a server. The hosted page is static files, and the engine runs in the visitor's browser (§8).
 
