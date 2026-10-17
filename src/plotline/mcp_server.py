@@ -123,6 +123,15 @@ def _image_size(session: Session) -> dict[str, int] | None:
     return None if image is None else {"width_px": image.shape[1], "height_px": image.shape[0]}
 
 
+def _page_dict(canvas: Canvas) -> dict[str, Any]:
+    """The page as the tools show it. A crop of zeros is left out, as the engine leaves it out of
+    a preset."""
+    page = asdict(canvas)
+    if not any(canvas.crop):
+        del page["crop"]
+    return page
+
+
 def _page(session: Session) -> Canvas:
     """The result's page: the picture shows the result, and the page may have changed since the
     run. Raises ``RuntimeError`` while a run is under way, since the engine holds the new drawing
@@ -191,9 +200,10 @@ def build_server(session: Session | None = None) -> MCPServer:
         inks the library lacks that would draw it better, which a pens_to_add note names. Each
         suggestion has a kind, a reason and a patch, which holds any of style, pens (a list of
         {name, width_mm, color}), settings ({stage: {setting: value}}) and page ({width_mm,
-        height_mm}), or none for a note. Apply a patch with set_pens for its pens, then
-        run(style=..., settings=...) or set_page. The suggestions follow the current style, pens,
-        settings and page."""
+        height_mm}, or {crop}, the shares to cut from the image's left, top, right and bottom),
+        or none for a note. Apply a patch with set_pens for its pens, then run(style=...,
+        settings=...) or set_page. The suggestions follow the current style, pens, settings and
+        page."""
         with _errors():
             return session.analysis()
 
@@ -204,17 +214,22 @@ def build_server(session: Session | None = None) -> MCPServer:
         margin_mm: float | None = None,
         fit: Literal["fit", "fill"] | None = None,
         paper: str | None = None,
+        crop: list[float] | None = None,
     ) -> dict[str, Any]:
         """Set the page size and margin in mm, whether the image fits inside the drawing area or
-        fills it, and the paper colour, which is #rrggbb or an ink name such as blue. The paper
-        changes only the previews and the saved preset: they show the ink on that paper, and the
-        drawing, its SVG and its G-code stay as they are. A value that is left out stays as it
-        was; when any value is refused, nothing changes. Returns the page and the paper."""
+        fills it, the paper colour, which is #rrggbb or an ink name such as blue, and the crop:
+        [left, top, right, bottom], the shares of the image to cut from each side before it is
+        fitted, each 0 to 0.45 (analyse_image's framing suggestion gives one; [0, 0, 0, 0] removes
+        it). The paper changes only the previews and the saved preset: they show the ink on that
+        paper, and the drawing, its SVG and its G-code stay as they are. A value that is left out
+        stays as it was; when any value is refused, nothing changes. Returns the page, with its
+        crop while there is one, and the paper."""
         given: dict[str, Any] = {
             "width_mm": width_mm,
             "height_mm": height_mm,
             "margin_mm": margin_mm,
             "fit": fit,
+            "crop": crop,
         }
         inks = plotline.inks()
         with _errors():
@@ -227,7 +242,7 @@ def build_server(session: Session | None = None) -> MCPServer:
                 except ValueError:
                     session.set_canvas(old_page)
                     raise
-            return {**asdict(session.canvas), "paper": session.paper}
+            return {**_page_dict(session.canvas), "paper": session.paper}
 
     @server.tool()
     async def set_pens(pens: list[PenSpec]) -> TextContent:
@@ -290,7 +305,7 @@ def build_server(session: Session | None = None) -> MCPServer:
                 session.set_machine(old_machine)
                 session.speeds = old_speeds
                 raise
-            return {"machine": session.machine, "page": asdict(session.canvas)}
+            return {"machine": session.machine, "page": _page_dict(session.canvas)}
 
     def change(
         style: str | None,
@@ -479,7 +494,7 @@ def build_server(session: Session | None = None) -> MCPServer:
                 "style": session.style.name,
                 "settings": session.settings,
                 "look": session.look,
-                "page": asdict(session.canvas),
+                "page": _page_dict(session.canvas),
                 "paper": session.paper,
                 "pens": [asdict(pen) for pen in session.pens],
                 "machine": session.machine,

@@ -246,6 +246,46 @@ test("a colour image's palette suggestion sets the pens and Pen use", async ({ p
   await expect(apply).toHaveCount(0);
 });
 
+test("a framing suggestion crops the image to its subject, and Remove crop takes it off", async ({ page }) => {
+  await open(page);
+  // A dark disc up and to the right on a light field, drawn in the page and encoded as a PNG.
+  const png = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const g = canvas.getContext("2d")!;
+    g.fillStyle = "#f2f2f2";
+    g.fillRect(0, 0, 256, 256);
+    g.fillStyle = "#1a1a1a";
+    g.beginPath();
+    g.arc(0.7 * 256, 0.3 * 256, 0.05 * 256, 0, 2 * Math.PI);
+    g.fill();
+    const blob = await new Promise<Blob>((done) => canvas.toBlob((b) => done(b!), "image/png"));
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  });
+  await page.locator(".toolbar input[type=file]").setInputFiles({ name: "disc.png", mimeType: "image/png", buffer: Buffer.from(png) });
+  const id = await ran(page, 0);
+  const pagePanel = page.locator('[data-tour="page"]');
+  const apply = page.getByRole("button", { name: /^Apply: The subject fills only part of the image\./ });
+  const remove = page.getByRole("button", { name: "Remove crop" });
+  await expect(apply).toBeVisible();
+  await expect(remove).toHaveCount(0);
+  await apply.click();
+  const cropped = await ran(page, id);
+  await expect(pagePanel).toContainText("Cropped");
+  await expect(apply).toHaveCount(0);
+  // Undo takes the crop back like any page change, and Remove crop does too.
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  const undone = await ran(page, cropped);
+  await expect(remove).toHaveCount(0);
+  await expect(apply).toBeVisible();
+  await apply.click();
+  await ran(page, undone);
+  await remove.click();
+  await expect(remove).toHaveCount(0);
+  await expect(apply).toBeVisible();
+});
+
 test("a suggestion can be dismissed, and comes back with the next image", async ({ page }) => {
   await open(page);
   const file = page.locator(".toolbar input[type=file]");
@@ -433,6 +473,21 @@ test("Smooth, keep edges changes the drawing", async ({ page }) => {
   await smooth.blur();
   await ran(page, id);
   await expect(page.locator(".stats")).not.toHaveText(stats ?? "");
+});
+
+test("a dot style's marks show at the fit zoom, where the pen is under a pixel", async ({ page }) => {
+  const id = await sample(page);
+  await pick(page, "grid", id);
+  await expect(page.getByText("the pen is under a pixel wide")).toBeVisible();
+  // Grey pixels darker than the margin's outline are the black pen's dots. Headless Chromium drew
+  // the old near-zero strokes too, so preview.test.ts pins the dots as filled discs.
+  const dots = await page.locator(".preview canvas").evaluate((cv: HTMLCanvasElement) => {
+    const d = cv.getContext("2d")!.getImageData(0, 0, cv.width, cv.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] === d[i + 1] && d[i] === d[i + 2] && d[i] < 215) n++;
+    return n;
+  });
+  expect(dots).toBeGreaterThan(1000);
 });
 
 test("the thumbnail grid picks a style", async ({ page }) => {

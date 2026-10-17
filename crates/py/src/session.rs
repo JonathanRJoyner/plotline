@@ -79,10 +79,12 @@ impl Session {
         serde_to_py(py, self.inner.canvas())
     }
 
-    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page.
+    /// Use `{"width_mm", "height_mm", "margin_mm", "fit"}` as the page, and `"crop"` if there is one.
     fn set_canvas(&mut self, canvas: &Bound<'_, PyAny>) -> PyResult<()> {
         let c: Canvas = from_py(canvas)?;
-        let c = Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit).map_err(value_error)?;
+        let c = Canvas::new(c.width_mm, c.height_mm, c.margin_mm, c.fit)
+            .and_then(|new| new.with_crop(c.crop))
+            .map_err(value_error)?;
         self.inner.set_canvas(c);
         Ok(())
     }

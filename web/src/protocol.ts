@@ -6,7 +6,7 @@ import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
 /** A change the engine suggests, in the shape of `Session::analysis`: `pens` apply after `style`, `settings` after `pens`. */
-export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } };
+export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } | Pick<Canvas, "crop"> };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number };
 export type State = {
@@ -119,9 +119,9 @@ export class Protocol {
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
       restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
       // Draws every style after the reply, which carries the id its `thumb` events will have.
-      thumbs: (width: number) => {
+      thumbs: (width: number, shrink = 1) => {
         const id = ++this.thumbsId;
-        this.go = () => void this.thumbs(id, width);
+        this.go = () => void this.thumbs(id, width, shrink);
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
@@ -205,7 +205,7 @@ export class Protocol {
   // Draws every listed style in turn as a trial, which leaves the session's own run, drawing and
   // settings alone, and posts each as a `thumb` event. It yields as `drive` does, so commands get
   // their turn, and a newer `thumbs` or a `cancelThumbs` ends it.
-  private async thumbs(id: number, width: number): Promise<void> {
+  private async thumbs(id: number, width: number, shrink: number): Promise<void> {
     let lastYield = performance.now();
     for (const { name } of JSON.parse(listStyles()) as Array<{ name: string }>) {
       if (id !== this.thumbsId) return;
@@ -223,7 +223,7 @@ export class Protocol {
             }
           }
           error = trial.error() ?? null;
-          png = trial.previewPng(width) ?? null;
+          png = trial.previewPng(width, shrink) ?? null;
         } finally {
           free(trial);
         }

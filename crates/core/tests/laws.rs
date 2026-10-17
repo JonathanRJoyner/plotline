@@ -26,7 +26,7 @@ use plotline_core::machine::{Area, Machine, PenLift};
 use plotline_core::math::{exp, ln};
 use plotline_core::optimize::{LONGEST, SLOWER, TRIALS};
 use plotline_core::pens::INKS;
-use plotline_core::preview::render_rgba;
+use plotline_core::preview::{render_png_shrunk, render_rgba};
 use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
@@ -256,20 +256,25 @@ fn picture() -> impl Strategy<Value = Picture> {
     ]
 }
 
-/// A page in mm, its margin as a share of the most it could be, and whether the image fills it.
+/// A page in mm, its margin as a share of the most it could be, whether the image fills it, and
+/// the shares of the image cut from its left, top, right and bottom.
 #[derive(Clone, Debug)]
 struct Page {
     width: f64,
     height: f64,
     margin: f64,
     fill: bool,
+    crop: [f64; 4],
 }
 
 impl Page {
     fn canvas(&self) -> Canvas {
         let margin = self.margin * self.width.min(self.height) / 2.0;
         let fit = if self.fill { Fit::Fill } else { Fit::Fit };
-        Canvas::new(self.width, self.height, margin, fit).expect("the margin leaves an area")
+        let canvas = Canvas::new(self.width, self.height, margin, fit);
+        canvas
+            .and_then(|c| c.with_crop(self.crop))
+            .expect("the margin leaves an area")
     }
 }
 
@@ -280,8 +285,19 @@ fn page() -> impl Strategy<Value = Page> {
             height,
             margin,
             fill,
+            crop: [0.0; 4],
         },
     )
+}
+
+/// The crop of a case, drawn from its `cancel_at` instead of from a strategy of its own, so that
+/// every case the other laws drew before crops existed is still drawn: one case in four is
+/// cropped, each side by up to the most it may be, and a shrunk case has none.
+fn crop_of(cancel_at: usize) -> [f64; 4] {
+    if cancel_at % 4 != 3 {
+        return [0.0; 4];
+    }
+    [0, 1, 2, 3].map(|i| f64::from((hash(cancel_at as u64, i) + 1.0) / 2.0) * 0.45)
 }
 
 /// One to three pens as width in mm and colour, thin ones included.
@@ -421,7 +437,10 @@ fn case(names: Vec<String>) -> impl Strategy<Value = Case> {
             style,
             settings,
             picture,
-            page,
+            page: Page {
+                crop: crop_of(cancel_at),
+                ..page
+            },
             pens,
             cancel_at,
         },
@@ -608,6 +627,30 @@ fn every_run_keeps_the_run_laws() {
     });
 }
 
+#[test]
+fn a_crop_of_zeros_leaves_every_drawing_unchanged() {
+    check("zero crop", 24, case(all_styles()), |c| {
+        let mut plain = c.clone();
+        plain.page.crop = [0.0; 4];
+        let canvas = plain.page.canvas();
+        let mut json = serde_json::to_value(&canvas).unwrap();
+        prop_assert!(
+            json.get("crop").is_none(),
+            "a crop of zeros is written: {json}"
+        );
+        // The same page as a file that spells the zeros out would give it.
+        json["crop"] = json!([0.0, 0.0, 0.0, 0.0]);
+        let spelled = serde_json::from_value::<Canvas>(json).unwrap();
+        let mut a = plain.session();
+        run(&mut a)?;
+        let mut b = plain.session();
+        b.set_canvas(spelled.with_crop([0.0; 4]).unwrap());
+        run(&mut b)?;
+        prop_assert!(left(&a) == left(&b), "a crop of zeros changes the drawing");
+        Ok(())
+    });
+}
+
 /// Values at the ends of a setting's range: either end or the default for a number, any value of
 /// a boolean or an enum.
 fn corner(stage: &str, key: &str, prop: &Value, defs: &Value) -> BoxedStrategy<Value> {
@@ -655,6 +698,7 @@ fn a_run_at_the_ends_of_every_range_ends_with_a_drawing_or_a_message() {
             height: 160.0,
             margin: 0.0,
             fill,
+            crop: [0.0; 4],
         };
         gather(parts).prop_map(move |settings| Case {
             style: name.clone(),
@@ -673,7 +717,7 @@ fn a_run_at_the_ends_of_every_range_ends_with_a_drawing_or_a_message() {
 }
 
 /// Apply a suggestion's or a finding's patch as the front ends do: the style, then the settings,
-/// then the page size with the margin and fit kept.
+/// then the page size or the crop with the rest of the page kept.
 fn apply(s: &mut Session, patch: &Value) -> Result<(), TestCaseError> {
     if let Some(style) = patch["style"].as_str() {
         s.set_style(style)
@@ -701,12 +745,19 @@ fn apply(s: &mut Session, patch: &Value) -> Result<(), TestCaseError> {
         let c = s.canvas().clone();
         let size = |k: &str| page.get(k).and_then(Value::as_f64);
         let (w, h) = (size("width_mm"), size("height_mm"));
+        let crop = match page.get("crop") {
+            Some(v) => {
+                serde_json::from_value(v.clone()).map_err(|e| TestCaseError::fail(e.to_string()))?
+            }
+            None => c.crop,
+        };
         let canvas = Canvas::new(
             w.unwrap_or(c.width_mm),
             h.unwrap_or(c.height_mm),
             c.margin_mm,
             c.fit,
         );
+        let canvas = canvas.and_then(|canvas| canvas.with_crop(crop));
         s.set_canvas(canvas.map_err(|e| TestCaseError::fail(e.to_string()))?);
     }
     Ok(())
@@ -1504,4 +1555,69 @@ fn the_paper_shows_where_nothing_is_drawn_and_ink_only_darkens_it() {
         }
         Ok(())
     });
+}
+
+/// How the GUI's style grid draws its pictures (`THUMB_PX` and `THUMB_SHRINK` in
+/// web/src/app.tsx): 600 px wide with every mark at least 2 px, for a cell about 150 px wide.
+const GRID_PX: u32 = 600;
+const GRID_SHRINK: f64 = 2.0;
+const CELL_PX: u32 = 150;
+
+#[test]
+fn every_style_draws_a_colour_image_with_several_pens_and_shows_in_the_style_grid() {
+    // A colour scene on A4 with three coloured pens, in every Pen use mode. A dot style once drew
+    // there but showed a blank cell: 0.3 mm dots 1 mm apart, a pixel wide in a 600 px picture,
+    // average to almost white at the cell's size. A visible mark is a cell pixel at least 10 %
+    // darker than the paper, and every style's cell has them on at least 3 % of its pixels.
+    let first = &list_styles()[0];
+    let split = first.stages[first.stage_index("split").unwrap()].schema();
+    let modes = choices(&split["properties"]["mode"], &split["$defs"]).unwrap();
+    let pens = [
+        ("Red", "#d0202e"),
+        ("Black", "#000000"),
+        ("Yellow", "#f5d000"),
+    ]
+    .map(|(name, color)| Pen::new(name, 0.3, color).unwrap())
+    .to_vec();
+    for mode in &modes {
+        let mut s = Session::new(1 << 30);
+        s.set_image(scene(300, 225));
+        s.set_pens(pens.clone()).unwrap();
+        for style in all_styles() {
+            s.set_style(&style).unwrap();
+            s.update("split", &json!({ "mode": mode })).unwrap();
+            for &(stage, key, cap) in SPEED_CAPS {
+                let now = &s.settings()[stage][key];
+                if now.as_f64().is_some_and(|v| v > cap) {
+                    let cap = if now.is_u64() {
+                        json!(cap as u64)
+                    } else {
+                        json!(cap)
+                    };
+                    s.update(stage, &json!({ key: cap })).unwrap();
+                }
+            }
+            let mut r = s.start().unwrap();
+            while r.next_frame().is_some() {}
+            let d = s.drawing().unwrap();
+            let paths: usize = d.layers.iter().map(|l| l.paths.len()).sum();
+            assert!(paths > 0, "{style} in {mode} draws nothing");
+            let png = render_png_shrunk(&d, GRID_PX, s.paper(), GRID_SHRINK).unwrap();
+            let picture = image::load_from_memory(&png).unwrap().to_luma8();
+            let height = CELL_PX * picture.height() / picture.width();
+            let cell = image::imageops::resize(
+                &picture,
+                CELL_PX,
+                height,
+                image::imageops::FilterType::Triangle,
+            );
+            let marked = cell.pixels().filter(|p| p.0[0] <= 230).count() as f64
+                / f64::from(CELL_PX * height);
+            assert!(
+                marked >= 0.03,
+                "{style} in {mode} marks {:.1} % of its cell",
+                100.0 * marked
+            );
+        }
+    }
 }

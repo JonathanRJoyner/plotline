@@ -197,6 +197,29 @@ def fit_options(command: Callable[..., Any]) -> Callable[..., Any]:
     return command
 
 
+def parse_crop(value: str) -> tuple[float, float, float, float]:
+    """Split ``LEFT,TOP,RIGHT,BOTTOM`` into four numbers. A wrong shape or a share that is not a
+    number raise ``click.BadParameter``; the engine checks each share when the session is given
+    the page."""
+    try:
+        left, top, right, bottom = (float(part) for part in value.split(","))
+    except ValueError as error:
+        message = f"{value!r} must look like LEFT,TOP,RIGHT,BOTTOM, four numbers"
+        raise click.BadParameter(message) from error
+    return left, top, right, bottom
+
+
+crop_option = click.option(
+    "--crop",
+    metavar="LEFT,TOP,RIGHT,BOTTOM",
+    callback=lambda ctx, param, value: None if value is None else parse_crop(value),
+    help=(
+        "Cut these shares of the image from its left, top, right and bottom, each 0 to 0.45, "
+        "before it is fitted to the page; 0,0,0,0 removes a crop."
+    ),
+)
+
+
 def set_page(
     session: Session,
     width: float | None,
@@ -204,6 +227,7 @@ def set_page(
     margin: float | None,
     fit: str | None,
     paper: str | None,
+    crop: tuple[float, float, float, float] | None = None,
 ) -> None:
     """Change the page and the paper colour of ``session`` by the options that were given; the
     rest stay as they are. The paper may be the name of one of the ``inks()``, in any case."""
@@ -212,6 +236,7 @@ def set_page(
         "height_mm": height,
         "margin_mm": margin,
         "fit": fit,
+        "crop": crop,
     }
     changes = {key: value for key, value in page.items() if value is not None}
     if changes:
@@ -249,6 +274,7 @@ def read_library(path: str) -> list[Pen]:
 @main.command()
 @click.argument("image", type=click.Path())
 @page_options
+@crop_option
 @click.option(
     "--library",
     type=click.Path(),
@@ -264,6 +290,7 @@ def analyse(
     margin: float | None,
     fit: str | None,
     paper: str | None,
+    crop: tuple[float, float, float, float] | None,
     library: str | None,
 ) -> None:
     """Print what IMAGE looks like and the changes that would suit it, as JSON."""
@@ -272,7 +299,7 @@ def analyse(
         if library is not None:
             session.set_pen_library(read_library(library))
         session.load_image(image)
-        set_page(session, width, height, margin, fit, paper)
+        set_page(session, width, height, margin, fit, paper, crop)
         click.echo(json.dumps(session.analysis(), indent=2))
 
 
@@ -337,6 +364,7 @@ def echo_stats(session: Session) -> None:
 @click.option("--json", "json_out", type=click.Path(), help="Also write the paths as JSON.")
 @click.option("--preview", type=click.Path(), help="Also write a PNG preview.")
 @page_options
+@crop_option
 @pen_option
 @click.option(
     "--set",
@@ -417,6 +445,7 @@ def run(
     margin: float | None,
     fit: str | None,
     paper: str | None,
+    crop: tuple[float, float, float, float] | None,
     pens: list[Pen],
     sets: list[tuple[str, str, Setting]],
     preset: str | None,
@@ -457,7 +486,7 @@ def run(
                 raise click.BadParameter(str(error), param_hint=["--look"]) from error
         if machine is not None:
             use_machine(session, machine)
-        set_page(session, width, height, margin, fit, paper)
+        set_page(session, width, height, margin, fit, paper, crop)
         if pens:
             session.set_pens(pens)
         for stage, key, value in sets:
