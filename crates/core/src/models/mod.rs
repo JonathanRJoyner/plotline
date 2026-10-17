@@ -217,6 +217,10 @@ mod tests {
     }
 
     /// What is wrong with `e`, if anything.
+    ///
+    /// The overlap must be a multiple of 8 because `TILE - 2 * overlap`, the centre a tile keeps,
+    /// is then a multiple of 16, and so every tile's window starts on a multiple of 8, as the
+    /// tile side itself is. It must be under half a tile because the centre would be empty.
     fn problem(e: &CatalogueEntry) -> Option<String> {
         const LICENCES: [&str; 7] = [
             "MIT",
@@ -251,7 +255,7 @@ mod tests {
         if !numbered {
             return Some(format!("{id}: id does not end in -<n>"));
         }
-        // The tiler keeps TILE - 2 * overlap pixels of each tile, and tile sides are multiples of 8.
+        // The tiler keeps TILE - 2 * overlap pixels of each tile; see the doc comment above.
         if 2 * e.overlap >= TILE || !e.overlap.is_multiple_of(8) {
             return Some(format!(
                 "{id}: overlap {} must be a multiple of 8 under half a tile",
