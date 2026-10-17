@@ -10,11 +10,12 @@ import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, Result
 import { ACCEPT, download, imageFile } from "./files";
 import { History, setupOf } from "./history";
 import { loadLibrary, saveLibrary } from "./library";
-import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
+import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, type ShareLink, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
 import { type Entry, groupStyles, StylePicker, type Thumb } from "./picker";
 import { Preview } from "./preview";
 import type { Patch, State } from "./protocol";
 import { Settings } from "./settings";
+import { decodeShare, encodeShare, PREFIX } from "./share";
 import { firstVisit, Tour } from "./tour";
 import { zoomPercent, type View } from "./view";
 
@@ -332,6 +333,7 @@ export function App() {
   const [looks, setLooks] = useState<Look[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({}); // per stage; "" for the rest
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [shared, setShared] = useState<(ShareLink & { setup: string }) | null>(null); // the last link made, with the setup it holds
   const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
   const [hidden, setHidden] = useState(new Set<number>());
   const [help, setHelp] = useState(helpShown);
@@ -385,6 +387,9 @@ export function App() {
     engine.call("setPenLibrary", [library]).then(() => {}, () => {});
     engine.call<BankPen[]>("listPens").then((r) => setBank(r.value), () => {});
     engine.call<Ink[]>("listInks").then((r) => setInks(r.value), () => {});
+    // A share link's setup is read once and its fragment removed, so a reload does not apply it over later edits.
+    const fragment = location.hash.startsWith(PREFIX) ? location.hash : null;
+    if (fragment) window.history.replaceState(null, "", location.pathname + location.search);
     engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
       setStyles(value);
       const saved = remembered();
@@ -400,6 +405,12 @@ export function App() {
         } catch { /* keeps the grid state */ }
       }
       take(state);
+      // After the remembered setup, so the link's wins and Undo goes back to the remembered one; a link that fails leaves it.
+      if (fragment) {
+        const read = await decodeShare(fragment);
+        if ("text" in read) await loadPresetText(read.text, "the shared link");
+        else setErrors((es) => ({ ...es, preset: read.error }));
+      }
     }, (e) => setFatal(message(e)));
     const paste = (e: ClipboardEvent) => openDropped(e.clipboardData);
     document.addEventListener("paste", paste);
@@ -510,11 +521,28 @@ export function App() {
     if (preset) download(`plotline-${state?.style ?? "drawing"}-preset.json`, JSON.stringify(preset, null, 2), "application/json");
   }
 
-  async function loadPreset(file: File) {
-    const warned = await call<string[]>("loadPresetText", [await file.text()], "preset");
-    // The engine's message names no file, and a refusal is the only way `warned` is undefined.
-    if (!warned) setErrors((es) => ({ ...es, preset: es.preset && `Could not load ${file.name} (${es.preset}).` }));
+  // A preset file and a share link load alike; `what` names the source in a refusal.
+  async function loadPresetText(text: string, what: string) {
+    const warned = await call<string[]>("loadPresetText", [text], "preset");
+    // The engine's message names no source, and a refusal is the only way `warned` is undefined.
+    if (!warned) setErrors((es) => ({ ...es, preset: es.preset && `Could not load ${what} (${es.preset}).` }));
     setWarnings(warned ?? []);
+  }
+
+  const loadPreset = async (file: File) => loadPresetText(await file.text(), file.name);
+
+  // Copies a link that holds the preset. A browser that refuses the clipboard gets the link shown to copy by hand.
+  async function copyLink() {
+    const preset = await call("preset");
+    if (!preset) return;
+    const link = location.origin + location.pathname + (await encodeShare(JSON.stringify(preset)));
+    let copied = true;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      copied = false;
+    }
+    setShared({ link, copied, setup: setupOf(preset as State) });
   }
 
   async function exportAs(format: "svg" | "json") {
@@ -662,7 +690,7 @@ export function App() {
           <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
         </PensPanel>
         <Export status={status} machine={state.machine !== null} onExport={exportAs} onHpgl={exportHpgl} onGcode={exportGcode} />
-        <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
+        <PresetsPanel warnings={warnings} error={errors.preset} shared={shared?.setup === setupOf(state) ? shared : null} onSave={savePreset} onLoad={loadPreset} onCopy={copyLink} />
       </aside>
       <SettingsDialog
         opens={settingsOpens} machine={state.machine} error={errors.machine} speeds={state.speeds} onPick={pickMachine}
