@@ -194,6 +194,22 @@ def test_testchart_takes_a_machine_and_refuses_a_small_page(tmp_path):
     assert not out.exists()
 
 
+def test_accel_slows_the_estimate_and_overrides_the_machine(tmp_path):
+    machine, out = tmp_path / "m.json", tmp_path / "c.svg"
+    machine.write_text(json.dumps(MACHINE))
+
+    def seconds(*args):
+        r = run("testchart", "--out", str(out), *args)
+        assert r.exit_code == 0, r.output
+        return float(r.output.split("estimated: ")[1].split(" s")[0])
+
+    default = seconds()
+    assert seconds("--accel", "10") > default
+    assert seconds("--machine", str(machine), "--accel", "10") > seconds("--machine", str(machine))
+    r = run("testchart", "--out", str(out), "--accel", "0")
+    assert r.exit_code == 2 and "--accel" in r.output
+
+
 def test_preset_is_applied_and_style_kept(tmp_path, image):
     run(
         "run",
@@ -290,6 +306,17 @@ def test_run_prints_the_tone_match_and_an_optimize_suggestion(tmp_path, image):
     lines = r.stdout.splitlines()
     apply = [x for x in lines if x.startswith("  apply: --set hatch.spacing_mm=")]
     assert len(apply) == ("already follows" not in line)
+
+
+def test_optimize_on_a_blank_drawing_says_why_and_offers_nothing(tmp_path):
+    white = tmp_path / "white.png"
+    write_png(white, np.ones((30, 40, 3)))
+    args = ["run", "hatch", str(white), "--out", str(tmp_path / "o.svg"), "--quiet"]
+    r = run(*args, "--width", "40", "--height", "30", "--margin", "0", "--optimize")
+    assert r.exit_code == 0, r.output
+    line = next(x for x in r.stdout.splitlines() if x.startswith("optimize: "))
+    assert "draws anything here" in line and "target" not in line
+    assert not any(x.startswith("  apply: ") for x in r.stdout.splitlines())
 
 
 def test_run_rejects_bad_inputs(tmp_path, image):

@@ -91,6 +91,7 @@ class MachineSpec(TypedDict):
     pen_down_gcode: NotRequired[str]
     pen_up_gcode: NotRequired[str]
     max_segment_mm: NotRequired[float | None]
+    accel_mm_s2: NotRequired[float]
 
 
 @contextmanager
@@ -285,7 +286,9 @@ def build_server(session: Session | None = None) -> MCPServer:
         pen_down_gcode and pen_up_gcode, the lines written as they are in place of each Z move;
         the Z heights and z_feed are then unused. max_segment_mm, for a machine whose firmware
         draws a long straight move as a curve (a hanging plotter, say), cuts every move into
-        pieces no longer than it; leave it out to keep moves whole. The page becomes the area's
+        pieces no longer than it; leave it out to keep moves whole. accel_mm_s2 is how fast the
+        pen speeds up and slows down, in mm/s², 1000 when left out; only the plot time reads it,
+        since short moves never reach full speed. The page becomes the area's
         width and height, with the margin and fit kept, so that the drawing fits the machine;
         set_page can change it afterwards. The machine also sets the plot speeds that the stats
         and the lint use. export with format gcode needs a machine, and a result drawn before the
@@ -380,7 +383,8 @@ def build_server(session: Session | None = None) -> MCPServer:
         applies like an analyse_image suggestion's. A style that
         differs from the current one replaces it; a stage the two styles share keeps the values
         changed from the old style's defaults, and the rest take the new style's defaults. reset
-        puts every setting back to the style's defaults first. look starts from one of the style's
+        puts every setting back to the style's defaults first, except Pen use (split) while there
+        is more than one pen. look starts from one of the style's
         looks, such as faithful, quick or fine, after reset and before settings; describe_style
         lists them. settings is {stage: {setting: value}} and changes only the values given; only
         the stages after a changed setting run again. An assistant that sees a face or a subject
@@ -446,8 +450,9 @@ def build_server(session: Session | None = None) -> MCPServer:
         Nothing else changes: returns {stage, key, value, error, minutes, current, current_error,
         current_minutes, budget, limit_minutes, beyond, trials, reason, patch} as JSON, with plot
         times in minutes and beyond the trial left out for its time that follows the tones more
-        than a tenth more closely, if any, or null when no trial stayed within the target, then
-        the stats and a preview of the current settings as run does. Apply the patch with
+        than a tenth more closely, if any; when no trial scored (nothing drawn, no tone error, or
+        every trial over a limit) error and patch are null and reason says why. Then come the
+        stats and a preview of the current settings as run does. Apply the patch with
         run(settings=patch["settings"]) if it suits; fidelity to the image is not always the
         aim."""
         with _errors():
