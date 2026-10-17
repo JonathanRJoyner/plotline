@@ -119,10 +119,16 @@ const NO_OPS: &[(&str, &str, &str, &str)] = &[
         "the one line is a single path, which is already the fewest trails",
     ),
     (
+        "line",
+        "order",
+        "optimize",
+        "at its defaults the one line on the noise image already starts at the end nearer the pen, so there is nothing to reorder or reverse",
+    ),
+    (
         "scribble",
         "order",
-        "join",
-        "the one scribble is a single path, which is already the fewest trails",
+        "optimize",
+        "at its defaults the one scribble on the noise image already starts at the end nearer the pen, so there is nothing to reorder or reverse",
     ),
     (
         "sketch",

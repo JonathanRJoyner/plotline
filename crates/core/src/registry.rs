@@ -672,13 +672,23 @@ mod tests {
     }
     #[test]
     fn the_voronoi_styles_share_tone_and_point_defaults() {
-        // Equal settings give equal cache keys, so switching between these styles at their
-        // defaults reuses the points.
-        let first = get_style("stipple").unwrap().defaults();
-        for name in ["line", "dashes", "tree", "mesh", "cells", "scribble"] {
+        // Equal settings give equal cache keys, so switching between the dot styles, or between
+        // the styles that join points, at their defaults reuses the points. The two groups differ
+        // only in the density exponent.
+        let dots = get_style("stipple").unwrap().defaults();
+        let mut joined = dots["voronoi"].clone();
+        joined["exponent"] = json!(2.0);
+        for (name, voronoi) in [
+            ("dashes", &dots["voronoi"]),
+            ("line", &joined),
+            ("scribble", &joined),
+            ("tree", &joined),
+            ("mesh", &joined),
+            ("cells", &joined),
+        ] {
             let d = get_style(name).unwrap().defaults();
-            assert_eq!(d["tone"], first["tone"], "{name}");
-            assert_eq!(d["voronoi"], first["voronoi"], "{name}");
+            assert_eq!(d["tone"], dots["tone"], "{name}");
+            assert_eq!(&d["voronoi"], voronoi, "{name}");
         }
         // The scribble follows the tour of `line`, so a switch between them reuses that too.
         let tour = |name: &str| get_style(name).unwrap().defaults()["tsp"].clone();
