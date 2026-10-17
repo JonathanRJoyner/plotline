@@ -206,6 +206,8 @@ impl StageRun for ModelRun {
                 ink: std::mem::take(&mut self.ink),
                 mm_per_px,
                 origin_mm,
+                // A model's line map has no midtone curve.
+                gamma: 1.0,
             }))));
         };
         // The window's pixel `t` is the image's `c - overlap + t`, mirrored where it falls outside.
