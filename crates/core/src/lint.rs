@@ -429,7 +429,19 @@ fn travel_share((st, travel_s): (Stats, f64)) -> f64 {
 /// With `optimize` off the stage keeps the paths of a layer in input order, and `d` holds exactly
 /// those, so this is the drawing that turning `optimize` on would make. `None` if the stage fails.
 fn optimized_travel_share(d: &Drawing, speeds: Speeds) -> Option<f64> {
-    let settings = json!({"optimize": true, "min_length_mm": 0});
+    let ordered = reordered(d, &json!({"optimize": true, "min_length_mm": 0}))?;
+    Some(travel_share(stats::timed(&ordered, speeds)))
+}
+
+/// The share of the plot time `d` spends lifting the pen, one lift per path.
+fn lift_share(d: &Drawing, speeds: Speeds) -> f64 {
+    let paths: usize = d.layers.iter().map(|l| l.paths.len()).sum();
+    paths as f64 * speeds.pen_lift_s / stats::timed(d, speeds).0.estimated_seconds
+}
+
+/// `d` with every layer run through the ordering stage again at `settings`, or `None` if the stage
+/// fails.
+fn reordered(d: &Drawing, settings: &Value) -> Option<Drawing> {
     let canvas = Arc::new(d.canvas.clone());
     let layers = (d.layers.iter())
         .map(|layer| {
@@ -438,7 +450,7 @@ fn optimized_travel_share(d: &Drawing, speeds: Speeds) -> Option<f64> {
                 (Kind::Canvas, Artifact::Canvas(canvas.clone())),
             ]));
             let ctx = RunContext::new(Arc::default());
-            let mut run = OrderStage.start(inputs, &settings, ctx).ok()?;
+            let mut run = OrderStage.start(inputs, settings, ctx).ok()?;
             let paths = loop {
                 match run.step().ok()? {
                     Step::Frame(_) => {}
@@ -452,13 +464,12 @@ fn optimized_travel_share(d: &Drawing, speeds: Speeds) -> Option<f64> {
             })
         })
         .collect::<Option<Vec<_>>>()?;
-    let ordered = Drawing {
+    Some(Drawing {
         canvas: d.canvas.clone(),
         layers,
         tone: None,
         preset: None,
-    };
-    Some(travel_share(stats::timed(&ordered, speeds)))
+    })
 }
 
 /// The `vertices` number of `d` once the ordering stage simplifies every path to `tolerance` and
@@ -673,11 +684,27 @@ pub fn check(
     if st.estimated_seconds > 0.0 {
         let lifts = paths as f64 * speeds.pen_lift_s / st.estimated_seconds;
         if lifts > LIFT_SHARE {
-            let message = format!(
+            let mut message = format!(
                 "Pen lifts take {} % of the plot time ({paths} lifts). Styles that draw long strokes, such as waves, spiral and single line, lift far less.",
                 percent(lifts)
             );
-            add("lifts", Severity::Info, message, lifts, None);
+            // Joining runs before the stage's simplification and length filter, so the drawing
+            // the patch makes can differ a little from this one joined again: offer it only when
+            // that cuts the share by a tenth.
+            let joined = (cx.settings["order"]["join"] != "retrace")
+                .then(|| {
+                    let optimize = cx.settings["order"]["optimize"] != false;
+                    let settings =
+                        json!({"join": "retrace", "optimize": optimize, "min_length_mm": 0});
+                    reordered(d, &settings)
+                })
+                .flatten();
+            let cuts = joined.is_some_and(|j| lift_share(&j, speeds) < 0.9 * lifts);
+            let patch = cuts.then(|| {
+                message += " Path order's join setting at retrace joins the paths that meet.";
+                json!({"settings": {"order": {"join": "retrace"}}})
+            });
+            add("lifts", Severity::Info, message, lifts, patch);
         }
         let travel = travel_share(timed);
         if travel > TRAVEL_SHARE {
@@ -1174,6 +1201,31 @@ mod tests {
         let all = lint(&far, "hatch", |_| {});
         let travel = find(&all, "travel").unwrap();
         assert_eq!((travel.severity, &travel.patch), (Severity::Info, &None));
+    }
+
+    #[test]
+    fn lifts_offer_join_only_where_paths_meet() {
+        // A 10 by 10 lattice of 1 mm segments, each its own path.
+        let mut lattice = Vec::new();
+        for i in 0..10 {
+            for j in 0..10 {
+                let (x, y) = (10.0 + f64::from(i), 10.0 + f64::from(j));
+                lattice.push(vec![[x, y], [x + 1.0, y]]);
+                lattice.push(vec![[x, y], [x, y + 1.0]]);
+            }
+        }
+        let d = page(lattice);
+        let lifts = |join: &str| {
+            let all = lint(&d, "hatch", |s| s["order"]["join"] = json!(join));
+            find(&all, "lifts").unwrap().patch.clone()
+        };
+        let patch = json!({"settings": {"order": {"join": "retrace"}}});
+        assert_eq!(lifts("off"), Some(patch.clone()));
+        assert_eq!(lifts("on"), Some(patch));
+        assert_eq!(lifts("retrace"), None);
+        // Dots never meet, so joining cannot cut their lifts.
+        let all = lint(&page(dots(100)), "grid", |_| {});
+        assert_eq!(find(&all, "lifts").unwrap().patch, None);
     }
 
     #[test]
