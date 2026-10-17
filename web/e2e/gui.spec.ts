@@ -259,6 +259,25 @@ test("a colour image's palette suggestion sets the pens and Pen use", async ({ p
   await expect(apply).toHaveCount(0);
 });
 
+test("Reset to defaults keeps Pen use with several pens, and a light first pen alone warns", async ({ page }) => {
+  await open(page);
+  await page.locator(".toolbar input[type=file]").setInputFiles(await coloursPng(page));
+  let id = await ran(page, 0);
+  await page.getByRole("button", { name: /^Apply: This is a colour image\./ }).click();
+  id = await ran(page, id);
+  const penUse = page.getByRole("combobox", { name: "Pen use" });
+  await expect(penUse).toHaveValue("by_colour");
+  // Pen use goes with the pens, which a reset leaves alone.
+  await page.getByRole("button", { name: "Reset to defaults" }).click();
+  id = await ran(page, id);
+  await expect(penUse).toHaveValue("by_colour");
+  // The palette lists the lightest ink first, so one pen leaves it to draw alone.
+  await penUse.selectOption("one_pen");
+  await ran(page, id);
+  const light = page.locator(".lint li[data-severity=warning]").filter({ hasText: /only pen 1 \(.+\) draws, and a light ink alone shows little/ });
+  await expect(light).toHaveCount(1);
+});
+
 test("a framing suggestion crops the image to its subject, and Remove crop takes it off", async ({ page }) => {
   await open(page);
   // A dark disc up and to the right on a light field, drawn in the page and encoded as a PNG.
@@ -389,6 +408,42 @@ test("Optimize names a closer spacing the time limit left out", async ({ page })
   const found = page.locator("form.fit span");
   await expect(found).toContainText("follows the image's tones best for its plot time");
   await expect(found).toContainText(/Spacing at [\d.]+ mm follows them more closely, with a tone error of \d\.\d{3}, but takes [\d.]+ min to plot, over the limit of [\d.]+ min: type a target in minutes to allow it\./);
+});
+
+// A white picture, on which the line styles draw nothing.
+async function whitePng(page: Page) {
+  const png = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 120;
+    canvas.height = 160;
+    const g = canvas.getContext("2d")!;
+    g.fillStyle = "#ffffff";
+    g.fillRect(0, 0, 120, 160);
+    const blob = await new Promise<Blob>((done) => canvas.toBlob((b) => done(b!), "image/png"));
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  });
+  return { name: "white.png", mimeType: "image/png", buffer: Buffer.from(png) };
+}
+
+test("Optimize says why it has no suggestion, the stages end done, and a new image clears the sentence", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  await page.locator(".toolbar input[type=file]").setInputFiles(await whitePng(page));
+  const id = await pick(page, "hatch", await ran(page, 0));
+  await fitSummary(page).click();
+  await page.getByRole("button", { name: "Optimize" }).click();
+  const searched = await ran(page, id);
+  const found = page.locator("form.fit span");
+  await expect(found).toContainText(/^No value of Spacing from [\d.]+ mm to [\d.]+ mm draws anything here/);
+  await expect(page.getByRole("button", { name: /^Apply: / })).toHaveCount(0);
+  // The search ends on the current settings' cached drawing, which sends no stage frames.
+  const chips = page.locator(".status li");
+  expect(await chips.count()).toBeGreaterThan(0);
+  await expect(chips.filter({ hasText: "waiting" })).toHaveCount(0);
+  // The same settings on another image: the sentence was about the last one.
+  await page.getByRole("button", { name: "Sample image", exact: true }).click();
+  await ran(page, searched);
+  await expect(found).toHaveCount(0);
 });
 
 test("Response auto corrects the tone map for the style", async ({ page }) => {

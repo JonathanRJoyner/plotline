@@ -95,9 +95,10 @@ pub struct Optimum {
     /// The stage and key of the setting searched.
     pub stage: String,
     pub key: String,
-    /// The best value, as the JSON the setting takes, its tone error and its plot time in minutes.
+    /// The best value, as the JSON the setting takes, its tone error and its plot time in minutes;
+    /// the current value with no tone error when no trial scored.
     pub value: Value,
-    pub error: f64,
+    pub error: Option<f64>,
     pub minutes: f64,
     /// The current value, its tone error if it had one within the budget, and its plot time.
     pub current: Value,
@@ -112,7 +113,8 @@ pub struct Optimum {
     /// Every trial, in order.
     pub trials: Vec<Trial>,
     /// A sentence for people, and the patch that applies the best value, `{"settings": {stage:
-    /// {key: value}}}` as an analysis suggestion's, or `None` when the current value is best.
+    /// {key: value}}}` as an analysis suggestion's, or `None` when the current value is best or
+    /// no trial scored, which the sentence then explains.
     pub reason: String,
     pub patch: Option<Value>,
 }
@@ -202,6 +204,50 @@ impl Search {
                 Some(b) if b.minutes <= t.minutes => Some(b),
                 _ => Some(t),
             })
+    }
+
+    /// Why no trial has a score, as a sentence naming the setting with `unit`: nothing drawn,
+    /// drawings whose tones the tone match cannot compare, or the limits leaving every one out.
+    pub fn unscored(&self, unit: &str) -> String {
+        let t = &self.trials;
+        let (lo, hi) = (t.iter()).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
+            (lo.min(t.value), hi.max(t.value))
+        });
+        let range = format!("{} from {lo} to {hi}{unit}", self.density.key);
+        if t.iter().all(|t| t.error.is_none()) {
+            // A drawing with no marks plots in no time.
+            return if t.iter().all(|t| t.minutes.is_none_or(|m| m == 0.0)) {
+                format!(
+                    "No value of {range} draws anything here, so there is nothing to compare. \
+                     Try a lower threshold, or the tone's black, white and gamma settings."
+                )
+            } else {
+                format!(
+                    "No drawing of {range} follows the image's tones enough for a tone error, \
+                     so there is no value to suggest; judge this style by eye."
+                )
+            };
+        }
+        let count = |out: fn(&Trial) -> bool| t.iter().filter(|t| out(t)).count();
+        let why: Vec<String> = [
+            (count(|t| t.over), "over the target"),
+            (count(|t| t.slow), "too slow"),
+            (count(|t| !t.warnings.is_empty()), "with a new lint warning"),
+            (count(|t| t.failed.is_some()), "failed"),
+            (
+                count(|t| t.failed.is_none() && t.error.is_none()),
+                "with no tone error",
+            ),
+        ]
+        .into_iter()
+        .filter(|&(n, _)| n > 0)
+        .map(|(n, what)| format!("{n} {what}"))
+        .collect();
+        format!(
+            "No value of {range} can be suggested: of {} trials, {}.",
+            t.len(),
+            why.join(", ")
+        )
     }
 
     /// The trial left out only for its plot time with the lowest tone error, when that error is
@@ -449,22 +495,40 @@ impl OptimizeRun {
         self.error.clone()
     }
 
-    /// What the search found, once it has ended in [`RunState::Done`]; `None` when no trial had a
-    /// tone error within its limits.
+    /// What the search found, once it has ended in [`RunState::Done`]. When no trial had a tone
+    /// error within its limits, the result keeps the current value, with no tone error, no patch
+    /// and a sentence that says why.
     pub fn result(&self) -> Option<Optimum> {
         if self.state != RunState::Done {
             return None;
         }
-        let best = self.search.best()?;
         let d = &self.search.density;
         let first = &self.search.trials()[0];
         let current_error = (first.score().is_finite()).then_some(first.score());
-        let value = d.to_json(best.value);
-        let error = best.error.expect("the best trial has a score");
-        let minutes = best.minutes.expect("the best trial has a drawing");
         // A search that ends done made the first trial's drawing.
         let current_minutes = first.minutes.expect("the first trial has a drawing");
         let unit = if d.integer { "" } else { " mm" };
+        let Some(best) = self.search.best() else {
+            return Some(Optimum {
+                stage: d.stage.clone(),
+                key: d.key.clone(),
+                value: d.to_json(first.value),
+                error: None,
+                minutes: current_minutes,
+                current: d.to_json(first.value),
+                current_error,
+                current_minutes,
+                budget: self.budget,
+                limit_minutes: self.search.limit(),
+                beyond: None,
+                trials: self.search.trials().to_vec(),
+                reason: self.search.unscored(unit),
+                patch: None,
+            });
+        };
+        let value = d.to_json(best.value);
+        let error = best.error.expect("the best trial has a score");
+        let minutes = best.minutes.expect("the best trial has a drawing");
         let within = match self.budget {
             Some(b) => format!(" within {}", b.metric.show(b.target)),
             None => String::new(),
@@ -519,7 +583,7 @@ impl OptimizeRun {
             stage: d.stage.clone(),
             key: d.key.clone(),
             value,
-            error,
+            error: Some(error),
             minutes,
             current: d.to_json(first.value),
             current_error,
@@ -635,6 +699,33 @@ mod tests {
             ..trial(v, Some(v))
         });
         assert_eq!(s.best(), None);
+    }
+
+    #[test]
+    fn a_search_with_no_score_says_why() {
+        let blank = scan(Search::new(spacing(), 1.0, true), |v| Trial {
+            minutes: Some(0.0),
+            ..trial(v, None)
+        });
+        assert_eq!(blank.best(), None);
+        let range = "spacing_mm from 0.25 to 4 mm";
+        let why = format!(
+            "No value of {range} draws anything here, so there is nothing to compare. Try a lower \
+             threshold, or the tone's black, white and gamma settings."
+        );
+        assert_eq!(blank.unscored(" mm"), why);
+        let untoned = scan(Search::new(spacing(), 1.0, true), |v| trial(v, None));
+        let why = format!(
+            "No drawing of {range} follows the image's tones enough for a tone error, so there is \
+             no value to suggest; judge this style by eye."
+        );
+        assert_eq!(untoned.unscored(" mm"), why);
+        let over = scan(Search::new(spacing(), 1.0, true), |v| Trial {
+            over: true,
+            ..trial(v, Some(v))
+        });
+        let why = format!("No value of {range} can be suggested: of 9 trials, 9 over the target.");
+        assert_eq!(over.unscored(" mm"), why);
     }
 
     #[test]
