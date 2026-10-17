@@ -111,9 +111,9 @@ export class Protocol {
       // A setup in the preset's shape over the current preset, so the format and version stay ours.
       restore: (setup: Record<string, unknown>) => s().loadPreset(JSON.stringify({ ...JSON.parse(s().preset()), ...setup })),
       // Draws every style after the reply, which carries the id its `thumb` events will have.
-      thumbs: (width: number) => {
+      thumbs: (width: number, shrink = 1) => {
         const id = ++this.thumbsId;
-        this.go = () => void this.thumbs(id, width);
+        this.go = () => void this.thumbs(id, width, shrink);
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
@@ -196,7 +196,7 @@ export class Protocol {
   // Draws every listed style in turn as a trial, which leaves the session's own run, drawing and
   // settings alone, and posts each as a `thumb` event. It yields as `drive` does, so commands get
   // their turn, and a newer `thumbs` or a `cancelThumbs` ends it.
-  private async thumbs(id: number, width: number): Promise<void> {
+  private async thumbs(id: number, width: number, shrink: number): Promise<void> {
     let lastYield = performance.now();
     for (const { name } of JSON.parse(listStyles()) as Array<{ name: string }>) {
       if (id !== this.thumbsId) return;
@@ -214,7 +214,7 @@ export class Protocol {
             }
           }
           error = trial.error() ?? null;
-          png = trial.previewPng(width) ?? null;
+          png = trial.previewPng(width, shrink) ?? null;
         } finally {
           free(trial);
         }

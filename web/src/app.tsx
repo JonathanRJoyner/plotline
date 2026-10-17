@@ -32,8 +32,11 @@ const Mark = () => (
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 // The styles dialog's pictures are this many pixels wide: sharp when shown at two and a half
-// times a cell's width, as pointing at a cell does.
+// times a cell's width, as pointing at a cell does. Every mark in them is at least THUMB_SHRINK
+// pixels wide, so the marks still show in a cell about a quarter as wide; at one pixel, a dot
+// style's sparse dots averaged to a blank cell. crates/core/tests/laws.rs checks every style.
 const THUMB_PX = 600;
+const THUMB_SHRINK = 2;
 // The style a first visit starts on: its lines read as the picture at the fit zoom, where grid's dots barely show.
 const FIRST_STYLE = "waves";
 // Where Ctrl+Z belongs to the browser's own undo of typing.
@@ -429,7 +432,7 @@ export function App() {
     });
     thumbsFor.current = 0;
     setStylesOpens((n) => n + 1);
-    thumbsFor.current = (await call<number>("thumbs", [THUMB_PX])) ?? 0;
+    thumbsFor.current = (await call<number>("thumbs", [THUMB_PX, THUMB_SHRINK])) ?? 0;
   }
 
   const style = state?.style;
