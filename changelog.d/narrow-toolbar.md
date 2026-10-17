@@ -1,1 +1,0 @@
-- **Narrow windows:** the toolbar keeps to one row by showing buttons as icons alone as the window narrows, the view and app buttons first, with each name on hover. On a phone it takes two even rows instead of leaving one group on a row of its own.
