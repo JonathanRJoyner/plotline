@@ -102,9 +102,9 @@ The module is part of the hosted page's build, served next to the engine module,
 
 ### Tiles
 
-The model sees the image in tiles of 512 × 512 pixels, margins included: each tile keeps its centre, `512 - 2 × overlap` pixels on a side, and its margin of `overlap` pixels gives that centre context. The catalogue entry gives the overlap. It starts at 32 for TEED and 64 for contour, and the conversion script checks that a tiled run of each model on the still life stays within 1/255 of a whole-image run, raising the overlap until it does. A model file of your own uses 64. The margin is cut away before the tile's centre is written into the line map, so seams fall where every pixel still saw `overlap` pixels of context. Pixels past the image's edge are filled by mirroring it. Tile sides are padded up to a multiple of 8, which the contour model needs.
+The model sees the image in tiles of 512 × 512 pixels, margins included: each tile keeps its centre, `512 - 2 × overlap` pixels on a side, and its margin of `overlap` pixels gives that centre context. The catalogue entry gives the overlap. It starts at 32 for TEED, and the conversion script checks that a tiled run of each model on a code-rendered image stays within 1/255 of a whole-image run with the same mirrored margin, raising the overlap until it does. A model file of your own uses 64. The margin is cut away before the tile's centre is written into the line map, so seams fall where every pixel still saw `overlap` pixels of context. Pixels past the image's edge are filled by mirroring it. Tile sides are padded up to a multiple of 8, which the contour model needs.
 
-Each `step` of the `model` stage runs one tile. The progress bar moves per tile, Stop takes effect between tiles, and memory stays near the 512-pixel rows of the table, scaled to a 512 × 512 tile: about 400 MB for contour, whatever the resolution.
+Each `step` of the `model` stage runs one tile. The progress bar moves per tile, Stop takes effect between tiles, and memory stays near the 512-pixel rows of the table, scaled to a 512 × 512 tile: about 100 MB for TEED, whatever the resolution.
 
 The model's output for an image is cached like any other stage's, so changing the ink threshold, the pens or the order does not run the model again.
 
@@ -134,10 +134,10 @@ A model is listed only when all of these hold:
 2. Its training data is documented, and the licence of each dataset is known and written into `training`. A model whose training data cannot be traced is not listed.
 3. That licence lets plotline host its own converted copy.
 
-The first entries:
+The first entry is `teed-1`. `contour-1` follows in its own change, for two reasons found while converting it on 2026-10-16. Its network normalises over the whole image (instance normalisation), so a tile can never match a whole-image run: the best overlap left differences of 135/255. It will therefore run on the whole image, capped at 1024 pixels on the long side (887 MB and 16 s in the browser), with a catalogue field that marks a model as untiled. And the weights in the authors' Hugging Face Space match no labelled contour file, so it converts from the authors' `model.zip`, linked from their repository's README.
 
-- `contour-1`: the contour style of Chan, Durand and Isola, "Learning to generate line drawings that convey geometry and semantics", CVPR 2022. The repository, which publishes the weights, is MIT. Its drawings come from the Contour Drawings dataset (CC BY 3.0), and its photos from a subset of COCO, whose images keep their Flickr licences. Clean, closed lines; slow (16 s at 1024 pixels in the browser).
-- `teed-1`: TEED, X. Soria, Y. Li, M. Rouhani and A. D. Sappa, "Tiny and efficient model for the edge detection generalization", Proc. ICCV Workshops, 2023, pp. 1364-1373. MIT, and the repository ships the weights trained on BIPED, a dataset by the same first author. Fast (under a second at 1024 pixels); it finds edges, texture included, rather than an artist's selection of lines.
+- `teed-1`, at launch: TEED, X. Soria, Y. Li, M. Rouhani and A. D. Sappa, "Tiny and efficient model for the edge detection generalization", Proc. ICCV Workshops, 2023, pp. 1364-1373. MIT, and the repository ships the weights trained on BIPED, a dataset by the same first author; BIPED's own terms allow only non-commercial use, and the training note says so. Fast (under a second at 1024 pixels); it finds edges, texture included, rather than an artist's selection of lines.
+- `contour-1`, to follow: the contour style of Chan, Durand and Isola, "Learning to generate line drawings that convey geometry and semantics", CVPR 2022. The repository, which publishes the weights, is MIT. Its drawings come from the Contour Drawings dataset (CC BY 3.0), and its photos from a subset of COCO, whose images keep their Flickr licences. Clean, closed lines; slow (16 s at 1024 pixels in the browser).
 
 The same paper's anime style is not listed, because the provenance of its training sketches cannot be checked.
 

@@ -361,7 +361,7 @@ git commit -m "Build the model runtime as its own WebAssembly module and bridge 
 **Gate:** the owner creates the public repository `plotline-models` under the same GitHub owner as `plotline`. Account and repository creation is the owner's step; this task prepares the contents and pushes them once it exists.
 
 **Files (in `plotline-models`, not this repository):**
-- Create: `convert.py`, `NOTICE`, `contour-1.md`, `teed-1.md`, `README.md` (what the repository holds, and how to ask for a model's removal), `contour-1.onnx`, `teed-1.onnx`
+- Create: `convert.py`, `NOTICE`, `teed-1.md`, `README.md` (what the repository holds, and how to ask for a model's removal), `teed-1.onnx` (contour-1 follows in its own change; see the spec's "The first entries")
 
 **Interfaces:**
 - Produces: two ONNX files that follow the model convention in Global Constraints, at commit-pinned raw URLs, with their sizes, SHA-256s and overlaps, which Task 11 copies into the catalogue.
@@ -457,11 +457,11 @@ git commit -m "Add Get models and Load your own to the style picker"
 
 **Files:**
 - Modify: `crates/core/src/models/catalogue.json`, `docs/styles.md`, `README.md` (styles table), `CHANGELOG.md`
-- Create: `crates/models/examples/model_cards.rs`, `web/public/models/contour-1.png`, `web/public/models/teed-1.png`
+- Create: `crates/models/examples/model_cards.rs`, `web/public/models/teed-1.png`
 
 **Interfaces:**
 - Consumes: Task 8's URLs, sizes, hashes and overlaps; Task 1's `catalogue()`; Task 4's `TractRuntime`.
-- Produces: entries `contour-1` and `teed-1` with the fields of `CatalogueEntry`; descriptions and training notes from the spec's "The first entries".
+- Produces: the entry `teed-1` with the fields of `CatalogueEntry`; descriptions and training notes from the spec's "The first entries".
 
 - [ ] **Step 1: Fill `catalogue.json` and run the catalogue test**
 
@@ -474,7 +474,7 @@ Run: `cargo run --release -p plotline-models --example model_cards -- web/public
 
 - [ ] **Step 3: Download both through the CLI and draw once with each**
 
-Run: `uv run plotline models get contour-1 --accept-licence`, the same for `teed-1`, then `uv run plotline run <a test image> --style learned --set model.model=teed-1 -o target/teed.svg`
+Run: `uv run plotline models get teed-1 --accept-licence`, then `uv run plotline run <a test image> --style learned --set model.model=teed-1 -o target/teed.svg`
 Expected: both downloads pass their hash checks; the SVG has paths.
 
 - [ ] **Step 4: Document the style** — a `learned` section in `docs/styles.md` (what it does, when to use it, `resolution` and `invert`, that models download from Get models or `plotline models`), the README table row, and a CHANGELOG entry.
