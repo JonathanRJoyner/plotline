@@ -13,7 +13,7 @@ export type Entry = { name: string; label: string; description: string; note?: s
 
 // The families and their order, word for word as docs/styles.md heads them; a test keeps the two equal.
 export const FAMILIES: ReadonlyArray<readonly [label: string, names: readonly string[]]> = [
-  ["Lines", ["grid", "hatch", "waves", "spiral", "truchet", "ink"]],
+  ["Lines", ["grid", "hatch", "waves", "spiral", "truchet", "ink", "learned"]],
   ["The Voronoi point family", ["stipple", "line", "dashes", "tree", "mesh", "cells", "scribble"]],
   ["Sketch lines", ["sketch"]],
   ["Other placers", ["halftone", "dither", "circles"]],
