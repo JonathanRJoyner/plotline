@@ -1,13 +1,13 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, Link, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
 import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Optimum, Pen, Stats, ToneMatch } from "./events";
 import { download } from "./files";
-import { lengthText, pathsText } from "./format";
+import { lengthText, pathsText, unscoredText } from "./format";
 import { addPen, libraryFile, mergeLibraries, parseLibrary, removePen, samePen, usable } from "./library";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 import { controlsFor } from "./schema";
@@ -352,6 +352,8 @@ const UNITS = [["minutes", "min"], ["paths", "paths"], ["metres", "m"], ["dots",
 const FIT_TOLERANCE = 0.02;
 
 type FitProps = {
+  /** Counts the images opened, so a search's suggestion goes with the image it was made for. */
+  image: number;
   disabled: boolean; error?: string; fitted: FitResult | null; optimum: Optimum | null; settings: State["settings"];
   stages: { name: string; label: string; schema: Record<string, unknown> }[];
   onFit: (metric: string, target: number) => void; onOptimize: (metric?: string, target?: number) => void; onApply: (patch: Patch) => void;
@@ -359,7 +361,7 @@ type FitProps = {
 
 // A budget: a target in one of the units, which Fit meets by changing the style's density setting.
 // What a fit or a search says holds only for the settings it was made with, so it shows while they do.
-export function FitPanel({ disabled, error, fitted, optimum, settings, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
+export function FitPanel({ image, disabled, error, fitted, optimum, settings, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
   const [target, setTarget] = useState("");
   const [metric, setMetric] = useState("minutes");
   // Closed until the first need, so the stats lead; a result or an error opens it so none is hidden, and nothing closes it again.
@@ -367,8 +369,8 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
   useEffect(() => { if (error || fitted || optimum) setOpen(true); }, [error, fitted, optimum]);
   // A fit applies its value, so its message shows once the setting holds it and while it still does.
   const fit = fitted && settings[fitted.stage]?.[fitted.key] === fitted.value ? fitted : null;
-  // A search applies nothing, so its suggestion shows while the settings are those of the render it arrived in.
-  const now = JSON.stringify(settings);
+  // A search applies nothing, so its suggestion shows while the image and settings are those of the render it arrived in.
+  const now = JSON.stringify([image, settings]);
   const arrival = useRef<{ optimum: Optimum | null; settings: string }>({ optimum: null, settings: "" });
   if (arrival.current.optimum !== optimum) arrival.current = { optimum, settings: now };
   const search = optimum && arrival.current.settings === now ? optimum : null;
@@ -393,6 +395,7 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
     const at = (v: unknown) => `${String(v)}${c && "unit" in c && c.unit ? ` ${c.unit}` : ""}`;
     const within = o.budget ? ` within ${o.budget.target} ${unit(o.budget.metric)}` : "";
     const time = (minutes: number) => `${minutes.toFixed(1)} min`;
+    if (o.error === null) return unscoredText(o, label, at);
     const b = o.beyond;
     // A value the time limit left out that would have followed the tones more closely, and how to allow it.
     const beyond = b && b.error !== null && b.minutes !== null && o.limit_minutes !== null
@@ -449,7 +452,8 @@ type StatusProps = {
 // Each stage is done, running with its frame's label, or waiting. The first stage not done runs
 // before its first frame arrives.
 export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX.Element {
-  const done = (name: string) => (progress[name]?.progress ?? 0) >= 1;
+  // A done run has run every stage, though a fit or a search ends on a cached trial that sends no frames.
+  const done = (name: string) => run.state === "done" || (progress[name]?.progress ?? 0) >= 1;
   const current = run.state === "running" ? stages.find((s) => !done(s.name)) : undefined;
   return (
     <div class="status">
@@ -459,7 +463,7 @@ export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX
       <ol>
         {stages.map((s) => {
           const p = progress[s.name];
-          if (done(s.name)) return <li data-state="done" title={p.label}>{s.label}: done</li>;
+          if (done(s.name)) return <li data-state="done" title={p?.label}>{s.label}: done</li>;
           if (s === current) return <li data-state="running">{s.label}: {p?.label ?? "running"} <progress value={p?.progress ?? 0} max={1} /></li>;
           return <li>{s.label}: waiting</li>;
         })}
@@ -468,9 +472,11 @@ export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX
   );
 }
 
-type PresetsProps = { warnings: string[]; error?: string; onSave: () => void; onLoad: (file: File) => void };
+/** A share link just made: copied to the clipboard, or, when the browser refused, only shown. */
+export type ShareLink = { link: string; copied: boolean };
+type PresetsProps = { warnings: string[]; error?: string; shared: ShareLink | null; onSave: () => void; onLoad: (file: File) => void; onCopy: () => void };
 
-export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps): JSX.Element {
+export function PresetsPanel({ warnings, error, shared, onSave, onLoad, onCopy }: PresetsProps): JSX.Element {
   return (
     <fieldset data-tour="presets">
       <legend>Presets</legend>
@@ -486,6 +492,14 @@ export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps):
           }}
         />
       </label>
+      <button type="button" onClick={onCopy}><Link /> Copy link</button>
+      {shared?.copied && <p class="help" role="status">Link copied.</p>}
+      {shared && !shared.copied && (
+        <>
+          <p class="help">Your browser did not allow copying. Copy this link:</p>
+          <input type="text" class="share-link" readOnly aria-label="Share link" value={shared.link} onFocus={(e) => e.currentTarget.select()} />
+        </>
+      )}
       {error && <p class="error">{error}</p>}
       {warnings.length > 0 && <ul class="warnings">{warnings.map((w) => <li>{w}</li>)}</ul>}
     </fieldset>

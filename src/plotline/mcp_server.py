@@ -380,7 +380,8 @@ def build_server(session: Session | None = None) -> MCPServer:
         applies like an analyse_image suggestion's. A style that
         differs from the current one replaces it; a stage the two styles share keeps the values
         changed from the old style's defaults, and the rest take the new style's defaults. reset
-        puts every setting back to the style's defaults first. look starts from one of the style's
+        puts every setting back to the style's defaults first, except Pen use (split) while there
+        is more than one pen. look starts from one of the style's
         looks, such as faithful, quick or fine, after reset and before settings; describe_style
         lists them. settings is {stage: {setting: value}} and changes only the values given; only
         the stages after a changed setting run again. An assistant that sees a face or a subject
@@ -446,8 +447,9 @@ def build_server(session: Session | None = None) -> MCPServer:
         Nothing else changes: returns {stage, key, value, error, minutes, current, current_error,
         current_minutes, budget, limit_minutes, beyond, trials, reason, patch} as JSON, with plot
         times in minutes and beyond the trial left out for its time that follows the tones more
-        than a tenth more closely, if any, or null when no trial stayed within the target, then
-        the stats and a preview of the current settings as run does. Apply the patch with
+        than a tenth more closely, if any; when no trial scored (nothing drawn, no tone error, or
+        every trial over a limit) error and patch are null and reason says why. Then come the
+        stats and a preview of the current settings as run does. Apply the patch with
         run(settings=patch["settings"]) if it suits; fidelity to the image is not always the
         aim."""
         with _errors():

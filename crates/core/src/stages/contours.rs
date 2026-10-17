@@ -2,7 +2,10 @@
 //!
 //! The tone map is blurred, padded by one empty pixel on every side so every level closes, and
 //! traced at `levels` evenly spaced values between white and full ink, one level at a time, which
-//! crowds the lines where the tone changes fast. Each line is simplified to within half a pixel,
+//! crowds the lines where the tone changes fast. A line that meets the map's edge is then cut open
+//! there: its runs through the padding are left out, since every level inked at the edge would
+//! otherwise run along it within half a pixel of the others, one pen width stacked many times
+//! over. Each line is simplified to within half a pixel,
 //! mapped to page mm and clamped to the map. Equally spaced levels of a smoothed field follow no
 //! published plotting algorithm, so there is nothing to cite for them; the iso-line tracer,
 //! [`raster::iso_lines`], cites its source in `raster.rs`, and so does the simplification.
@@ -53,9 +56,10 @@ impl Default for ContourSettings {
 ///
 /// Level `j` of `L` lies at ink `j / (L + 1)` for `j` from 1 to `L`, and in lane `i` of `n` at
 /// `(j + i / n) / (L + 1)`. Each level is traced in its
-/// own step of the run, lowest first, and its lines come in the order the tracer finds them. Each
-/// line is one path, closed: its last vertex repeats the first. A line that simplifies to a single
-/// point is dropped.
+/// own step of the run, lowest first, and its lines come in the order the tracer finds them. A line
+/// inside the map is one path, closed: its last vertex repeats the first. A line that meets the
+/// map's edge gives one open path per stretch inside the map, ending on the edge. A line that
+/// simplifies to a single point is dropped.
 pub struct ContourStage;
 
 impl Stage for ContourStage {
@@ -66,7 +70,7 @@ impl Stage for ContourStage {
         "Contours"
     }
     fn version(&self) -> u32 {
-        2
+        3
     }
     fn requires(&self) -> &'static [Kind] {
         &[Kind::Tone]
@@ -106,7 +110,8 @@ impl Stage for ContourStage {
             Box::new(move |i, paths, _| {
                 // Level i + 1, summed as the tracer sums `first + j * step`, then the lane's shift.
                 let level = step + i as f64 * step + shift;
-                for line in raster::iso_lines(&padded, pw, ph, level, step, level) {
+                let lines = raster::iso_lines(&padded, pw, ph, level, step, level);
+                for line in lines.iter().flat_map(|l| open_at_edge(l, w, h)) {
                     // Padded cell x is tone pixel x - 1, whose centre lies at x - 0.5.
                     let mm: Vec<[f64; 2]> = raster::simplify(&line, 0.5)
                         .into_iter()
@@ -120,6 +125,34 @@ impl Stage for ContourStage {
         );
         Ok(Box::new(Budgeted::new(run, VERTEX_BUDGET, TOO_BIG)))
     }
+}
+
+/// Closed `line`, in the cells of a `w` by `h` map padded by one cell, as the stretches that lie
+/// inside the map. A vertex lies in the padding when it is on an edge to a padding cell, that is
+/// outside `[1, w]` by `[1, h]`. Each stretch keeps the padding vertex at either end, so it
+/// reaches the map's edge, and a line with no vertex in the padding comes back whole.
+fn open_at_edge(line: &[[f64; 2]], w: usize, h: usize) -> Vec<Vec<[f64; 2]>> {
+    let (w, h) = (w as f64, h as f64);
+    let padding = |[x, y]: [f64; 2]| x < 1.0 || y < 1.0 || x > w || y > h;
+    // The last vertex repeats the first.
+    let n = line.len() - 1;
+    let Some(start) = (0..n).find(|&i| padding(line[i])) else {
+        return vec![line.to_vec()];
+    };
+    let (mut pieces, mut piece) = (Vec::new(), Vec::new());
+    for k in 1..=n {
+        let (prev, v) = (line[(start + k - 1) % n], line[(start + k) % n]);
+        if !padding(v) {
+            if piece.is_empty() {
+                piece.push(prev);
+            }
+            piece.push(v);
+        } else if !piece.is_empty() {
+            piece.push(v);
+            pieces.push(std::mem::take(&mut piece));
+        }
+    }
+    pieces
 }
 
 /// What the run fails with once it passes [`VERTEX_BUDGET`].
@@ -209,7 +242,7 @@ mod tests {
             (ContourStage.name(), ContourStage.label()),
             ("contours", "Contours")
         );
-        assert_eq!(ContourStage.version(), 2);
+        assert_eq!(ContourStage.version(), 3);
         assert_eq!(
             (ContourStage.requires(), ContourStage.provides()),
             (&[Kind::Tone][..], Kind::Paths)
@@ -296,15 +329,51 @@ mod tests {
     }
 
     #[test]
-    fn every_vertex_stays_on_the_map() {
-        // Flat black rises from the padding at the border, so every line runs along it. Only
-        // levels below 1/2 lie outside the map, and are clamped onto its edge; the others lie
-        // inside, within half a pixel of it.
-        let tone = tone_map(10, 10, |_, _| 1.0);
-        let rect = tone.rect_mm();
-        let (_, paths) = run_tone_stage(&ContourStage, tone, json!({}));
-        assert_eq!(paths.len(), 12);
-        assert_inside(&paths, rect);
+    fn a_line_ends_at_the_edge_instead_of_running_along_it() {
+        // Flat black rises from the padding at the border, so every level would run along it, all
+        // twelve within half a pixel of the edge: nothing is left once those runs are cut.
+        let (_, paths) = run_tone_stage(&ContourStage, tone_map(10, 10, |_, _| 1.0), json!({}));
+        assert!(paths.is_empty(), "{:?}", paths.coords());
+        // Ink falling from the left edge: each level is one open line from the top edge to the
+        // bottom one, and only its two ends lie within half a pixel (1 mm) of the edge.
+        let tone = tone_map(10, 10, |x, _| 1.0 - x as f32 / 10.0);
+        let [x, y, w, h] = tone.rect_mm();
+        let (_, paths) = run_tone_stage(&ContourStage, tone, json!({"smooth_mm": 0.0}));
+        assert!(!paths.is_empty());
+        assert_inside(&paths, [x, y, w, h]);
+        for path in paths.iter() {
+            assert_ne!(path.first(), path.last(), "{path:?}");
+            let near = |&[px, py]: &[f64; 2]| {
+                (px - x).min(x + w - px).min(py - y).min(y + h - py) < 1.0 - 1e-9
+            };
+            assert!(path[1..path.len() - 1].iter().all(|v| !near(v)), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn open_at_edge_keeps_a_line_inside_whole_and_cuts_one_along_the_padding() {
+        let inside = [[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 1.0]];
+        assert_eq!(open_at_edge(&inside, 3, 3), vec![inside.to_vec()]);
+        // A loop through the padding on the left: the stretch inside keeps one padding vertex at
+        // each end.
+        let line = [
+            [0.5, 1.0],
+            [1.5, 1.0],
+            [2.0, 2.0],
+            [1.5, 3.0],
+            [0.5, 3.0],
+            [0.5, 1.0],
+        ];
+        assert_eq!(
+            open_at_edge(&line, 3, 3),
+            vec![vec![
+                [0.5, 1.0],
+                [1.5, 1.0],
+                [2.0, 2.0],
+                [1.5, 3.0],
+                [0.5, 3.0]
+            ]]
+        );
     }
 
     #[test]

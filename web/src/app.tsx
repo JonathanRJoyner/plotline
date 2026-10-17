@@ -10,11 +10,12 @@ import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, Result
 import { ACCEPT, download, imageFile } from "./files";
 import { History, setupOf } from "./history";
 import { loadLibrary, saveLibrary } from "./library";
-import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
+import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, type ShareLink, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
 import { type Entry, groupStyles, StylePicker, type Thumb } from "./picker";
 import { Preview } from "./preview";
 import type { Patch, State } from "./protocol";
 import { Settings } from "./settings";
+import { decodeShare, encodeShare, PREFIX, shareable, withMachine } from "./share";
 import { firstVisit, Tour } from "./tour";
 import { zoomPercent, type View } from "./view";
 
@@ -167,7 +168,7 @@ function OpenInput({ onOpen }: { onOpen: (file: File | undefined) => void }) {
 }
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "compare" | "previous" | "view" | "onView" | "fits" | "focusing"> & {
-  engine: Engine; status: StatusStore; stages: Stage[]; settings: State["settings"]; error?: string; fitError?: string;
+  engine: Engine; status: StatusStore; stages: Stage[]; settings: State["settings"]; image: number; error?: string; fitError?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
   onSettings: () => void; onTour: () => void; onUndo?: () => void; onRedo?: () => void;
   onApply: (patch: Patch) => void; lintError?: string;
@@ -177,7 +178,7 @@ type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "r
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, settings, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onOptimize, onApply, lintError, ...preview }: RunViewProps) {
+function RunView({ engine, status, stages, settings, image, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onOptimize, onApply, lintError, ...preview }: RunViewProps) {
   const { run, stats, lint, tone } = useStatus(status);
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
@@ -306,7 +307,7 @@ function RunView({ engine, status, stages, settings, error, fitError, onOpen, on
         <StatsPanel stats={stats} tone={tone} />
         <LintList findings={lint} error={lintError} onApply={onApply} />
         <FitPanel
-          disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} settings={settings} stages={stages}
+          image={image} disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} settings={settings} stages={stages}
           onFit={(metric, target) => { setFitted(null); setOptimum(null); onFit(metric, target); }}
           onOptimize={(metric, target) => { setFitted(null); setOptimum(null); onOptimize(metric, target); }}
           onApply={(patch) => { setOptimum(null); onApply(patch); }}
@@ -332,6 +333,7 @@ export function App() {
   const [looks, setLooks] = useState<Look[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({}); // per stage; "" for the rest
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [shared, setShared] = useState<(ShareLink & { setup: string }) | null>(null); // the last link made, with the setup it holds
   const [draft, setDraft] = useState<State["settings"]>({}); // settings shown before the engine has them
   const [hidden, setHidden] = useState(new Set<number>());
   const [help, setHelp] = useState(helpShown);
@@ -340,6 +342,7 @@ export function App() {
   const [pensOpens, setPensOpens] = useState(0);
   const [library, setLibrary] = useState(loadLibrary); // My pens, kept in this browser
   const [dismissed, setDismissed] = useState(new Set<string>()); // suggestion kinds hidden for this image
+  const [images, setImages] = useState(0); // the images opened, so what was said of one goes with it
   const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -385,6 +388,9 @@ export function App() {
     engine.call("setPenLibrary", [library]).then(() => {}, () => {});
     engine.call<BankPen[]>("listPens").then((r) => setBank(r.value), () => {});
     engine.call<Ink[]>("listInks").then((r) => setInks(r.value), () => {});
+    // A share link's setup is read once and its fragment removed, so a reload does not apply it over later edits.
+    const fragment = location.hash.startsWith(PREFIX) ? location.hash : null;
+    if (fragment) window.history.replaceState(null, "", location.pathname + location.search);
     engine.call<Style[]>("listStyles").then(async ({ state, value }) => {
       setStyles(value);
       const saved = remembered();
@@ -400,6 +406,13 @@ export function App() {
         } catch { /* keeps the grid state */ }
       }
       take(state);
+      // After the remembered setup, so the link's wins and Undo goes back to the remembered one; a link that fails leaves it.
+      if (fragment) {
+        const read = await decodeShare(fragment);
+        const own = await call<{ machine?: unknown }>("preset");
+        if ("text" in read) await loadPresetText(withMachine(read.text, own?.machine), "the shared link");
+        else setErrors((es) => ({ ...es, preset: read.error }));
+      }
     }, (e) => setFatal(message(e)));
     const paste = (e: ClipboardEvent) => openDropped(e.clipboardData);
     document.addEventListener("paste", paste);
@@ -483,9 +496,15 @@ export function App() {
     }, 150);
   }
 
+  // A new image starts with every suggestion, and with no Optimize sentence from the last one.
+  function newImage() {
+    setDismissed(new Set());
+    setImages((n) => n + 1);
+  }
+
   async function openImage(file: File | undefined) {
     if (!file) return;
-    setDismissed(new Set());
+    newImage();
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       await call("setImageBytes", [bytes], "image", [bytes.buffer]);
@@ -510,11 +529,28 @@ export function App() {
     if (preset) download(`plotline-${state?.style ?? "drawing"}-preset.json`, JSON.stringify(preset, null, 2), "application/json");
   }
 
-  async function loadPreset(file: File) {
-    const warned = await call<string[]>("loadPresetText", [await file.text()], "preset");
-    // The engine's message names no file, and a refusal is the only way `warned` is undefined.
-    if (!warned) setErrors((es) => ({ ...es, preset: es.preset && `Could not load ${file.name} (${es.preset}).` }));
+  // A preset file and a share link load alike; `what` names the source in a refusal.
+  async function loadPresetText(text: string, what: string) {
+    const warned = await call<string[]>("loadPresetText", [text], "preset");
+    // The engine's message names no source, and a refusal is the only way `warned` is undefined.
+    if (!warned) setErrors((es) => ({ ...es, preset: es.preset && `Could not load ${what} (${es.preset}).` }));
     setWarnings(warned ?? []);
+  }
+
+  const loadPreset = async (file: File) => loadPresetText(await file.text(), file.name);
+
+  // Copies a link that holds the preset. A browser that refuses the clipboard gets the link shown to copy by hand.
+  async function copyLink() {
+    const preset = await call("preset");
+    if (!preset) return;
+    const link = location.origin + location.pathname + (await encodeShare(shareable(preset)));
+    let copied = true;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      copied = false;
+    }
+    setShared({ link, copied, setup: setupOf(preset as State) });
   }
 
   async function exportAs(format: "svg" | "json") {
@@ -586,12 +622,12 @@ export function App() {
       {/* Before the settings in the page, so Tab reaches the toolbar first; the grid puts it between the columns. */}
       <main>
         <RunView
-          engine={engine} status={status} stages={stages} settings={settings} canvas={state.canvas} paper={state.paper} hidden={hidden}
+          engine={engine} status={status} stages={stages} settings={settings} image={images} canvas={state.canvas} paper={state.paper} hidden={hidden}
           pens={state.pens} hasImage={state.image} onOpen={openImage}
           focus={state.focus} radius={Number(settings.tone?.focus_mm ?? 40)}
           onFocusAt={addFocus} onFocusRemove={(i) => removeFocus((state.settings.tone?.focus as number[][] | undefined)?.[i])}
           error={errors[""] || (errors.image && `Could not open the image (${errors.image}).${state.image ? " The previous image is still open." : ""}`)}
-          onSample={() => { setDismissed(new Set()); call("sample", [], "image"); }} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
+          onSample={() => { newImage(); call("sample", [], "image"); }} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
           onSettings={() => {
             setErrors((es) => ({ ...es, machine: "" })); // an old refusal would show over a good machine
             setSettingsOpens((n) => n + 1);
@@ -662,7 +698,7 @@ export function App() {
           <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
         </PensPanel>
         <Export status={status} machine={state.machine !== null} onExport={exportAs} onHpgl={exportHpgl} onGcode={exportGcode} />
-        <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
+        <PresetsPanel warnings={warnings} error={errors.preset} shared={shared?.setup === setupOf(state) ? shared : null} onSave={savePreset} onLoad={loadPreset} onCopy={copyLink} />
       </aside>
       <SettingsDialog
         opens={settingsOpens} machine={state.machine} error={errors.machine} speeds={state.speeds} onPick={pickMachine}

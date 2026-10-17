@@ -306,10 +306,18 @@ impl Session {
         Ok(())
     }
 
-    /// Put every stage of the style, Pen use included, back to the style's defaults.
+    /// Put every stage of the style back to the style's defaults, except Pen use while there is
+    /// more than one pen: it goes with the pens, which a reset leaves alone, and resetting it
+    /// would leave the first pen, often a light ink, to draw everything
+    /// (docs/decisions/2026-10-17-reset-keeps-pen-use.md).
     pub fn reset_settings(&mut self) {
+        let keep = self.pens.len() > 1 && self.style.stage_index("split").is_some();
+        let split = self.settings["split"].clone();
         self.settings = self.style.defaults();
-        self.changed.clear();
+        self.changed.retain(|(stage, _)| keep && stage == "split");
+        if keep {
+            self.settings["split"] = split;
+        }
     }
 
     /// Every stage's full settings object, keyed by stage name.
@@ -693,7 +701,9 @@ impl Session {
     pub fn load_preset(&mut self, v: &Value) -> Result<Vec<String>, SessionError> {
         let data = presets::parse(v)?;
         self.set_style(&data.style)?;
-        self.reset_settings();
+        // Pen use included, which a reset would keep for the session's pens.
+        self.settings = self.style.defaults();
+        self.changed.clear();
         self.set_canvas(data.canvas);
         self.set_paper(&data.paper)?;
         self.set_pens(data.pens)?;
@@ -744,7 +754,7 @@ impl Session {
 mod tests {
     use super::*;
     use crate::analysis::measure;
-    use crate::synthetic::{color_bars, gradient, ramp, still_life, strokes};
+    use crate::synthetic::{color_bars, flat, gradient, ramp, still_life, strokes};
     use serde_json::json;
 
     #[test]
@@ -923,6 +933,28 @@ mod tests {
         assert_eq!(s.settings(), &s.style().defaults());
         assert!(s.changed.is_empty());
     }
+    #[test]
+    fn a_reset_keeps_pen_use_while_there_are_several_pens() {
+        let mut s = Session::new(1 << 20);
+        s.set_style("waves").unwrap();
+        let yellow = Pen::new("Yellow", 0.3, "#f5c400").unwrap();
+        let black = Pen::new("Black", 0.3, "#000000").unwrap();
+        s.set_pens(vec![yellow.clone(), black]).unwrap();
+        s.update("split", &json!({"mode": "by_colour"})).unwrap();
+        s.update("tone", &json!({"gamma": 1.0})).unwrap();
+        s.reset_settings();
+        assert_eq!(s.settings()["split"]["mode"], "by_colour");
+        assert_eq!(s.settings()["tone"], s.style().defaults()["tone"]);
+        // Still the user's change, so a style switch carries it.
+        s.set_style("hatch").unwrap();
+        assert_eq!(s.settings()["split"]["mode"], "by_colour");
+        // With one pen Pen use has nothing to share, so it resets with the rest.
+        s.set_pens(vec![yellow]).unwrap();
+        s.reset_settings();
+        assert_eq!(s.settings(), &s.style().defaults());
+        assert!(s.changed.is_empty());
+    }
+
     #[test]
     fn a_reset_and_an_edit_move_the_look() {
         let mut s = Session::new(1 << 20);
@@ -1307,7 +1339,8 @@ mod tests {
         drain(&mut s);
         let drawn = s.drawing().unwrap();
         assert_eq!(found.current, json!(1.0));
-        assert!(found.error <= (1.0 + crate::optimize::CLOSE) * found.current_error.unwrap());
+        let close = (1.0 + crate::optimize::CLOSE) * found.current_error.unwrap();
+        assert!(found.error.unwrap() <= close);
         assert_eq!(
             found.current_minutes,
             s.stats().unwrap().estimated_seconds / 60.0
@@ -1329,6 +1362,22 @@ mod tests {
             !best.over && best.metric.unwrap() <= minutes * 0.7,
             "{budgeted:?}"
         );
+    }
+
+    #[test]
+    fn optimize_on_a_blank_drawing_says_why_and_suggests_nothing() {
+        let mut s = Session::new(64 << 20);
+        s.set_image(flat(40, 30, 1.0));
+        s.set_canvas(Canvas::new(40.0, 30.0, 0.0, Fit::Fit).unwrap());
+        s.set_style("hatch").unwrap();
+        let mut job = s.optimize(None).unwrap();
+        while job.next_frame().is_some() {}
+        assert_eq!(job.state(), RunState::Done);
+        let found = job.result().unwrap();
+        assert_eq!((found.error, &found.patch), (None, &None));
+        assert_eq!((&found.value, found.current_error), (&found.current, None));
+        let why = "No value of spacing_mm from 0.25 to 4 mm draws anything here";
+        assert!(found.reason.starts_with(why), "{}", found.reason);
     }
 
     #[test]
@@ -1480,6 +1529,11 @@ mod tests {
         let mut t = Session::new(1 << 20);
         assert!(t.load_preset(&s.preset()).unwrap().is_empty());
         assert_eq!(t.settings()["split"]["mode"], "light_to_dark");
+        // A preset starts from its style's defaults, even where a reset would keep Pen use.
+        let black = Pen::new("Black", 0.3, "#000000").unwrap();
+        t.set_pens(vec![black.clone(), black]).unwrap();
+        assert!(t.load_preset(&v).unwrap().is_empty());
+        assert_eq!(t.settings()["split"]["mode"], "one_pen");
     }
 
     #[test]
