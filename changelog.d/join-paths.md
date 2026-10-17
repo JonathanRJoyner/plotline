@@ -1,0 +1,3 @@
+Section: Output
+
+- **Joined paths:** Path order has a new setting, `join`. `on` joins the paths that meet into the fewest pen-down trails and draws an edge two paths share once; `retrace` also draws some short edges twice, so the pen lifts much less. `cells`, `mesh` and `tree` now default to `retrace`, which cuts their pen lifts by 46 to 86 % and their plot time by 10 to 38 % in the regression gallery, for 4 to 19 % more pen-down length laid over lines already drawn. Presets of those three styles saved earlier draw differently; set `order.join` to `off` for the old drawing. When pen lifts take most of the plot time and the paths meet, the plot lint's lift finding now offers `retrace` as its fix.

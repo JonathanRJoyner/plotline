@@ -32,6 +32,7 @@ use plotline_core::raster::simplify;
 use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::stage::Artifact;
+use plotline_core::stages::join::join;
 use plotline_core::stages::tone::{flatten, guided};
 use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
@@ -1124,7 +1125,11 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         let above = fit.samples.iter().any(|x| x.metric > target);
         if !within && !(below && above) {
             // Out of reach: then the fit is no farther from the target than the end of the
-            // range that density points towards.
+            // range that density points towards, give or take the fit's tolerance or one of the
+            // end drawing's average paths. As in the density law, lines land on whole steps, so
+            // a closer spacing can draw a line less: flow's minutes fell from 0.0642 to 0.0639
+            // as its minimum spacing closed from 0.8 to 0.7 mm, and the search took that for a
+            // cliff and stayed near 0.75 mm while 0.3 mm gave 0.0700.
             let end = if (target > start) == d.direct {
                 d.max
             } else {
@@ -1138,10 +1143,12 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
             s.update(&d.stage, &json!({ &d.key: end })).unwrap();
             let mut r = s.start().unwrap();
             drain(&mut r)?;
-            let at_end = metrics(&s, &r)[metric];
+            let end_metrics = metrics(&s, &r);
+            let at_end = end_metrics[metric];
             let off = |m: f64| (ln(m) - ln(target)).abs();
+            let slack = ln(1.0 + TOLERANCE.max(1.0 / end_metrics[1].max(1.0)));
             prop_assert!(
-                off(fit.achieved) <= off(at_end),
+                off(fit.achieved) <= off(at_end) + slack,
                 "{} {target}: {} is farther than {at_end} at {end}: {:?}",
                 names[metric],
                 fit.achieved,
@@ -1524,6 +1531,63 @@ fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero(
     });
 }
 
+/// Each segment of `paths` between two different points, as its two ends sorted, once.
+fn segments_of(paths: &Paths) -> Vec<[[i64; 2]; 2]> {
+    let point = |p: [f64; 2]| [p[0] as i64, p[1] as i64];
+    let mut out: Vec<[[i64; 2]; 2]> = (paths.iter())
+        .flat_map(|p| p.windows(2).map(|s| [point(s[0]), point(s[1])]))
+        .filter(|s| s[0] != s[1])
+        .map(|mut s| {
+            s.sort();
+            s
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[test]
+fn joining_never_adds_a_path_and_draws_every_segment_and_dot() {
+    // Paths on a coarse grid, so that paths meet, cross at vertices, repeat a segment, repeat a
+    // vertex in place and come as dots.
+    let vertex = (0..6i32, 0..6i32).prop_map(|(x, y)| [f64::from(x), f64::from(y)]);
+    let paths = prop::collection::vec(prop::collection::vec(vertex, 1..7), 0..16);
+    check("join", 512, paths, |list| {
+        let mut input = Paths::new();
+        for p in &list {
+            input.push(p);
+        }
+        let dots = |p: &Paths| {
+            let mut d: Vec<Vec<[f64; 2]>> = p
+                .iter()
+                .filter(|q| q.len() == 1)
+                .map(<[_]>::to_vec)
+                .collect();
+            d.sort_by(|a, b| {
+                a[0][0]
+                    .total_cmp(&b[0][0])
+                    .then(a[0][1].total_cmp(&b[0][1]))
+            });
+            d
+        };
+        let joined = join(&input, false);
+        let retraced = join(&input, true);
+        for out in [&joined, &retraced] {
+            prop_assert!(
+                out.len() <= input.len(),
+                "{} paths from {}",
+                out.len(),
+                input.len()
+            );
+            prop_assert_eq!(segments_of(out), segments_of(&input));
+            prop_assert_eq!(dots(out), dots(&input));
+        }
+        prop_assert!(retraced.len() <= joined.len());
+        Ok(())
+    });
+}
+
 #[test]
 fn a_jittered_raster_covers_lines_at_their_width_at_any_angle_and_place() {
     // Eight parallel lines 20 mm long and 2 mm apart, at an angle on the raster's lattice half the
@@ -1625,6 +1689,50 @@ fn blank_paper_bounds_the_tone_match_and_never_wins() {
             // The eye filter rounds a flat page in f32, so blank paper comes back to within a hair.
             prop_assert!(paper.gain.abs() < 1e-3, "{paper:?}");
         }
+        Ok(())
+    });
+}
+
+/// The plot playback's times, every pen-up move's start and end and every vertex's arrival, layer
+/// by layer, never go back, and the last one is the estimated plot time; each layer has one move
+/// per path and one time per vertex.
+#[test]
+fn the_timeline_rises_and_ends_at_the_plot_time() {
+    let strategy = (case(all_styles()), 0.0..2.0f64, 1.0..1e5f64);
+    check("timeline", 12, strategy, |(c, lift, accel)| {
+        let mut s = c.session();
+        s.set_speeds(Speeds {
+            pen_lift_s: lift,
+            accel_mm_s2: accel,
+            ..Speeds::default()
+        });
+        run(&mut s)?;
+        let (Some(d), Some(timeline)) = (s.drawing(), s.timeline()) else {
+            return Ok(());
+        };
+        let times = timeline.layers;
+        prop_assert_eq!(times.len(), d.layers.len());
+        let mut last = 0.0;
+        for (layer, t) in d.layers.iter().zip(&times) {
+            prop_assert_eq!(t.travel.len(), layer.paths.len());
+            prop_assert_eq!(t.vertices.len(), layer.paths.coords().len());
+            for (i, [up, down]) in t.travel.iter().copied().enumerate() {
+                let path = layer.paths.offsets()[i] as usize..layer.paths.offsets()[i + 1] as usize;
+                for at in [up, down]
+                    .into_iter()
+                    .chain(t.vertices[path].iter().copied())
+                {
+                    prop_assert!(at >= last, "{at} s comes after {last} s");
+                    last = at;
+                }
+            }
+        }
+        let total = s.stats().unwrap().estimated_seconds;
+        // The two add the same moves in another order, so they may differ by rounding.
+        prop_assert!(
+            (last - total).abs() <= 1e-9 * total.max(1.0),
+            "{last} s against {total} s"
+        );
         Ok(())
     });
 }

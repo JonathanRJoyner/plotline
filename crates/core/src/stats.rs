@@ -110,6 +110,66 @@ pub(crate) fn timed(d: &Drawing, speeds: Speeds) -> (Stats, f64) {
     (stats, travel_s)
 }
 
+/// When the pen reaches each point of one layer's plot, in seconds from the start of the whole
+/// plot, as [`timeline`] gives them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct LayerTimes {
+    /// For each path, when its pen-up move starts and when it ends.
+    pub travel: Vec<[f64; 2]>,
+    /// When the pen reaches each vertex, in the order of the layer's coordinates.
+    pub vertices: Vec<f64>,
+}
+
+/// Where the pen starts a plot and when it gets where, as [`timeline`] gives them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Timeline {
+    /// Where the pen starts, lifted: the top-left corner of the drawing rect.
+    pub start: [f64; 2],
+    /// One per layer, in plot order.
+    pub layers: Vec<LayerTimes>,
+}
+
+/// When the pen gets where while `d` plots at `speeds`: one [`LayerTimes`] per layer, in plot
+/// order, timed as [`compute`] times the plot, so the last vertex is reached at its
+/// `estimated_seconds`, to rounding. The pen starts lifted at the top-left corner of the drawing
+/// rect. For each path it spends half of `pen_lift_s` lifting where it is, makes its pen-up move to
+/// the path's first vertex, spends the other half lowering there, and draws the path. An empty
+/// path's pen-up move has no length.
+pub fn timeline(d: &Drawing, speeds: Speeds) -> Timeline {
+    let [x, y, _, _] = d.canvas.drawing_rect();
+    let mut pen = [x, y];
+    let mut t = 0.0;
+    let half = speeds.pen_lift_s / 2.0;
+    let a = speeds.accel_mm_s2;
+    let mut plan = Plan::default();
+    let layers = (d.layers.iter())
+        .map(|layer| {
+            let mut times = LayerTimes {
+                travel: Vec::with_capacity(layer.paths.len()),
+                vertices: Vec::with_capacity(layer.paths.coords().len()),
+            };
+            for path in layer.paths.iter() {
+                let up = t + half;
+                let moved = path.first().map_or(0.0, |first| {
+                    move_seconds(distance(pen, *first), 0.0, 0.0, speeds.travel_mm_s, a)
+                });
+                times.travel.push([up, up + moved]);
+                let down = up + moved + half;
+                let vertices = &mut times.vertices;
+                t = down + plan.walk(path, speeds.draw_mm_s, a, |s| vertices.push(down + s));
+                if let Some(last) = path.last() {
+                    pen = *last;
+                }
+            }
+            times
+        })
+        .collect();
+    Timeline {
+        start: [x, y],
+        layers,
+    }
+}
+
 fn distance(p: [f64; 2], q: [f64; 2]) -> f64 {
     math::hypot(q[0] - p[0], q[1] - p[1])
 }
@@ -161,6 +221,12 @@ impl Plan {
     /// vertex's speed to one the pen can still slow down from before the end, and a forward pass
     /// to one it can reach from the start, as a look-ahead motion planner does (Jeon, 2011).
     fn seconds(&mut self, path: &[[f64; 2]], v: f64, a: f64) -> f64 {
+        self.walk(path, v, a, |_| {})
+    }
+
+    /// [`Plan::seconds`], calling `at` with the seconds from the path's start at which the pen
+    /// reaches each vertex, in order.
+    fn walk(&mut self, path: &[[f64; 2]], v: f64, a: f64, mut at: impl FnMut(f64)) -> f64 {
         self.moves.clear();
         for w in path.windows(2) {
             let l = distance(w[0], w[1]);
@@ -172,6 +238,7 @@ impl Plan {
         }
         let m = self.moves.len();
         if m == 0 {
+            path.iter().for_each(|_| at(0.0));
             return 0.0;
         }
         self.ends.clear();
@@ -187,9 +254,17 @@ impl Plan {
         for k in 1..m {
             e[k] = e[k].min((e[k - 1] * e[k - 1] + 2.0 * a * mv[k - 1].0).sqrt());
         }
-        (0..m)
-            .map(|k| move_seconds(mv[k].0, e[k], e[k + 1], v, a))
-            .sum()
+        at(0.0);
+        let (mut t, mut k) = (0.0, 0);
+        for w in path.windows(2) {
+            // The moves above, in the same order: a repeated vertex is reached when the last was.
+            if distance(w[0], w[1]) > 0.0 {
+                t += move_seconds(mv[k].0, e[k], e[k + 1], v, a);
+                k += 1;
+            }
+            at(t);
+        }
+        t
     }
 }
 
@@ -226,6 +301,33 @@ mod tests {
         assert!(short > 1.0 / 50.0);
         // Without a limit on acceleration the time is the distance over the speed.
         assert_eq!(move_seconds(100.0, 0.0, 0.0, 50.0, f64::INFINITY), 2.0);
+    }
+
+    #[test]
+    fn the_timeline_lifts_moves_lowers_and_draws_in_order_and_ends_at_the_estimate() {
+        // A 1 mm hop from the drawing rect's corner at (10, 10), a 5 mm stroke, a 10 mm hop and
+        // a dot, each path with its 0.2 s lift split around its hop.
+        let d = drawing_with(vec![vec![[11.0, 10.0], [14.0, 14.0]], vec![[24.0, 14.0]]]);
+        let speeds = Speeds::default();
+        let Timeline {
+            start,
+            layers: times,
+        } = timeline(&d, speeds);
+        assert_eq!((start, times.len()), ([10.0, 10.0], 1));
+        let [first, second] = times[0].travel[..] else {
+            panic!("{:?}", times[0].travel)
+        };
+        let hop = 2.0 * (1.0f64 / 1000.0).sqrt();
+        assert_eq!(first[0], 0.1);
+        assert!((first[1] - (0.1 + hop)).abs() < 1e-12);
+        let v = &times[0].vertices;
+        assert_eq!(v.len(), 3);
+        assert!((v[0] - (first[1] + 0.1)).abs() < 1e-12);
+        assert!((v[1] - (v[0] + 5.0 / 50.0 + 50.0 / 1000.0)).abs() < 1e-12);
+        assert!((second[0] - (v[1] + 0.1)).abs() < 1e-12);
+        assert!((second[1] - (second[0] + 0.2)).abs() < 1e-12);
+        assert!((v[2] - (second[1] + 0.1)).abs() < 1e-12);
+        assert!((v[2] - compute(&d, speeds).estimated_seconds).abs() < 1e-12);
     }
 
     #[test]

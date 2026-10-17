@@ -102,7 +102,7 @@ The session holds the state: the image, canvas and pens, the chosen style and se
 
 ### 6.3 Front ends
 
-- **CLI:** `plotline run <style> image.png --out drawing.svg [--look NAME] --set stage.key=value … [--strict]` (with `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots` to meet a budget, `--machine FILE --gcode DIR` for G-code, `--accel MM_S2` for the plot time's acceleration, and `--hpgl FILE` for HPGL), `plotline styles`, `plotline describe <style>`, `plotline analyse IMAGE`, `plotline testchart --out chart.svg [--pen NAME:WIDTH_MM:COLOR] [--machine FILE] [--accel MM_S2]` (a calibration chart for the first pen, §14 "Test chart"), `plotline gui`, `plotline mcp`.
+- **CLI:** `plotline run <style> image.png --out drawing.svg [--look NAME] --set stage.key=value … [--strict]` (with `--fit-minutes`, `--fit-paths`, `--fit-metres` or `--fit-dots` to meet a budget, `--machine FILE --gcode DIR` for G-code, `--accel MM_S2` for the plot time's acceleration, and `--hpgl FILE` for HPGL; give `run` several images or folders of images to draw a series with one setup, when `--out` and the other output options name folders that get one file per image, `--gcode DIR` a subfolder, one line is printed per image and the exit status is 1 if any failed), `plotline styles`, `plotline describe <style>`, `plotline analyse IMAGE`, `plotline testchart --out chart.svg [--pen NAME:WIDTH_MM:COLOR] [--machine FILE] [--accel MM_S2]` (a calibration chart for the first pen, §14 "Test chart"), `plotline gui`, `plotline mcp`.
 - **GUI:** see §8.
 - **MCP:** see §9.
 - **Toolchain adapters:** small optional extras that convert plotline results into the data formats of existing plotter toolchains, so plotline can slot into workflows people already use. The generic G-code writer is the first (§14), and an HPGL writer, which writes the whole drawing as one file for plotters that read that format ([HPGL export](decisions/2026-10-16-hpgl-export.md)), came next; which toolchains follow is open (§12).
@@ -122,7 +122,7 @@ The point family and Sketch Lines were built on 2026-10-13 under [spec 8](superp
 
 **Sketch Lines:** a greedy loop that repeatedly finds the darkest line segment from the current position, draws it, lightens the tone map under it, and continues until it hits a target darkness or line budget. It runs as a single stage, and its frames show strokes accumulating.
 
-**Shared final stage: path ordering.** Reorder and optionally reverse paths to cut pen-up travel, merge paths whose ends nearly touch, drop paths below a minimum length, and, from 2026-10-16, optionally remove the vertices a pen cannot show by Ramer–Douglas–Peucker simplification (`order.simplify_mm`, off by default; see [path simplification](decisions/2026-10-16-path-simplification.md)).
+**Shared final stage: path ordering.** Reorder and optionally reverse paths to cut pen-up travel, drop paths below a minimum length, from 2026-10-17 optionally join the paths that meet into the fewest pen-down trails, retracing short edges to join more (`order.join`, `retrace` for `cells`, `mesh` and `tree`; see [joining paths into trails](decisions/2026-10-17-join-paths-into-trails.md)), and, from 2026-10-16, optionally remove the vertices a pen cannot show by Ramer–Douglas–Peucker simplification (`order.simplify_mm`, off by default; see [path simplification](decisions/2026-10-16-path-simplification.md)).
 
 ### 7.2 Later families (for planning; not committed)
 
