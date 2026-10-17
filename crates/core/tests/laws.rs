@@ -1565,6 +1565,66 @@ fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero(
 }
 
 #[test]
+fn a_higher_mesh_edge_limit_never_removes_an_edge() {
+    // The limit only leaves edges out, and pruning loose ones keeps the 2-core, which only grows
+    // with the graph, so with joining off a higher limit draws at least as much.
+    check(
+        "mesh edge",
+        8,
+        (0.5..20.0f64, 1.0..4.0f64),
+        |(limit, factor)| {
+            let mut s = Session::new(64 << 20);
+            s.set_image(scene(60, 80));
+            s.set_style("mesh").unwrap();
+            s.update("voronoi", &json!({"count": 300, "iterations": 10}))
+                .unwrap();
+            s.update("order", &json!({"join": "off"})).unwrap();
+            let mut drawn = |max: f64| -> Result<f64, TestCaseError> {
+                s.update("delaunay", &json!({"max_edge_mm": max})).unwrap();
+                run(&mut s)?;
+                Ok(s.stats().unwrap().pen_down_mm)
+            };
+            let (low, high) = (drawn(limit)?, drawn((limit * factor).min(50.0))?);
+            prop_assert!(
+                low <= high + 1e-9,
+                "{low} mm at {limit}, {high} mm at {factor} times it"
+            );
+            Ok(())
+        },
+    );
+}
+
+#[test]
+fn the_dark_finding_always_brings_a_fix_within_reach() {
+    // It fires only with a fix that moves its setting at most four times, as far as Optimize
+    // scans (see docs/decisions/2026-10-17-dark-only-with-a-fix.md).
+    check("dark", 24, case(all_styles()), |c| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let Some(findings) = s.lint() else {
+            return Ok(());
+        };
+        let Some(f) = findings.iter().find(|f| f.code == "dark") else {
+            return Ok(());
+        };
+        let Some(patch) = &f.patch else {
+            return Err(TestCaseError::fail("dark fired without a fix"));
+        };
+        for (stage, values) in patch["settings"].as_object().unwrap() {
+            for (key, v) in values.as_object().unwrap() {
+                let (to, now) = (
+                    v.as_f64().unwrap(),
+                    s.settings()[stage][key].as_f64().unwrap(),
+                );
+                let ratio = (to / now).max(now / to);
+                prop_assert!(ratio <= 4.0 + 1e-9, "{stage}.{key} from {now} to {to}");
+            }
+        }
+        Ok(())
+    });
+}
+
+#[test]
 fn a_higher_cells_edge_limit_never_removes_a_wall() {
     // The limit only leaves walls out, so with joining off a higher one draws at least as much.
     check(

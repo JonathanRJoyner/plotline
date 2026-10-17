@@ -241,7 +241,40 @@ impl Stage for MstRenderer {
     }
 }
 
-/// Draw every Delaunay edge between the points that is no longer than `max_edge_mm`.
+/// The Delaunay edges of `points` no longer than `max`, less those that hang loose: an edge with
+/// an end that no other kept edge reaches is dropped, again and again, which leaves the graph's
+/// 2-core (S. B. Seidman, "Network structure and minimum degree", *Social Networks* 5(3), 1983,
+/// pp. 269-287). The 2-core does not depend on the order edges are dropped in. Points with no
+/// triangle, all on one line, keep their chain whole.
+fn mesh_edges(points: &[[f64; 2]], max: f64) -> Vec<(usize, usize)> {
+    let mut edges = delaunay_edges(points);
+    edges.retain(|&e| length(points, e) <= max);
+    if triangulate(points).triangles.is_empty() {
+        return edges;
+    }
+    let mut degree = vec![0usize; points.len()];
+    for &(a, b) in &edges {
+        degree[a] += 1;
+        degree[b] += 1;
+    }
+    loop {
+        let before = edges.len();
+        edges.retain(|&(a, b)| {
+            let keep = degree[a] > 1 && degree[b] > 1;
+            if !keep {
+                degree[a] -= 1;
+                degree[b] -= 1;
+            }
+            keep
+        });
+        if edges.len() == before {
+            return edges;
+        }
+    }
+}
+
+/// Draw every Delaunay edge between the points that is no longer than `max_edge_mm`, less the
+/// edges left hanging loose.
 ///
 /// The run reports one frame, labelled with the segment count, then gives the paths.
 pub struct DelaunayRenderer;
@@ -277,9 +310,7 @@ impl Stage for DelaunayRenderer {
         let s = validate::<DelaunaySettings>(self.name(), &self.schema(), settings)?;
         let points = inputs.points().clone();
         Ok(start_run(self.name(), move || {
-            let mut edges = delaunay_edges(&points.0);
-            edges.retain(|&e| length(&points.0, e) <= s.max_edge_mm);
-            trail_paths(&points.0, &edges)
+            trail_paths(&points.0, &mesh_edges(&points.0, s.max_edge_mm))
         }))
     }
 }
@@ -495,6 +526,27 @@ mod tests {
         let paths = run(&CellsRenderer, lattice, json!({}));
         assert!((paths.total_length() - 40.0).abs() < 1e-6, "{paths:?}");
         assert_inside(&paths, RECT);
+    }
+
+    #[test]
+    fn mesh_leaves_no_edge_hanging_loose() {
+        // A square of four close points and a fifth point that only one short edge reaches.
+        let points = [
+            [10.0, 10.0],
+            [12.0, 10.0],
+            [12.0, 12.0],
+            [10.0, 12.0],
+            [16.0, 10.0],
+        ];
+        let edges = mesh_edges(&points, 4.2);
+        let mut degree = [0; 5];
+        for &(a, b) in &edges {
+            degree[a] += 1;
+            degree[b] += 1;
+        }
+        assert!(degree.iter().all(|&d| d != 1), "{edges:?}");
+        assert_eq!(degree[4], 0);
+        assert!(edges.len() >= 4);
     }
 
     #[test]
