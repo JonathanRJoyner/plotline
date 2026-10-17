@@ -560,6 +560,36 @@ test("the style picker works before an image", async ({ page }) => {
   await expect(styleButton(page)).toHaveAttribute("value", "hatch");
 });
 
+test("an image pasted with the style picker open draws its pictures", async ({ page }) => {
+  test.setTimeout(120_000);
+  await open(page);
+  await styleButton(page).click();
+  await expect(picker(page).locator(".picker img")).toHaveCount(0);
+  await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    [canvas.width, canvas.height] = [60, 80];
+    const g = canvas.getContext("2d")!;
+    g.fillRect(10, 10, 40, 60);
+    const blob = await new Promise<Blob>((done) => canvas.toBlob((b) => done(b!), "image/png"));
+    const data = new DataTransfer();
+    data.items.add(new File([blob], "pasted.png", { type: "image/png" }));
+    document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data }));
+  });
+  await expect(picker(page)).not.toContainText("Open an image to see each style drawn on it");
+  await expect(picker(page).locator(".picker img").first()).toBeVisible({ timeout: 100_000 });
+});
+
+test("picking the current style again leaves the drawing alone", async ({ page }) => {
+  const id = await sample(page);
+  await styleButton(page).focus();
+  await page.keyboard.press("Enter");
+  await expect(card(page, await currentStyle(page))).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(picker(page)).toBeHidden();
+  await page.waitForTimeout(500); // time for a run to start by mistake
+  await expect(status(page)).toHaveText(`Run ${id}: done`);
+});
+
 test("the style picker survives reopening and a run in progress", async ({ page }) => {
   test.setTimeout(180_000);
   const id = await sample(page);

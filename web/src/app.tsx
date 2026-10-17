@@ -348,6 +348,9 @@ export function App() {
   const [stylesOpens, setStylesOpens] = useState(0);
   const [thumbs, setThumbs] = useState<Record<string, Thumb>>({});
   const thumbsFor = useRef(0); // the id of the pictures the style picker shows; 0 for none
+  const pickerOpen = useRef(false);
+  // The latest drawThumbs, for the paste listener, which keeps the first render's functions.
+  const redraw = useRef<(image: boolean) => Promise<void>>(async () => {});
 
   // The focus points the page holds, as shares of the image: the last state's, or while edits are
   // on their way the list they will leave, so a quick second edit builds on the first.
@@ -430,18 +433,26 @@ export function App() {
     }
   }
 
-  // Opens the style picker; with an image it draws the pictures in the picker's order, top first.
-  async function openPicker() {
+  // Opens the style picker and draws its pictures.
+  function openPicker() {
+    pickerOpen.current = true;
+    setStylesOpens((n) => n + 1);
+    void drawThumbs(state?.image ?? false);
+  }
+
+  // Draws the picker's pictures in its order, top first, after dropping the old ones; with no
+  // image there are none to draw.
+  async function drawThumbs(image: boolean) {
     setThumbs((old) => {
       for (const t of Object.values(old)) if (t.url) URL.revokeObjectURL(t.url);
       return {};
     });
     thumbsFor.current = 0;
-    setStylesOpens((n) => n + 1);
-    if (!state?.image || !styles) return;
+    if (!image || !styles) return;
     const names = groupStyles(styles).flatMap(([, es]) => es.filter((e) => !e.picture).map((e) => e.name));
     thumbsFor.current = (await call<number>("thumbs", [THUMB_PX, THUMB_SHRINK, names])) ?? 0;
   }
+  redraw.current = drawThumbs;
 
   const style = state?.style;
   useEffect(() => {
@@ -478,6 +489,9 @@ export function App() {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       await call("setImageBytes", [bytes], "image", [bytes.buffer]);
+      // An image dropped or pasted with the picker open redraws its pictures; after a refusal the
+      // previous image's come back, or with none each card's error, which no card shows.
+      if (pickerOpen.current) await redraw.current(true);
     } catch (e) {
       setErrors((es) => ({ ...es, image: message(e) }));
     }
@@ -661,7 +675,8 @@ export function App() {
       />
       <StylePicker
         opens={stylesOpens} styles={styles} style={state.style} canvas={state.canvas} paper={state.paper} hasImage={state.image} thumbs={thumbs}
-        onPick={(name) => call("setStyle", [name])} onClose={() => call("cancelThumbs")}
+        onPick={(name) => name !== state.style && call("setStyle", [name])}
+        onClose={() => { pickerOpen.current = false; call("cancelThumbs"); }}
       />
       <Tour opens={tourOpens} />
     </div>
