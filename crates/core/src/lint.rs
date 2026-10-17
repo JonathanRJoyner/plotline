@@ -44,6 +44,9 @@ const DARK_AREA: f64 = 0.01;
 /// Dark parts covered under this share cannot reach dark; the spacing patch aims for the target.
 const DARK_COVERAGE: f64 = 0.35;
 const DARK_TARGET: f64 = 0.5;
+/// The `dark` finding fires only with a fix that changes its setting at most this many times,
+/// as far as Optimize scans; past it no setting of the style is a practical fix.
+const DARK_REACH: f64 = 4.0;
 /// Pen lifts over this share of the plot time are lift-heavy, travel over this one travel-heavy.
 const LIFT_SHARE: f64 = 0.5;
 const TRAVEL_SHARE: f64 = 0.3;
@@ -500,6 +503,22 @@ fn simplified_fine_share(d: &Drawing, tolerance: f64, min_length: f64) -> Option
 /// proportion to their area, so they grow rather than crowd, which costs no more pen lifts; a
 /// closer grid shrinks them with it, so a spacing is asked for only while they are no wider than
 /// the pen.
+/// Whether every number `patch` sets is within `reach` times the current setting, up or down.
+fn within_reach(cx: &Context, patch: &Value, reach: f64) -> bool {
+    let settings = patch["settings"].as_object().into_iter().flatten();
+    settings
+        .flat_map(|(stage, values)| {
+            let values = values.as_object().into_iter().flatten();
+            values.map(move |(key, v)| (stage, key, v))
+        })
+        .all(
+            |(stage, key, v)| match (v.as_f64(), cx.number(stage, key)) {
+                (Some(to), Some(now)) if to > 0.0 && now > 0.0 => (to / now).max(now / to) <= reach,
+                _ => true,
+            },
+        )
+}
+
 fn more_dark(
     cx: &Context,
     (d, m): (&Drawing, &Measure),
@@ -699,11 +718,13 @@ pub fn check(
     }
     if let Some(c) = m.dark_coverage.filter(|&c| c < DARK_COVERAGE && !empty) {
         let patch = more_dark(&cx, (d, m), c, spacing, widest);
-        let message = format!(
-            "Where the image is darkest, the drawing covers only {} % of the paper.",
-            percent(c)
-        );
-        add("dark", Severity::Info, message, c, patch);
+        if let Some(patch) = patch.filter(|p| within_reach(&cx, p, DARK_REACH)) {
+            let message = format!(
+                "Where the image is darkest, the drawing covers only {} % of the paper.",
+                percent(c)
+            );
+            add("dark", Severity::Info, message, c, Some(patch));
+        }
     }
     let timed = stats::timed(d, speeds);
     let st = timed.0;
@@ -907,9 +928,9 @@ mod tests {
             .clone()
     }
 
-    /// The `dark` finding's patch, likewise.
+    /// The `dark` finding's patch, or `None` when it does not fire, as it does not without one.
     fn dark_patch(d: &Drawing, style: &str, change: impl Fn(&mut Value)) -> Option<Value> {
-        find(&lint(d, style, change), "dark").unwrap().patch.clone()
+        find(&lint(d, style, change), "dark").and_then(|f| f.patch.clone())
     }
 
     #[test]
@@ -1586,8 +1607,9 @@ mod tests {
         s.update("render", &json!({"size": 0.1})).unwrap();
         let mut run = s.start().unwrap();
         while run.next_frame().is_some() {}
-        let all = s.lint().unwrap();
-        assert_eq!(find(&all, "dark").unwrap().value, 0.017834757834757835);
+        // The `dark` finding fires only with a practical fix, so the raster's coverage is pinned.
+        let coverage = measure(&s.drawing().unwrap()).dark_coverage;
+        assert_eq!(coverage, Some(0.017834757834757835));
     }
 
     #[test]

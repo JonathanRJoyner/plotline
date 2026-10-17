@@ -280,9 +280,8 @@ fn golden_grid_lint_matches_native() {
     s.update("render", &json!({"size": 0.1})).unwrap();
     let mut run = s.start().unwrap();
     while run.next_frame().is_some() {}
-    let all = s.lint().unwrap();
-    let dark = all.iter().find(|f| f.code == "dark").unwrap();
-    assert_eq!(dark.value, 0.017834757834757835);
+    let coverage = plotline_core::lint::measure(&s.drawing().unwrap()).dark_coverage;
+    assert_eq!(coverage, Some(0.017834757834757835));
 }
 #[wasm_bindgen_test]
 fn the_tone_match_and_the_response_match_native() {
