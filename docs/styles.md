@@ -137,7 +137,7 @@ Draws the marks of line art, lettering and inked drawings as they are. Every ink
 These styles share one placement of points: the points spread evenly while staying dense where the image is dark (weighted Voronoi relaxation). The relaxation is the slow part, so switching between these styles reuses the points and redraws at once. Their placement settings are the same everywhere:
 
 - `voronoi.count` (the density for every style in the family): the number of points. More points give finer detail and a longer plot.
-- `voronoi.exponent`: density follows ink to this power. 2 suits `line`, `tree`, `mesh` and `cells`, which put more ink between close points; the default of 1 keeps the points shared with `stipple`.
+- `voronoi.exponent`: density follows ink to this power. A line through the points darkens with the square root of their density, so `line`, `scribble`, `tree`, `mesh` and `cells` default to 2, and the dot styles `stipple` and `dashes` to 1 ([decision](decisions/2026-10-17-ink-squared-for-joined-points.md)). A switch between a style at 1 and one at 2 places the points again.
 - `voronoi.iterations`: relaxation passes. More spread the points more evenly.
 - `voronoi.seed`: picks another starting scatter.
 
@@ -169,7 +169,7 @@ The points joined into one unbroken line that does not cross itself, a travellin
 **Settings**
 - `tsp.optimize`: shortens the line and removes its crossings; off leaves the quicker, rougher nearest-neighbour line.
 - `tsp.closed`: ends the line where it started.
-- `voronoi.exponent`: try 2, which puts the line's ink where the image is dark.
+- `voronoi.exponent`: 2 by default, which puts the line's ink where the image is dark; 1 spreads the points as `stipple` does.
 
 **Pens.** Any pen that draws a steady line. With one stroke, the pen never lifts.
 
@@ -200,7 +200,7 @@ The points joined by the shortest tree, so every point is reached and no loop fo
 
 **Use it for** organic, branching textures.
 
-**Settings.** The tree has none of its own; try `voronoi.exponent` 2.
+**Settings.** The tree has none of its own; `voronoi.exponent` is 2, as for every style that joins its points.
 
 **Pens.** Fine pens. The tree is drawn as long branching strokes, and `order.join` is `retrace`, which draws some short twigs twice to join the strokes, so the pen lifts far less often than there are points.
 
@@ -229,7 +229,7 @@ The outlines of the points' Voronoi cells: small cells where it is dark, large o
 
 **Use it for** a cellular, organic texture.
 
-**Settings.** The cells have none of their own; try `voronoi.exponent` 2.
+**Settings.** The cells have none of their own; `voronoi.exponent` is 2, as for every style that joins its points.
 
 **Pens.** A fine pen. Every corner of a cell joins three edges, so the outlines cannot be drawn in fewer pieces than half the corners; `order.join` is `retrace`, which draws some short edges twice to join the pieces and lifts the pen about a seventh as often. Set it to `on` to draw every edge once, with many more lifts.
 

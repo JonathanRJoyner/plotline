@@ -154,15 +154,24 @@ pub fn stipple_style() -> Style {
     .with_look("fine", json!({"voronoi": {"count": 12000}}))
 }
 
+/// `style`, whose renderer joins its points with lines, with the points' density following ink
+/// squared. A pen line of fixed width through the points darkens with the square root of their
+/// density (Ahmed, "Variable-density stippling with connected points", *Bridges*, 2015; C. S.
+/// Kaplan and R. Bosch found the same for "TSP Art", *Bridges*, 2005), so a part twice as dark
+/// needs four times the points. Dots darken with the density itself and keep the exponent at 1.
+fn joined(style: Style) -> Style {
+    style.with_defaults("voronoi", json!({"exponent": 2.0}))
+}
+
 /// One unbroken, non-crossing line through evenly spread points: tone, split, voronoi, tsp, order.
 pub fn line_style() -> Style {
-    point_style(
+    joined(point_style(
         "line",
         "Single line",
         "One unbroken, non-crossing line through every point.",
         Arc::new(VoronoiPlacer),
         Arc::new(TspRenderer),
-    )
+    ))
     .with_look(
         "faithful",
         json!({"tone": {"response": "auto"}, "voronoi": {"count": 20000}}),
@@ -173,7 +182,7 @@ pub fn line_style() -> Style {
 /// scribble, order. The first four stages have the defaults of `line`, so a switch reuses its
 /// points and its tour.
 pub fn scribble_style() -> Style {
-    Style::new(
+    let style = Style::new(
         "scribble",
         "Scribble",
         "Loops traced along one line through the points, small and close where the image is dark, \
@@ -187,8 +196,8 @@ pub fn scribble_style() -> Style {
             Arc::new(OrderStage),
         ],
     )
-    .expect("the scribble style is valid")
-    .with_look("faithful", json!({"voronoi": {"count": 20000}}))
+    .expect("the scribble style is valid");
+    joined(style).with_look("faithful", json!({"voronoi": {"count": 20000}}))
 }
 
 /// Short strokes that follow the image's edges: tone, split, voronoi, dashes, order.
@@ -220,13 +229,13 @@ pub fn sketch_style() -> Style {
 
 /// The shortest tree joining evenly spread points: tone, split, voronoi, mst, order.
 pub fn tree_style() -> Style {
-    point_style(
+    joined(point_style(
         "tree",
         "Tree",
         "The shortest tree joining every point.",
         Arc::new(VoronoiPlacer),
         Arc::new(MstRenderer),
-    )
+    ))
     .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
@@ -236,13 +245,13 @@ pub fn tree_style() -> Style {
 
 /// A triangle mesh over evenly spread points: tone, split, voronoi, delaunay, order.
 pub fn mesh_style() -> Style {
-    point_style(
+    joined(point_style(
         "mesh",
         "Mesh",
         "A triangle mesh over the points.",
         Arc::new(VoronoiPlacer),
         Arc::new(DelaunayRenderer),
-    )
+    ))
     .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
@@ -253,13 +262,13 @@ pub fn mesh_style() -> Style {
 
 /// The outlines of the points' Voronoi cells: tone, split, voronoi, cells, order.
 pub fn cells_style() -> Style {
-    point_style(
+    joined(point_style(
         "cells",
         "Cells",
         "The outlines of the points' Voronoi cells.",
         Arc::new(VoronoiPlacer),
         Arc::new(CellsRenderer),
-    )
+    ))
     .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
