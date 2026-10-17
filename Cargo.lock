@@ -850,6 +850,7 @@ version = "0.2.0-dev0"
 dependencies = [
  "numpy",
  "plotline-core",
+ "plotline-models",
  "pyo3",
  "serde",
  "serde_json",

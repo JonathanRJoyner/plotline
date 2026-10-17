@@ -9,7 +9,13 @@ use plotline_core::{pens, registry, synthetic, SessionError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use convert::{image_array, session_error, value_error, value_to_py};
+use convert::{image_array, serde_to_py, session_error, value_error, value_to_py};
+
+/// The hosted models this release lists, as the dicts of `plotline_core::models::CatalogueEntry`.
+#[pyfunction]
+fn catalogue(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+    serde_to_py(py, plotline_core::models::catalogue())
+}
 
 /// The built-in styles as `{"name", "label", "description"}`.
 #[pyfunction]
@@ -84,6 +90,7 @@ fn synthetic_flat(py: Python<'_>, w: u32, h: u32, value: f32) -> Bound<'_, PyArr
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<session::Session>()?;
     m.add_class::<session::Run>()?;
+    m.add_function(wrap_pyfunction!(catalogue, m)?)?;
     m.add_function(wrap_pyfunction!(list_styles, m)?)?;
     m.add_function(wrap_pyfunction!(describe, m)?)?;
     m.add_function(wrap_pyfunction!(inks, m)?)?;
