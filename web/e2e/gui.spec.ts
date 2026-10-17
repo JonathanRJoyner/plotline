@@ -529,8 +529,9 @@ test("the thumbnail grid survives reopening and a run in progress", async ({ pag
     await expect(dialog).toBeHidden();
   }
   await tryAll.click();
-  await expect(dialog.locator("ul.thumbs img")).toHaveCount(styles.length, { timeout: 150_000 });
-  await expect(dialog.locator("ul.thumbs .paper > span")).toHaveCount(0); // no cell left drawing or failed
+  // Every style but `learned`, which needs a downloaded model and so gets no picture.
+  await expect(dialog.locator("ul.thumbs img")).toHaveCount(styles.length - 1, { timeout: 150_000 });
+  await expect(dialog.locator("ul.thumbs .paper > span")).toHaveCount(1); // no other cell left drawing or failed
   await page.keyboard.press("Escape");
   await ran(page, id);
 });
