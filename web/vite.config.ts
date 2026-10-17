@@ -21,5 +21,7 @@ export default defineConfig({
   // and the icons stay the only third-party code in the bundle.
   build: { outDir, emptyOutDir: true, modulePreload: { polyfill: false } },
   worker: { format: "es" },
-  test: { environment: "node", include: ["src/**/*.test.ts"] },
+  // The protocol tests run the wasm engine in Node; a grid run of filled dots on the default A4 page,
+  // with the tone, contrast and colour match, took up to 7 s, past vitest's 5 s default.
+  test: { environment: "node", include: ["src/**/*.test.ts"], testTimeout: 20_000 },
 });

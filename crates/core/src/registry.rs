@@ -54,18 +54,18 @@ fn point_style(
     .expect("a point style is valid")
 }
 
-/// Dots on a regular grid: tone, split, points, render, order.
+/// Filled dots on a regular grid: tone, split, points, render, order.
 pub fn grid_style() -> Style {
     point_style(
         "grid",
         "Grid dots",
-        "Dots on a regular grid, one wherever the image is dark enough, drawn in an order that \
-         keeps the pen's travel short.",
+        "Filled dots on a regular grid, one wherever the image is dark enough, drawn in an order \
+         that keeps the pen's travel short.",
         Arc::new(GridPlacer),
         Arc::new(DotRenderer),
     )
-    .with_look("quick", json!({"points": {"spacing_mm": 1.8}}))
-    .with_look("fine", json!({"points": {"spacing_mm": 0.8}}))
+    .with_look("quick", json!({"points": {"spacing_mm": 5.6}}))
+    .with_look("fine", json!({"points": {"spacing_mm": 0.7}}))
 }
 
 /// A style of tone, the split between pens, one stage that turns the tone map into paths, and
@@ -290,17 +290,16 @@ pub fn halftone_style() -> Style {
     .with_defaults("stipple", json!({"size_mm": 2.0, "vary": 1.0}))
 }
 
-/// Dots where error diffusion puts them: tone, split, dither, render, order.
+/// Filled dots where error diffusion puts them: tone, split, dither, render, order.
 pub fn dither_style() -> Style {
     point_style(
         "dither",
         "Dither",
-        "Dots where error diffusion puts them.",
+        "Filled dots where error diffusion puts them.",
         Arc::new(DitherPlacer),
         Arc::new(DotRenderer),
     )
     .with_look("faithful", json!({"dither": {"spacing_mm": 0.8}}))
-    .with_look("quick", json!({"dither": {"spacing_mm": 1.8}}))
 }
 
 /// Circles packed without overlapping: tone, split, poisson, stipple, order.

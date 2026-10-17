@@ -524,7 +524,7 @@ mod tests {
     fn run(points: Vec<[f64; 2]>, patch: Value) -> (Vec<Frame>, Arc<Paths>) {
         match run_stage(
             &TspRenderer,
-            vec![Artifact::Points(Arc::new(Points(points)))],
+            vec![Artifact::Points(Arc::new(Points(points, None)))],
             patch,
         ) {
             (frames, Artifact::Paths(p)) => (frames, p),
@@ -664,7 +664,7 @@ mod tests {
         let (mut two, mut or) = (0, 0);
         for seed in 0..40 {
             let n = 5 + seed as usize % 8;
-            let pts = Arc::new(Points(random_points(n, seed)));
+            let pts = Arc::new(Points(random_points(n, seed), None));
             let mut t = Tour::new(pts, (0..n).collect());
             let cand: Vec<Vec<usize>> = (0..n)
                 .map(|a| {
@@ -739,7 +739,7 @@ mod tests {
             json!({"nope": 1}),
         ] {
             let settings = crate::settings::merge(&TspRenderer.defaults(), &patch);
-            let points = Artifact::Points(Arc::new(Points(vec![])));
+            let points = Artifact::Points(Arc::new(Points(vec![], None)));
             let inputs = Inputs::new([(Kind::Points, points)].into_iter().collect());
             let ctx = RunContext::new(Arc::default());
             let err = TspRenderer.start(inputs, &settings, ctx).err().unwrap();

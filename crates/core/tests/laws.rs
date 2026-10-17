@@ -38,7 +38,7 @@ use plotline_core::stages::split::SplitStage;
 use plotline_core::stages::tone::{flatten, guided, ToneStage};
 use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
-use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
+use plotline_core::synthetic::{flat, flat_noise, gradient, ramp, scene, still_life, strokes};
 use plotline_core::tone_match;
 use plotline_core::{
     Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds, ToneMap, Tones,
@@ -1132,7 +1132,12 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         // Trials on both sides of the target mean it falls in a jump no value reaches.
         let below = fit.samples.iter().any(|x| x.metric < target);
         let above = fit.samples.iter().any(|x| x.metric > target);
-        if !within && !(below && above) {
+        // The pen-down length of a style whose density setting drives its points or its lines
+        // follows how its marks are drawn, not how many there are (see the density law), so no
+        // end of the range need be nearer: dots as wide as a share of the spacing draw about the
+        // same spiral length at any spacing.
+        let driven = names[metric] != "metres" || drives(&style, &d) == "length";
+        if !within && !(below && above) && driven {
             // Out of reach: then the fit is no farther from the target than the end of the
             // range that density points towards, give or take the fit's tolerance or one of the
             // end drawing's average paths. As in the density law, lines land on whole steps, so
@@ -1664,6 +1669,85 @@ fn a_jittered_raster_covers_lines_at_their_width_at_any_angle_and_place() {
     });
 }
 
+/// Each style with a setting marked `"x-share-of": "spacing"`, a mark size that is a share of the
+/// style's density setting, with that setting's stage and key.
+fn shares_of_spacing() -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for style in list_styles() {
+        for stage in &style.stages {
+            let schema = stage.schema();
+            for (key, p) in schema["properties"].as_object().into_iter().flatten() {
+                if p["x-share-of"] == "spacing" {
+                    out.push((style.name.clone(), stage.name().to_string(), key.clone()));
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn dots_sized_by_their_grid_ink_their_share_of_a_dark_page_at_any_spacing() {
+    // A dot `share` of the spacing wide, or the pen's width where that is wider, covers
+    // `PI / 4 * (dot / spacing)^2` of its cell, and neighbours that overlap cover at least the
+    // `PI / 4` of touching ones. Full ink puts a dot in every cell of a grid or of error
+    // diffusion, so the grid's cells are inked that much whatever the spacing: a closer grid has
+    // smaller dots, not a lighter page. A dot's rim is sampled at most a quarter pen apart, so a
+    // rim under `pen / (4 PI)` from the centre is drawn as a short stroke across it, which inks
+    // 89.5 % of the disc at worst (a 0.54 mm pen in a 0.61 mm dot inked 91 %), and the raster may
+    // miss a few percent more.
+    let styles = shares_of_spacing();
+    assert!(!styles.is_empty(), "no setting is marked x-share-of");
+    let strategy = (select(styles), 0.0..1.0f64, 0.0..1.0f64, 0.1..1.0f64);
+    check(
+        "dot share",
+        24,
+        strategy,
+        |((style, stage, key), at, share, pen)| {
+            let st = get_style(&style).unwrap();
+            let d = Density::of(&st).unwrap();
+            prop_assert!(!d.direct, "{style}'s density setting is not a spacing");
+            let prop = &st.stages[st.stage_index(&stage).unwrap()].schema()["properties"][&key];
+            let (lo, hi) = (
+                prop["minimum"].as_f64().unwrap(),
+                prop["maximum"].as_f64().unwrap(),
+            );
+            let share = lo + share * (hi - lo);
+            // A 20 mm square page of full ink holds at most 10,000 cells.
+            let spacing = grain(&d, exp(ln(d.min) + at * (ln(d.max.min(5.0)) - ln(d.min))));
+            let mut s = Session::new(256 << 20);
+            s.set_image(Image {
+                width: 20,
+                height: 20,
+                rgb: vec![0.0; 1200],
+            });
+            s.set_canvas(Canvas::new(20.0, 20.0, 0.0, Fit::Fit).unwrap());
+            s.set_pens(vec![Pen::new("Black", pen, "#000000").unwrap()])
+                .unwrap();
+            s.set_style(&style).unwrap();
+            s.update(&d.stage, &json!({ &d.key: spacing })).unwrap();
+            s.update(&stage, &json!({ &key: share })).unwrap();
+            run(&mut s)?;
+            let drawing = s.drawing().unwrap();
+            let rect = drawing.tone.as_ref().unwrap().rect_mm();
+            let cells = |side: f64| (side / spacing + 1e-9).floor() * spacing;
+            let grid = [rect[0], rect[1], cells(rect[2]), cells(rect[3])];
+            let mut c = Coverage::jittered(grid, cell_size(pen, grid));
+            for layer in &drawing.layers {
+                c.stamp(&layer.paths, pen);
+            }
+            let inked = c.count.iter().filter(|&&n| n > 0).count() as f64 / c.count.len() as f64;
+            let dot = (share * spacing).max(pen) / spacing;
+            let least = std::f64::consts::FRAC_PI_4 * dot.min(1.0).powi(2);
+            prop_assert!(
+            inked >= 0.85 * least,
+            "{style} at {spacing} mm, share {share}, pen {pen}: inks {inked} of its cells, under {least}"
+        );
+            Ok(())
+        },
+    );
+}
+
 /// The plot time with acceleration is never below the time at full speed all the way, the
 /// distances over the speeds plus the lifts, which is what it was before acceleration counted; and
 /// it comes to that time as the acceleration grows without limit.
@@ -1778,6 +1862,41 @@ fn the_timeline_rises_and_ends_at_the_plot_time() {
         prop_assert!(
             (last - total).abs() <= 1e-9 * total.max(1.0),
             "{last} s against {total} s"
+        );
+        Ok(())
+    });
+}
+
+/// The rippling styles lay more line where the tone is darker: on a flat page, with the tone map
+/// taking the grey as it is and no simplifying, a darker grey never draws a shorter line with one
+/// pen. See docs/decisions/2026-10-17-ripple-gamma-kept.md.
+#[test]
+fn a_ripple_lays_more_line_where_the_tone_is_darker() {
+    let names = vec!["waves".to_string(), "spiral".to_string()];
+    let greys = (0.0..1.0f32, 0.0..1.0f32);
+    check("ripple", 12, (case(names), greys), |(c, (a, b))| {
+        let length = |grey: f32| -> Result<f64, TestCaseError> {
+            let mut s = c.session();
+            s.set_image(flat(60, 80, grey));
+            let tone = json!({"levels": "manual", "black": 0.0, "white": 1.0, "gamma": 1.0,
+                "contrast": 0.0, "invert": false, "response": "off", "blur_mm": 0.0,
+                "flatten_mm": 0.0, "smooth_mm": 0.0, "focus": []});
+            s.update("tone", &tone).unwrap();
+            s.update("split", &json!({"mode": "one_pen"})).unwrap();
+            // Simplifying would straighten ripples narrower than its tolerance, and the shortest
+            // paths kept would differ as a ripple breaks a line at the map's edge differently.
+            s.update("order", &json!({"simplify_mm": 0.0, "min_length_mm": 0.0}))
+                .unwrap();
+            run(&mut s)?;
+            Ok(s.drawing().map_or(0.0, |d| {
+                d.layers.iter().map(|l| l.paths.total_length()).sum()
+            }))
+        };
+        let (dark, light) = (a.max(b).min(1.0 - 1e-3), a.min(b));
+        let (more, less) = (length(1.0 - dark)?, length(1.0 - light)?);
+        prop_assert!(
+            more >= less * (1.0 - 1e-9),
+            "{more} mm at ink {dark}, {less} mm at {light}"
         );
         Ok(())
     });

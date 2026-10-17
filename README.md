@@ -63,7 +63,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 | Style | What it draws |
 | --- | --- |
-| `grid` | A dot on a regular grid wherever the image is dark enough. |
+| `grid` | A filled dot on a regular grid wherever the image is dark enough. |
 | `hatch` | Straight parallel lines over the dark areas, in three levels that cross over darker tones. |
 | `waves` | Parallel lines that ripple more where the image is darker, one pen stroke per line. |
 | `spiral` | One spiral from the centre out that ripples the same way. |
@@ -78,7 +78,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `scribble` | Loops traced along the one line through the points, small and close where the image is darker, wide and loose where it is lighter. |
 | `sketch` | Straight strokes chained from dark to dark, like a quick pencil sketch. |
 | `halftone` | Dots on a regular grid, each sized by the ink, like a printed halftone. |
-| `dither` | Dots placed by error diffusion. |
+| `dither` | Filled dots placed by error diffusion. |
 | `circles` | Circles packed without overlap, larger and closer where the image is darker. |
 | `contours` | Level lines of the image, like a topographic map. |
 | `flow` | Evenly spaced lines that follow the image's edges, closer together where it is darker. |

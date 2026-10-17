@@ -2,7 +2,9 @@
 //!
 //! The placer lays a regular grid over the tone map and keeps the cell centres where the ink
 //! density reaches a threshold, so dark areas get points and light areas stay empty. The renderer
-//! turns each point into a path of one vertex, which is how a dot is stored. Neither is a published
+//! turns each point into a filled dot whose width is a share of the grid's spacing, drawn as the
+//! stipple renderer draws one (a spiral, or a single vertex when the dot is no wider than the pen),
+//! so a full grid inks about the same share of the paper at any spacing. Neither is a published
 //! algorithm, so there is nothing to cite.
 //!
 //! When the drawing is split between pens, each pen's grid is shifted along the diagonal by its
@@ -14,11 +16,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::stipple::{dot_run, DotShape};
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::stage::{
     Artifact, Frame, Inputs, Kind, Lane, RunContext, Stage, StageError, StageRun, Step,
 };
-use crate::types::{Paths, Points, ToneMap};
+use crate::types::{Points, ToneMap};
 
 // Each help text stays on one line: schemars keeps the line breaks of a doc comment.
 /// Settings for the grid placer.
@@ -133,7 +136,7 @@ impl StageRun for GridRun {
                 stage: String::new(),
                 progress,
                 label,
-                points: Some(Points(points)),
+                points: Some(Points(points, None)),
                 paths: None,
                 pen: 0,
             })
@@ -146,7 +149,10 @@ impl StageRun for GridRun {
         }
         if self.next_row >= self.rows {
             let points = std::mem::take(&mut self.points);
-            return Ok(Step::Done(Artifact::Points(Arc::new(Points(points)))));
+            return Ok(Step::Done(Artifact::Points(Arc::new(Points(
+                points,
+                Some(self.spacing),
+            )))));
         }
         let end = (self.next_row + self.rows_per_frame).min(self.rows);
         for j in self.next_row..end {
@@ -168,12 +174,25 @@ impl StageRun for GridRun {
     }
 }
 
-/// Settings for the dot renderer, which takes none.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+// Each help text stays on one line: schemars keeps the line breaks of a doc comment.
+/// Settings for the dot renderer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
-pub struct DotSettings {}
+pub struct DotSettings {
+    /// Dot width as a share of the grid spacing: 1 makes neighbouring dots touch.
+    #[schemars(range(min = 0.1, max = 1.5), extend("x-step" = 0.05, "x-share-of" = "spacing"))]
+    pub size: f64,
+}
 
-/// Turn each point into a path of one vertex, which is a dot.
+impl Default for DotSettings {
+    fn default() -> Self {
+        DotSettings { size: 1.0 }
+    }
+}
+
+/// Turn each point of a grid into a filled dot `size` times the grid's spacing wide, for the
+/// first pen. The points must carry their grid's spacing, as the grid and error-diffusion placers'
+/// do. The dots are made as [`dot_run`] makes them.
 pub struct DotRenderer;
 
 impl Stage for DotRenderer {
@@ -184,10 +203,10 @@ impl Stage for DotRenderer {
         "Dots"
     }
     fn version(&self) -> u32 {
-        1
+        2
     }
     fn requires(&self) -> &'static [Kind] {
-        &[Kind::Points]
+        &[Kind::Points, Kind::Tone, Kind::Pens]
     }
     fn provides(&self) -> Kind {
         Kind::Paths
@@ -204,54 +223,30 @@ impl Stage for DotRenderer {
         settings: &Value,
         _ctx: RunContext,
     ) -> Result<Box<dyn StageRun>, StageError> {
-        validate::<DotSettings>(self.name(), &self.schema(), settings)?;
-        Ok(Box::new(DotRun {
-            points: Some(inputs.points().clone()),
-            paths: None,
-        }))
-    }
-}
-
-/// The work happens in the first step, which reports one frame; the second gives the paths.
-struct DotRun {
-    /// What the first step reads; `None` once it has run.
-    points: Option<Arc<Points>>,
-    /// The finished paths, between the first step and the second.
-    paths: Option<Paths>,
-}
-
-impl StageRun for DotRun {
-    fn step(&mut self) -> Result<Step, StageError> {
-        if let Some(points) = self.points.take() {
-            let mut paths = Paths::new();
-            for p in &points.0 {
-                paths.push(std::slice::from_ref(p));
-            }
-            let frame = Frame {
-                stage: String::new(),
-                progress: 1.0,
-                label: format!("{} dots", paths.len()),
-                points: None,
-                paths: Some(paths.clone()),
-                pen: 0,
-            };
-            self.paths = Some(paths);
-            return Ok(Step::Frame(frame));
-        }
-        let Some(paths) = self.paths.take() else {
+        let s = validate::<DotSettings>(self.name(), &self.schema(), settings)?;
+        let pen_w = inputs
+            .pens()
+            .first()
+            .ok_or_else(|| StageError::Failed("dots need a pen".into()))?
+            .width_mm;
+        let Some(spacing) = inputs.points().1 else {
             return Err(StageError::Failed(
-                "the dot run has already finished".into(),
+                "dots are sized by a grid, and these points lie on none".into(),
             ));
         };
-        Ok(Step::Done(Artifact::Paths(Arc::new(paths))))
+        let d = s.size * spacing;
+        dot_run(&inputs, pen_w, DotShape::Auto, move |_| d)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math;
     use crate::settings::merge;
     use crate::stage::Lane;
+    use crate::test_util::{self, tone_map};
+    use crate::types::{Paths, Pen};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -286,11 +281,22 @@ mod tests {
         }
     }
 
-    fn run_dots(points: Artifact) -> (Vec<Frame>, Arc<Paths>) {
-        match run_stage(&DotRenderer, points, json!({}), Lane::SINGLE) {
+    /// Draw `points` on a grid of `spacing` with a 0.3 mm pen over a flat 10 x 10 px map (20 x 20
+    /// mm from (10, 10)), with `patch` over the dot renderer's defaults.
+    fn run_dots(points: Vec<[f64; 2]>, spacing: f64, patch: Value) -> (Vec<Frame>, Arc<Paths>) {
+        let points = Artifact::Points(Arc::new(Points(points, Some(spacing))));
+        let tone = Artifact::Tone(Arc::new(tone_map(10, 10, |_, _| 1.0)));
+        let pens = Artifact::Pens(Arc::new(vec![Pen::new("p", 0.3, "#000000").unwrap()]));
+        match test_util::run_stage(&DotRenderer, vec![points, tone, pens], patch) {
             (frames, Artifact::Paths(p)) => (frames, p),
             (_, a) => panic!("expected paths, got {}", a.kind().name()),
         }
+    }
+
+    /// The farthest a path's vertices lie from `c`.
+    fn reach(path: &[[f64; 2]], c: [f64; 2]) -> f64 {
+        let far = |m: f64, p: &[f64; 2]| m.max(math::hypot(p[0] - c[0], p[1] - c[1]));
+        path.iter().fold(0.0, far)
     }
 
     fn tone(ink: Vec<f32>, w: u32, h: u32) -> Artifact {
@@ -362,14 +368,47 @@ mod tests {
         assert_eq!(frames[0].label, "no grid cells");
     }
     #[test]
-    fn dots_are_one_vertex_paths() {
-        let (frames, paths) = run_dots(Artifact::Points(Arc::new(Points(vec![
-            [1.0, 2.0],
-            [3.0, 4.0],
-        ]))));
+    fn dots_are_filled_to_a_share_of_the_spacing() {
+        let (frames, paths) = run_dots(vec![[15.0, 15.0], [17.0, 15.0]], 2.0, json!({}));
         assert_eq!(paths.len(), 2);
-        assert_eq!(paths.get(1), &[[3.0, 4.0]]);
-        assert_eq!(frames[0].label, "2 dots");
+        // A 2 mm dot fills a 2 mm cell to its sides, so neighbours touch: the 0.3 mm pen's centre
+        // spirals out to 0.85 mm, and its ink to 1 mm.
+        let second = paths.get(1);
+        assert_eq!(second[0], [17.0, 15.0]);
+        assert!((reach(second, [17.0, 15.0]) - 0.85).abs() < 1e-9);
+        assert_eq!(frames.last().unwrap().label, "2/2 dots");
+        // Half the share is a 1 mm dot.
+        let (_, half) = run_dots(vec![[15.0, 15.0]], 2.0, json!({"size": 0.5}));
+        assert!((reach(half.get(0), [15.0, 15.0]) - 0.35).abs() < 1e-9);
+    }
+    #[test]
+    fn a_dot_no_wider_than_the_pen_is_one_vertex() {
+        // 0.9 of 0.3 mm is 0.27 mm, under the 0.3 mm pen.
+        let (_, paths) = run_dots(vec![[15.0, 15.0]], 0.3, json!({"size": 0.9}));
+        assert_eq!(paths.get(0), &[[15.0, 15.0]]);
+    }
+    #[test]
+    fn points_off_a_grid_are_refused() {
+        let points = Artifact::Points(Arc::new(Points(vec![[15.0, 15.0]], None)));
+        let tone = Artifact::Tone(Arc::new(tone_map(10, 10, |_, _| 1.0)));
+        let pens = Artifact::Pens(Arc::new(vec![Pen::new("p", 0.3, "#000000").unwrap()]));
+        let inputs = Inputs::new(
+            [points, tone, pens]
+                .into_iter()
+                .map(|a| (a.kind(), a))
+                .collect(),
+        );
+        let ctx = RunContext::new(Arc::default());
+        let err = DotRenderer
+            .start(inputs, &DotRenderer.defaults(), ctx)
+            .err()
+            .unwrap();
+        assert!(matches!(err, StageError::Failed(_)), "{err:?}");
+    }
+    #[test]
+    fn the_placer_gives_its_spacing_with_its_points() {
+        let (_, pts) = run_grid(tone(vec![1.0; 50], 10, 5), json!({"spacing_mm": 2.0}));
+        assert_eq!(pts.1, Some(2.0));
     }
     #[test]
     fn no_cells_is_one_empty_frame_then_done() {
@@ -400,7 +439,7 @@ mod tests {
         );
         assert_eq!(
             (d.requires(), d.provides()),
-            (&[Kind::Points][..], Kind::Paths)
+            (&[Kind::Points, Kind::Tone, Kind::Pens][..], Kind::Paths)
         );
         let s = g.schema();
         let spacing = &s["properties"]["spacing_mm"];
@@ -423,8 +462,9 @@ mod tests {
             threshold["description"],
             "Least ink density that gets a point: 0 keeps every grid position and 1 keeps only full ink."
         );
-        assert!(d.schema()["properties"].is_null());
-        assert_eq!(d.defaults(), json!({}));
+        assert_eq!(test_util::bounds(&d.schema(), "size"), (0.1, 1.5, 1.0));
+        assert_eq!(d.schema()["properties"]["size"]["x-share-of"], "spacing");
+        assert_eq!(d.defaults(), json!({"size": 1.0}));
     }
     #[test]
     fn bad_settings_are_rejected_at_start() {
@@ -447,15 +487,5 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].label, "no grid cells");
         assert!(pts.0.is_empty());
-    }
-    #[test]
-    fn a_finished_dot_run_fails_instead_of_panicking() {
-        let points = Artifact::Points(Arc::new(Points(vec![[1.0, 2.0]])));
-        let inputs = Inputs::new(HashMap::from([(Kind::Points, points)]));
-        let ctx = RunContext::new(Arc::default());
-        let mut run = DotRenderer.start(inputs, &json!({}), ctx).unwrap();
-        assert!(matches!(run.step(), Ok(Step::Frame(_))));
-        assert!(matches!(run.step(), Ok(Step::Done(_))));
-        assert!(matches!(run.step(), Err(StageError::Failed(_))));
     }
 }
