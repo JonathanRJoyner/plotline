@@ -141,6 +141,27 @@ pub struct ToneSettings {
 /// The most focus points a run takes.
 const MAX_FOCUS: usize = 16;
 
+/// The order the settings form shows the settings in (`x-order` in the schema, which lists its
+/// properties alphabetically): Levels first, as it decides whether Black and White apply, then the
+/// tone settings, then the advanced and hidden ones in the struct's order.
+const ORDER: [&str; 15] = [
+    "levels",
+    "black",
+    "white",
+    "clip_percent",
+    "gamma",
+    "contrast",
+    "invert",
+    "flatten_mm",
+    "response",
+    "resolution",
+    "smooth_mm",
+    "blur_mm",
+    "focus",
+    "focus_mm",
+    "focus_blur_mm",
+];
+
 impl Default for ToneSettings {
     fn default() -> Self {
         ToneSettings {
@@ -186,7 +207,9 @@ impl Stage for ToneStage {
         Kind::Tone
     }
     fn schema(&self) -> Value {
-        schema_for::<ToneSettings>()
+        let mut schema = schema_for::<ToneSettings>();
+        schema["x-order"] = Value::from(ORDER.as_slice());
+        schema
     }
     fn defaults(&self) -> Value {
         defaults_for::<ToneSettings>()
@@ -1247,6 +1270,26 @@ mod tests {
         assert!(nan.contains("point 2 is [0.5, NaN]"), "{nan}");
         assert!(check_focus(&[vec![f64::INFINITY, 0.5]]).is_err());
         assert!(check_focus(&[vec![0.0, 1.0]]).is_ok());
+    }
+    #[test]
+    fn x_order_lists_every_setting_once() {
+        let schema = ToneStage.schema();
+        let mut order: Vec<&str> = schema["x-order"]
+            .as_array()
+            .expect("the schema declares x-order")
+            .iter()
+            .map(|k| k.as_str().unwrap())
+            .collect();
+        let mut keys: Vec<&str> = schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(order[0], "levels");
+        order.sort_unstable();
+        keys.sort_unstable();
+        assert_eq!(order, keys);
     }
     #[test]
     fn the_focus_settings_are_declared() {

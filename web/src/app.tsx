@@ -138,13 +138,13 @@ function keepHpglUnits(n: number) {
 }
 
 type ExportProps = {
-  status: StatusStore; machine: boolean; error?: string;
-  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void; onTestchart: () => void;
+  status: StatusStore; machine: boolean;
+  onExport: (format: "svg" | "json") => void; onHpgl: () => void; onGcode: (layer: number) => void;
 };
 
-function Export({ status, machine, error, onExport, onHpgl, onGcode, onTestchart }: ExportProps) {
+function Export({ status, machine, onExport, onHpgl, onGcode }: ExportProps) {
   const { stats, layers } = useStatus(status);
-  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} error={error} onExport={onExport} onHpgl={onHpgl} onGcode={onGcode} onTestchart={onTestchart} />;
+  return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} onExport={onExport} onHpgl={onHpgl} onGcode={onGcode} />;
 }
 
 // The file input of an Open button, in the toolbar and in the empty preview's card.
@@ -162,7 +162,7 @@ function OpenInput({ onOpen }: { onOpen: (file: File | undefined) => void }) {
 }
 
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "compare" | "previous" | "view" | "onView" | "fits" | "focusing"> & {
-  engine: Engine; status: StatusStore; stages: Stage[]; error?: string; fitError?: string;
+  engine: Engine; status: StatusStore; stages: Stage[]; settings: State["settings"]; error?: string; fitError?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
   onSettings: () => void; onTour: () => void; onUndo?: () => void; onRedo?: () => void;
   onApply: (patch: Patch) => void; lintError?: string;
@@ -172,7 +172,7 @@ type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "r
 
 // The toolbar, the preview and the status bar, which hold the run events and the view themselves.
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
-function RunView({ engine, status, stages, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onOptimize, onApply, lintError, ...preview }: RunViewProps) {
+function RunView({ engine, status, stages, settings, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onOptimize, onApply, lintError, ...preview }: RunViewProps) {
   const { run, stats, lint, tone } = useStatus(status);
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
@@ -233,7 +233,7 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
   return (
     <>
       {/* Grouped, so a narrow window wraps whole groups. */}
-      <div class="toolbar" id="toolbar" tabIndex={-1}>
+      <div class="toolbar">
         <span class="group" data-tour="image">
           <label class="button" title="Open image">
             <ImageUp /> <span class="label">Open image</span>
@@ -301,7 +301,7 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
         <StatsPanel stats={stats} tone={tone} />
         <LintList findings={lint} error={lintError} onApply={onApply} />
         <FitPanel
-          disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} stages={stages}
+          disabled={!preview.hasImage} error={fitError} fitted={fitted} optimum={optimum} settings={settings} stages={stages}
           onFit={(metric, target) => { setFitted(null); setOptimum(null); onFit(metric, target); }}
           onOptimize={(metric, target) => { setFitted(null); setOptimum(null); onOptimize(metric, target); }}
           onApply={(patch) => { setOptimum(null); onApply(patch); }}
@@ -333,6 +333,7 @@ export function App() {
   const [hpglUnits, setHpglUnits] = useState(savedHpglUnits);
   const [settingsOpens, setSettingsOpens] = useState(0);
   const [pensOpens, setPensOpens] = useState(0);
+  const [dismissed, setDismissed] = useState(new Set<string>()); // suggestion kinds hidden for this image
   const [tourOpens, setTourOpens] = useState(() => (firstVisit() ? 1 : 0));
   const unsent = useRef<State["settings"]>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -462,6 +463,7 @@ export function App() {
 
   async function openImage(file: File | undefined) {
     if (!file) return;
+    setDismissed(new Set());
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       await call("setImageBytes", [bytes], "image", [bytes.buffer]);
@@ -546,6 +548,7 @@ export function App() {
 
   const settings = { ...state.settings };
   for (const k in draft) settings[k] = { ...settings[k], ...draft[k] };
+  const suggestions = state.suggestions.filter((s) => !dismissed.has(s.kind));
 
   return (
     <div
@@ -553,13 +556,34 @@ export function App() {
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); openDropped(e.dataTransfer); }}
     >
-      <a class="skip" href="#toolbar">Skip to the toolbar</a>
-      <aside>
+      <a class="skip" href="#style-settings">Skip to the style settings</a>
+      {/* Before the settings in the page, so Tab reaches the toolbar first; the grid puts it between the columns. */}
+      <main>
+        <RunView
+          engine={engine} status={status} stages={stages} settings={settings} canvas={state.canvas} paper={state.paper} hidden={hidden}
+          pens={state.pens} hasImage={state.image} onOpen={openImage}
+          focus={state.focus} radius={Number(settings.tone?.focus_mm ?? 40)}
+          onFocusAt={addFocus} onFocusRemove={(i) => removeFocus((state.settings.tone?.focus as number[][] | undefined)?.[i])}
+          error={errors[""] || (errors.image && `Could not open the image (${errors.image}).${state.image ? " The previous image is still open." : ""}`)}
+          onSample={() => { setDismissed(new Set()); call("sample", [], "image"); }} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
+          onSettings={() => {
+            setErrors((es) => ({ ...es, machine: "" })); // an old refusal would show over a good machine
+            setSettingsOpens((n) => n + 1);
+          }}
+          onTour={() => setTourOpens((n) => n + 1)}
+          onUndo={history.past.length > 0 ? () => restore(history.undo()) : undefined}
+          onRedo={history.future.length > 0 ? () => restore(history.redo()) : undefined}
+          onApply={(patch) => call("apply", [patch], "lint")} lintError={errors.lint}
+          fitError={errors.fit} onFit={(metric, target) => call("fit", [metric, target], "fit")} onFitted={applyFit}
+          onOptimize={(metric, target) => call("optimize", metric === undefined ? [] : [metric, target], "fit")}
+        />
+      </main>
+      <aside class="side-left">
         <h1 class="brand"><Mark /> plotline</h1>
         <label data-tour="help">
           <input type="checkbox" checked={help} onChange={(e) => { setHelp(e.currentTarget.checked); keepHelp(e.currentTarget.checked); }} /> Show help
         </label>
-        <fieldset data-tour="style">
+        <fieldset id="style-settings" tabIndex={-1} data-tour="style">
           <legend>Style</legend>
           <label>
             Style{" "}
@@ -587,34 +611,19 @@ export function App() {
           <Settings stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
         </div>
       </aside>
-      <main>
-        <RunView
-          engine={engine} status={status} stages={stages} canvas={state.canvas} paper={state.paper} hidden={hidden}
-          pens={state.pens} hasImage={state.image} onOpen={openImage}
-          focus={state.focus} radius={Number(settings.tone?.focus_mm ?? 40)}
-          onFocusAt={addFocus} onFocusRemove={(i) => removeFocus((state.settings.tone?.focus as number[][] | undefined)?.[i])}
-          error={errors[""] || (errors.image && `Could not open the image (${errors.image}).${state.image ? " The previous image is still open." : ""}`)}
-          onSample={() => call("sample", [], "image")} onRun={() => call("run")} onStop={() => call("cancel")} onSvg={() => exportAs("svg")}
-          onSettings={() => {
-            setErrors((es) => ({ ...es, machine: "" })); // an old refusal would show over a good machine
-            setSettingsOpens((n) => n + 1);
-          }}
-          onTour={() => setTourOpens((n) => n + 1)}
-          onUndo={history.past.length > 0 ? () => restore(history.undo()) : undefined}
-          onRedo={history.future.length > 0 ? () => restore(history.redo()) : undefined}
-          onApply={(patch) => call("apply", [patch], "lint")} lintError={errors.lint}
-          fitError={errors.fit} onFit={(metric, target) => call("fit", [metric, target], "fit")} onFitted={applyFit}
-          onOptimize={(metric, target) => call("optimize", metric === undefined ? [] : [metric, target], "fit")}
-        />
-      </main>
-      <aside>
+      <aside class="side-right">
         {/* Always present, as the lint list's is, so the tour can ring it before any image. */}
         <div data-tour="suggestions">
-          {state.suggestions.length > 0 && <SuggestionsPanel suggestions={state.suggestions} error={errors.suggestions} onApply={(patch) => call("apply", [patch], "suggestions")} />}
+          {suggestions.length > 0 && (
+            <SuggestionsPanel
+              suggestions={suggestions} error={errors.suggestions} onApply={(patch) => call("apply", [patch], "suggestions")}
+              onDismiss={(kind) => setDismissed((d) => new Set(d).add(kind))}
+            />
+          )}
         </div>
         <PagePanel canvas={state.canvas} paper={state.paper} error={errors.page} onChange={(c) => call("setCanvas", [c], "page")} onPaper={(c) => call("setPaper", [c], "page")} />
         <PensPanel
-          pens={state.pens} hidden={hidden} error={errors.pens}
+          pens={state.pens} hidden={hidden} error={errors.pens} onTestchart={() => call("testchart", [], "pens")}
           onEdit={() => {
             setErrors((es) => ({ ...es, pens: "" })); // as for the settings dialog
             setPensOpens((n) => n + 1);
@@ -627,10 +636,7 @@ export function App() {
         >
           <Settings part="pens" stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
         </PensPanel>
-        <Export
-          status={status} machine={state.machine !== null} error={errors.testchart}
-          onExport={exportAs} onHpgl={exportHpgl} onGcode={exportGcode} onTestchart={() => call("testchart", [], "testchart")}
-        />
+        <Export status={status} machine={state.machine !== null} onExport={exportAs} onHpgl={exportHpgl} onGcode={exportGcode} />
         <PresetsPanel warnings={warnings} error={errors.preset} onSave={savePreset} onLoad={loadPreset} />
       </aside>
       <SettingsDialog
