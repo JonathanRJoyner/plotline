@@ -1,6 +1,6 @@
 //! Measures the looks (see `docs/decisions/2026-10-16-looks.md`): for every listed style with a
 //! density setting, the values of its Faithful, Quick and Fine looks, from drawings of the
-//! regression gallery's three test images and seven more on A4 with the default 10 mm margin, the default
+//! regression gallery's three test images and six more on A4 with the default 10 mm margin, the default
 //! 0.3 mm pen and the default speeds.
 //!
 //! Run it with `cargo run --release -p plotline-core --example looks [-- style ...]`. It prints a
@@ -32,8 +32,9 @@ use plotline_core::fit::Density;
 use plotline_core::lint::Severity;
 use plotline_core::registry::list_styles;
 use plotline_core::settings::merge;
+use plotline_core::style::SPARSEST_LOOK;
 use plotline_core::synthetic::{
-    checkerboard, color_bars, gradient, noise, scene, still_life, strokes,
+    checkerboard, color_bars, gradient, lit_strokes, scene, still_life,
 };
 use plotline_core::tone_match::ToneMatch;
 use plotline_core::{Image, Job, RunState, Session};
@@ -85,8 +86,9 @@ fn poster(w: u32, h: u32) -> Image {
 }
 
 /// The images, the shape of the default A4 drawing area: the gallery's three, then flat shapes
-/// on white, a checkerboard, colour bars, line art, a busy texture, and the scene made dark and
-/// made pale (the colour and styles audit's F13).
+/// on white, a checkerboard, colour bars, line art lit from one side, and the scene made dark and
+/// made pale (the colour and styles audit's F13). Pictures whose blurred tone barely varies, such
+/// as plain noise or evenly lit line art, are left out: blank paper beats every drawing of them.
 fn images() -> Vec<Image> {
     vec![
         still_life(600, 875),
@@ -95,15 +97,14 @@ fn images() -> Vec<Image> {
         poster(600, 875),
         checkerboard(600, 875, 6),
         color_bars(600, 875),
-        strokes(600, 875, 0.0, 1.0),
-        noise(600, 875, 7),
-        shade(scene(600, 875), |v| v * 0.35),
+        lit_strokes(600, 875, 0.3),
+        shade(scene(600, 875), |v| v.powf(2.5)),
         shade(scene(600, 875), |v| 1.0 - (1.0 - v) * 0.35),
     ]
 }
 
 /// The images' names, in the order of [`images`].
-const NAMES: [&str; 10] = [
+const NAMES: [&str; 9] = [
     "still life",
     "scene",
     "gradient",
@@ -111,7 +112,6 @@ const NAMES: [&str; 10] = [
     "checker",
     "bars",
     "lines",
-    "noise",
     "dark",
     "pale",
 ];
@@ -298,11 +298,14 @@ fn with(patch: &Value, d: &Density, v: f64) -> Value {
     merge(patch, &json!({ d.stage.clone(): { d.key.clone(): value } }))
 }
 
-/// The scan's values from [`REACH`] times sparser than `base` to as many times denser, sparsest
+/// The scan's values from [`SPARSEST_LOOK`] times sparser than `base` to [`REACH`] times denser, sparsest
 /// first, with `base` among them.
 fn grid(d: &Density, base: f64) -> Vec<f64> {
     let n = (REACH.ln() / STEP.ln()).round() as i32;
-    let mut values: Vec<f64> = (-n..=n).map(|k| tidy(d, base * STEP.powi(k))).collect();
+    // The sparse side stops where a look would swamp the picture's features.
+    let m = (SPARSEST_LOOK.ln() / STEP.ln()).floor() as i32;
+    let ks = if d.direct { -m..=n } else { -n..=m };
+    let mut values: Vec<f64> = ks.map(|k| tidy(d, base * STEP.powi(k))).collect();
     values.push(base);
     values.sort_by(|a, b| a.total_cmp(b));
     values.dedup();
@@ -368,6 +371,12 @@ fn measure(style: &str) -> Found {
         let found = bench.quick();
         let v = tidy(&d, median(found.clone()));
         let v = if v.is_nan() { base } else { v };
+        // Never sparser than a look may be: coarser, the marks swamp the picture.
+        let v = if d.direct {
+            v.max(tidy(&d, base / SPARSEST_LOOK))
+        } else {
+            v.min(tidy(&d, base * SPARSEST_LOOK))
+        };
         let sparser = if d.direct { v < base } else { v > base };
         let trial = bench.trial(&with(&json!({}), &d, v));
         table += &trial.row(&format!("quick, the fit found {found:?}"));
