@@ -122,7 +122,7 @@ The point family and Sketch Lines were built on 2026-10-13 under [spec 8](superp
 
 **Sketch Lines:** a greedy loop that repeatedly finds the darkest line segment from the current position, draws it, lightens the tone map under it, and continues until it hits a target darkness or line budget. It runs as a single stage, and its frames show strokes accumulating.
 
-**Shared final stage: path ordering.** Reorder and optionally reverse paths to cut pen-up travel, merge paths whose ends nearly touch, drop paths below a minimum length, and, from 2026-10-16, optionally remove the vertices a pen cannot show by Ramer–Douglas–Peucker simplification (`order.simplify_mm`, off by default; see [path simplification](decisions/2026-10-16-path-simplification.md)).
+**Shared final stage: path ordering.** Reorder and optionally reverse paths to cut pen-up travel, drop paths below a minimum length, from 2026-10-17 optionally join the paths that meet into the fewest pen-down trails, retracing short edges to join more (`order.join`, on for `cells`, `mesh`, `tree` and `contours`; see [joining paths into trails](decisions/2026-10-17-join-paths-into-trails.md)), and, from 2026-10-16, optionally remove the vertices a pen cannot show by Ramer–Douglas–Peucker simplification (`order.simplify_mm`, off by default; see [path simplification](decisions/2026-10-16-path-simplification.md)).
 
 ### 7.2 Later families (for planning; not committed)
 

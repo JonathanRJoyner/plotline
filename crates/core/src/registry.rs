@@ -227,6 +227,7 @@ pub fn tree_style() -> Style {
         Arc::new(VoronoiPlacer),
         Arc::new(MstRenderer),
     )
+    .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
         json!({"tone": {"response": "auto"}, "voronoi": {"count": 20000}}),
@@ -242,6 +243,7 @@ pub fn mesh_style() -> Style {
         Arc::new(VoronoiPlacer),
         Arc::new(DelaunayRenderer),
     )
+    .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
         json!({"tone": {"response": "auto"}, "voronoi": {"count": 6000}}),
@@ -258,6 +260,7 @@ pub fn cells_style() -> Style {
         Arc::new(VoronoiPlacer),
         Arc::new(CellsRenderer),
     )
+    .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
         json!({"tone": {"response": "auto"}, "voronoi": {"count": 8400}}),
@@ -316,6 +319,7 @@ pub fn contours_style() -> Style {
         "Level lines of the image, like a topographic map.",
         Arc::new(ContourStage),
     )
+    .with_defaults("order", json!({"join": "on"}))
 }
 
 /// Evenly spaced lines along the image's edges, closer where it is darker: tone, split, flow, order.
