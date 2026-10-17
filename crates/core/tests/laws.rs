@@ -1595,6 +1595,50 @@ fn acceleration_never_shortens_the_plot_time() {
     });
 }
 
+/// The plot playback's times, every pen-up move's start and end and every vertex's arrival, layer
+/// by layer, never go back, and the last one is the estimated plot time; each layer has one move
+/// per path and one time per vertex.
+#[test]
+fn the_timeline_rises_and_ends_at_the_plot_time() {
+    let strategy = (case(all_styles()), 0.0..2.0f64, 1.0..1e5f64);
+    check("timeline", 12, strategy, |(c, lift, accel)| {
+        let mut s = c.session();
+        s.set_speeds(Speeds {
+            pen_lift_s: lift,
+            accel_mm_s2: accel,
+            ..Speeds::default()
+        });
+        run(&mut s)?;
+        let (Some(d), Some(timeline)) = (s.drawing(), s.timeline()) else {
+            return Ok(());
+        };
+        let times = timeline.layers;
+        prop_assert_eq!(times.len(), d.layers.len());
+        let mut last = 0.0;
+        for (layer, t) in d.layers.iter().zip(&times) {
+            prop_assert_eq!(t.travel.len(), layer.paths.len());
+            prop_assert_eq!(t.vertices.len(), layer.paths.coords().len());
+            for (i, [up, down]) in t.travel.iter().copied().enumerate() {
+                let path = layer.paths.offsets()[i] as usize..layer.paths.offsets()[i + 1] as usize;
+                for at in [up, down]
+                    .into_iter()
+                    .chain(t.vertices[path].iter().copied())
+                {
+                    prop_assert!(at >= last, "{at} s comes after {last} s");
+                    last = at;
+                }
+            }
+        }
+        let total = s.stats().unwrap().estimated_seconds;
+        // The two add the same moves in another order, so they may differ by rounding.
+        prop_assert!(
+            (last - total).abs() <= 1e-9 * total.max(1.0),
+            "{last} s against {total} s"
+        );
+        Ok(())
+    });
+}
+
 /// The `x,y` pairs of the argument list of an HPGL `PU` or `PD`; a lone `PD;` has none.
 fn hpgl_pairs(args: &str) -> Vec<[i64; 2]> {
     let n: Vec<i64> = (args.split(',').filter(|v| !v.is_empty()))

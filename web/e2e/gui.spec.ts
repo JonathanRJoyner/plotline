@@ -838,6 +838,47 @@ async function canvasHash(page: Page, from: number, to: number): Promise<number>
   }, [from, to]);
 }
 
+// The preview's opaque pixels darker than mid grey: the ink, give or take the pen's ring. The
+// paper's shadow is see-through, so it does not count.
+const inked = (page: Page) => page.locator(".preview canvas").evaluate((c: HTMLCanvasElement) => {
+  const { data } = c.getContext("2d")!.getImageData(0, 0, c.width, c.height);
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4) if (data[i + 3] === 255 && data[i] + data[i + 1] + data[i + 2] < 384) n++;
+  return n;
+});
+
+test("Play lays the drawing down over the plot time, the slider and its keys scrub it, and Compare takes its place", async ({ page }) => {
+  await sample(page);
+  const [, m, s] = /about (\d+) min (\d+) s to plot/.exec((await page.locator(".stats").textContent()) ?? "") ?? [];
+  const full = await inked(page);
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect(page.getByRole("checkbox", { name: "Play", exact: true })).toBeChecked();
+  const times = page.locator(".playback .time");
+  // The playback lasts the stats' plot time, and it plays at once.
+  await expect(times).toContainText(` of ${m}:${s.padStart(2, "0")}, `);
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  const slider = page.getByRole("slider", { name: "Plot time" });
+  await slider.focus();
+  await page.keyboard.press("Home");
+  await expect(times).toContainText(/^0:00 of /);
+  await expect.poll(() => inked(page)).toBeLessThan(full / 10);
+  await page.keyboard.press("ArrowRight");
+  await expect(times).not.toContainText(/^0:00 of /);
+  await page.keyboard.press("End");
+  await expect(times).toContainText(/, 0:00 left$/);
+  await expect.poll(() => inked(page)).toBeGreaterThan(full * 0.9);
+  // Play from the end starts again from the beginning.
+  await page.getByRole("button", { name: "Play", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await page.locator("label.chip", { hasText: "Compare" }).click();
+  await expect(page.getByRole("checkbox", { name: "Play", exact: true })).not.toBeChecked();
+  await expect(page.locator(".playback")).toHaveCount(0);
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect(page.getByRole("checkbox", { name: "Compare", exact: true })).not.toBeChecked();
+  await page.locator("label.chip", { hasText: "Play" }).click();
+  await expect.poll(() => inked(page)).toBeGreaterThan(full * 0.9);
+});
+
 test("Compare swipes the previous drawing against the current one", async ({ page }) => {
   test.setTimeout(120_000);
   // Narrow enough that the page fills the preview's width, so each third shows the drawing.
