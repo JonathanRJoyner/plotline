@@ -55,18 +55,18 @@ fn point_style(
     .expect("a point style is valid")
 }
 
-/// Dots on a regular grid: tone, split, points, render, order.
+/// Filled dots on a regular grid: tone, split, points, render, order.
 pub fn grid_style() -> Style {
     point_style(
         "grid",
         "Grid dots",
-        "Dots on a regular grid, one wherever the image is dark enough, drawn in an order that \
-         keeps the pen's travel short.",
+        "Filled dots on a regular grid, one wherever the image is dark enough, drawn in an order \
+         that keeps the pen's travel short.",
         Arc::new(GridPlacer),
         Arc::new(DotRenderer),
     )
-    .with_look("quick", json!({"points": {"spacing_mm": 1.8}}))
-    .with_look("fine", json!({"points": {"spacing_mm": 0.8}}))
+    .with_look("quick", json!({"points": {"spacing_mm": 5.6}}))
+    .with_look("fine", json!({"points": {"spacing_mm": 0.7}}))
 }
 
 /// A style of tone, the split between pens, one stage that turns the tone map into paths, and
@@ -175,15 +175,24 @@ pub fn stipple_style() -> Style {
     .with_look("fine", json!({"voronoi": {"count": 12000}}))
 }
 
+/// `style`, whose renderer joins its points with lines, with the points' density following ink
+/// squared. A pen line of fixed width through the points darkens with the square root of their
+/// density (Ahmed, "Variable-density stippling with connected points", *Bridges*, 2015; C. S.
+/// Kaplan and R. Bosch found the same for "TSP Art", *Bridges*, 2005), so a part twice as dark
+/// needs four times the points. Dots darken with the density itself and keep the exponent at 1.
+fn joined(style: Style) -> Style {
+    style.with_defaults("voronoi", json!({"exponent": 2.0}))
+}
+
 /// One unbroken, non-crossing line through evenly spread points: tone, split, voronoi, tsp, order.
 pub fn line_style() -> Style {
-    point_style(
+    joined(point_style(
         "line",
         "Single line",
         "One unbroken, non-crossing line through every point.",
         Arc::new(VoronoiPlacer),
         Arc::new(TspRenderer),
-    )
+    ))
     .with_look(
         "faithful",
         json!({"tone": {"response": "auto"}, "voronoi": {"count": 20000}}),
@@ -194,7 +203,7 @@ pub fn line_style() -> Style {
 /// scribble, order. The first four stages have the defaults of `line`, so a switch reuses its
 /// points and its tour.
 pub fn scribble_style() -> Style {
-    Style::new(
+    let style = Style::new(
         "scribble",
         "Scribble",
         "Loops traced along one line through the points, small and close where the image is dark, \
@@ -208,8 +217,8 @@ pub fn scribble_style() -> Style {
             Arc::new(OrderStage),
         ],
     )
-    .expect("the scribble style is valid")
-    .with_look("faithful", json!({"voronoi": {"count": 20000}}))
+    .expect("the scribble style is valid");
+    joined(style).with_look("faithful", json!({"voronoi": {"count": 20000}}))
 }
 
 /// Short strokes that follow the image's edges: tone, split, voronoi, dashes, order.
@@ -241,13 +250,13 @@ pub fn sketch_style() -> Style {
 
 /// The shortest tree joining evenly spread points: tone, split, voronoi, mst, order.
 pub fn tree_style() -> Style {
-    point_style(
+    joined(point_style(
         "tree",
         "Tree",
         "The shortest tree joining every point.",
         Arc::new(VoronoiPlacer),
         Arc::new(MstRenderer),
-    )
+    ))
     .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
@@ -257,13 +266,13 @@ pub fn tree_style() -> Style {
 
 /// A triangle mesh over evenly spread points: tone, split, voronoi, delaunay, order.
 pub fn mesh_style() -> Style {
-    point_style(
+    joined(point_style(
         "mesh",
         "Mesh",
         "A triangle mesh over the points.",
         Arc::new(VoronoiPlacer),
         Arc::new(DelaunayRenderer),
-    )
+    ))
     .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
@@ -274,13 +283,13 @@ pub fn mesh_style() -> Style {
 
 /// The outlines of the points' Voronoi cells: tone, split, voronoi, cells, order.
 pub fn cells_style() -> Style {
-    point_style(
+    joined(point_style(
         "cells",
         "Cells",
         "The outlines of the points' Voronoi cells.",
         Arc::new(VoronoiPlacer),
         Arc::new(CellsRenderer),
-    )
+    ))
     .with_defaults("order", json!({"join": "retrace"}))
     .with_look(
         "faithful",
@@ -302,17 +311,16 @@ pub fn halftone_style() -> Style {
     .with_defaults("stipple", json!({"size_mm": 2.0, "vary": 1.0}))
 }
 
-/// Dots where error diffusion puts them: tone, split, dither, render, order.
+/// Filled dots where error diffusion puts them: tone, split, dither, render, order.
 pub fn dither_style() -> Style {
     point_style(
         "dither",
         "Dither",
-        "Dots where error diffusion puts them.",
+        "Filled dots where error diffusion puts them.",
         Arc::new(DitherPlacer),
         Arc::new(DotRenderer),
     )
     .with_look("faithful", json!({"dither": {"spacing_mm": 0.8}}))
-    .with_look("quick", json!({"dither": {"spacing_mm": 1.8}}))
 }
 
 /// Circles packed without overlapping: tone, split, poisson, stipple, order.
@@ -743,13 +751,23 @@ mod tests {
     }
     #[test]
     fn the_voronoi_styles_share_tone_and_point_defaults() {
-        // Equal settings give equal cache keys, so switching between these styles at their
-        // defaults reuses the points.
-        let first = get_style("stipple").unwrap().defaults();
-        for name in ["line", "dashes", "tree", "mesh", "cells", "scribble"] {
+        // Equal settings give equal cache keys, so switching between the dot styles, or between
+        // the styles that join points, at their defaults reuses the points. The two groups differ
+        // only in the density exponent.
+        let dots = get_style("stipple").unwrap().defaults();
+        let mut joined = dots["voronoi"].clone();
+        joined["exponent"] = json!(2.0);
+        for (name, voronoi) in [
+            ("dashes", &dots["voronoi"]),
+            ("line", &joined),
+            ("scribble", &joined),
+            ("tree", &joined),
+            ("mesh", &joined),
+            ("cells", &joined),
+        ] {
             let d = get_style(name).unwrap().defaults();
-            assert_eq!(d["tone"], first["tone"], "{name}");
-            assert_eq!(d["voronoi"], first["voronoi"], "{name}");
+            assert_eq!(d["tone"], dots["tone"], "{name}");
+            assert_eq!(&d["voronoi"], voronoi, "{name}");
         }
         // The scribble follows the tour of `line`, so a switch between them reuses that too.
         let tour = |name: &str| get_style(name).unwrap().defaults()["tsp"].clone();

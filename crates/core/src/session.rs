@@ -1159,7 +1159,7 @@ mod tests {
     }
     #[test]
     fn second_run_with_same_settings_is_all_cached() {
-        let mut s = Session::new(1 << 20);
+        let mut s = Session::new(1 << 26);
         s.set_image(gradient(64, 48));
         s.update("tone", &json!({"resolution": 64})).unwrap();
         let mut r = s.start().unwrap();
@@ -1187,7 +1187,7 @@ mod tests {
     }
     #[test]
     fn a_new_paper_reruns_nothing_and_repaints() {
-        let mut s = Session::new(1 << 20);
+        let mut s = Session::new(1 << 26);
         s.set_image(gradient(64, 48));
         s.update("tone", &json!({"resolution": 64})).unwrap();
         let mut r = s.start().unwrap();
@@ -1231,7 +1231,8 @@ mod tests {
         let mut r = s.start().unwrap();
         while r.next_frame().is_some() {}
         assert_eq!(s.state(), RunState::Done);
-        s.set_style("line").unwrap();
+        // Dots share their points with dashes; the styles that join points share theirs too.
+        s.set_style("dashes").unwrap();
         let mut r = s.start().unwrap();
         let mut voronoi = vec![];
         while let Some(f) = r.next_frame() {
@@ -1246,7 +1247,7 @@ mod tests {
     fn a_changed_relaxation_survives_a_switch_to_line() {
         let mut s = Session::new(256 << 20);
         s.set_image(gradient(64, 48));
-        s.set_style("stipple").unwrap();
+        s.set_style("tree").unwrap();
         s.update("voronoi", &json!({"iterations": 5})).unwrap();
         let mut r = s.start().unwrap();
         while r.next_frame().is_some() {}
@@ -1274,7 +1275,7 @@ mod tests {
         let (drawing, settings) = (s.drawing().unwrap(), s.settings().clone());
         assert!(s.trial("nope").is_err());
         let mut latest = s.start().unwrap();
-        let (mut trial, slot) = s.trial("line").unwrap();
+        let (mut trial, slot) = s.trial("dashes").unwrap();
         let mut voronoi = vec![];
         while let Some(f) = trial.next_frame() {
             if f.stage == "voronoi" {

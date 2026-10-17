@@ -322,16 +322,17 @@ test("the lint findings come with the end event and the state, and their patches
   const { posted, ok, ended } = setup();
   expect(ok("preset").state.lint).toEqual([]);
   ok("update", "tone", { resolution: 64 });
+  ok("update", "render", { size: 0.3 });
   ok("setImage", ...image());
   await ended(1);
   const end = posted.find((m) => m.type === "end") as { lint: Finding[] };
   const { lint } = ok("preset").state;
   expect(end.lint).toEqual(lint);
-  // Grid dots on the gradient are too sparse to reach dark, and a closer spacing fixes it.
+  // Grid dots as wide as the pen are too small to reach dark on the gradient, and larger ones fix it.
   const dark = lint.find((f) => f.code === "dark");
-  expect(dark?.patch).toEqual({ settings: { points: { spacing_mm: 0.3 } } });
+  expect(dark?.patch).toEqual({ settings: { render: { size: 0.8 } } });
   const { state } = ok("apply", dark!.patch);
-  expect((state.settings.points as { spacing_mm: number }).spacing_mm).toBe(0.3);
+  expect((state.settings.render as { size: number }).size).toBe(0.8);
   await ended(2);
 });
 

@@ -242,7 +242,7 @@ impl Slic {
     /// The centres on the page, in mm.
     fn points(&self) -> Points {
         let at = |c: &[f64; 3]| self.tone.to_mm([c[0] + 0.5, c[1] + 0.5]);
-        Points(self.centres.iter().map(at).collect())
+        Points(self.centres.iter().map(at).collect(), None)
     }
 }
 

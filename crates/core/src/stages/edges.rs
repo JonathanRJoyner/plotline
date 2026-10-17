@@ -335,7 +335,7 @@ mod tests {
     /// Run `stage` over `points` and a flat tone map covering [`RECT`].
     fn run(stage: &dyn Stage, points: Vec<[f64; 2]>, patch: Value) -> Arc<Paths> {
         let tone = Artifact::Tone(Arc::new(tone_map(20, 20, |_, _| 0.5)));
-        let points = Artifact::Points(Arc::new(Points(points)));
+        let points = Artifact::Points(Arc::new(Points(points, None)));
         match run_stage(stage, vec![points, tone], patch).1 {
             Artifact::Paths(p) => p,
             a => panic!("expected paths, got {}", a.kind().name()),
@@ -508,7 +508,7 @@ mod tests {
         let stages: [&dyn Stage; 3] = [&MstRenderer, &DelaunayRenderer, &CellsRenderer];
         for stage in stages {
             let tone = Artifact::Tone(Arc::new(tone_map(20, 20, |_, _| 0.5)));
-            let points = Artifact::Points(Arc::new(Points(scatter(30))));
+            let points = Artifact::Points(Arc::new(Points(scatter(30), None)));
             let (frames, paths) = run_stage(stage, vec![points, tone], json!({}));
             assert_eq!(frames.len(), 1, "{}", stage.name());
             let Artifact::Paths(p) = paths else {
@@ -530,7 +530,7 @@ mod tests {
         ];
         for (stage, patch) in cases {
             let settings = crate::settings::merge(&stage.defaults(), &patch);
-            let points = Artifact::Points(Arc::new(Points(vec![])));
+            let points = Artifact::Points(Arc::new(Points(vec![], None)));
             let inputs = Inputs::new([points].into_iter().map(|a| (a.kind(), a)).collect());
             let ctx = RunContext::new(Arc::default());
             let err = stage.start(inputs, &settings, ctx).err().unwrap();
@@ -543,7 +543,7 @@ mod tests {
         let stages: [&dyn Stage; 3] = [&MstRenderer, &DelaunayRenderer, &CellsRenderer];
         for stage in stages {
             let tone = Artifact::Tone(Arc::new(tone_map(1, 1, |_, _| 1.0)));
-            let points = Artifact::Points(Arc::new(Points(vec![])));
+            let points = Artifact::Points(Arc::new(Points(vec![], None)));
             let inputs = Inputs::new([points, tone].into_iter().map(|a| (a.kind(), a)).collect());
             let ctx = RunContext::new(Arc::default());
             let mut run = stage.start(inputs, &stage.defaults(), ctx).unwrap();

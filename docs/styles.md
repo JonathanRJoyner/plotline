@@ -33,17 +33,18 @@ The GUI's style picker groups the styles under these same headings, and a test k
 
 <img src="images/grid.png" width="260" align="right" alt="The still life drawn with the grid style">
 
-A dot at every point of a square grid where the ink reaches a threshold. Tone shows only as dots or no dots, so the result reads like a poster with one level.
+A filled dot at every point of a square grid where the ink reaches a threshold. Tone shows only as dots or no dots, so the result reads like a poster with one level.
 
 **Use it for** bold, graphic pictures with clear shapes, and as a quick first plot to check the page and the pen.
 
 **Settings**
-- `points.spacing_mm` (density): the grid pitch. Finer spacing gives more detail and more dots.
+- `points.spacing_mm` (density): the grid pitch. Finer spacing gives more detail and more, smaller dots.
 - `points.threshold`: the least ink that gets a dot. Lower it to bring in the midtones.
+- `render.size`: a dot's width as a share of the spacing. At 1, the default, neighbouring dots touch and a dark area is about four-fifths ink at any spacing; lower it for a lighter, more open pattern.
 
-**Pens.** A dot is one touch of the pen, so the pen's width is the dot's size. A wide marker gives a strong pattern; a fine liner needs a fine spacing to show anything. Every dot is a pen lift.
+**Pens.** Each dot is filled with a spiral, so a wider pen fills it in fewer turns and plots faster. A dot no wider than the pen is one touch of the pen. Every dot is a pen lift.
 
-**Looks:** Quick (`points.spacing_mm` 1.8: about 30 minutes on the median test image, against 92) and Fine (0.8 mm).
+**Looks:** Quick (`points.spacing_mm` 5.6: about 30 minutes on the median test image, against 167, in large dots) and Fine (0.7 mm).
 
 ### `hatch`
 
@@ -159,7 +160,7 @@ The model's answer is cached like any stage's, so changing the threshold, the pe
 These styles share one placement of points: the points spread evenly while staying dense where the image is dark (weighted Voronoi relaxation). The relaxation is the slow part, so switching between these styles reuses the points and redraws at once. Their placement settings are the same everywhere:
 
 - `voronoi.count` (the density for every style in the family): the number of points. More points give finer detail and a longer plot. It counts per pen: by colour the pens share their points by ink, so a pen whose colour makes up a tenth of the picture's ink places about a tenth of them, and light to dark each pen places its own.
-- `voronoi.exponent`: density follows ink to this power. 2 suits `line`, `tree`, `mesh` and `cells`, which put more ink between close points; the default of 1 keeps the points shared with `stipple`.
+- `voronoi.exponent`: density follows ink to this power. A line through the points darkens with the square root of their density, so `line`, `scribble`, `tree`, `mesh` and `cells` default to 2, and the dot styles `stipple` and `dashes` to 1 ([decision](decisions/2026-10-17-ink-squared-for-joined-points.md)). A switch between a style at 1 and one at 2 places the points again.
 - `voronoi.iterations`: relaxation passes. More spread the points more evenly.
 - `voronoi.seed`: picks another starting scatter.
 
@@ -191,7 +192,7 @@ The points joined into one unbroken line that does not cross itself, a travellin
 **Settings**
 - `tsp.optimize`: shortens the line and removes its crossings; off leaves the quicker, rougher nearest-neighbour line.
 - `tsp.closed`: ends the line where it started.
-- `voronoi.exponent`: try 2, which puts the line's ink where the image is dark.
+- `voronoi.exponent`: 2 by default, which puts the line's ink where the image is dark; 1 spreads the points as `stipple` does.
 
 **Pens.** Any pen that draws a steady line. With one stroke, the pen never lifts.
 
@@ -222,7 +223,7 @@ The points joined by the shortest tree, so every point is reached and no loop fo
 
 **Use it for** organic, branching textures.
 
-**Settings.** The tree has none of its own; try `voronoi.exponent` 2.
+**Settings.** The tree has none of its own; `voronoi.exponent` is 2, as for every style that joins its points.
 
 **Pens.** Fine pens. The tree is drawn as long branching strokes, and `order.join` is `retrace`, which draws some short twigs twice to join the strokes, so the pen lifts far less often than there are points.
 
@@ -251,7 +252,7 @@ The outlines of the points' Voronoi cells: small cells where it is dark, large o
 
 **Use it for** a cellular, organic texture.
 
-**Settings.** The cells have none of their own; try `voronoi.exponent` 2.
+**Settings.** The cells have none of their own; `voronoi.exponent` is 2, as for every style that joins its points.
 
 **Pens.** A fine pen. Every corner of a cell joins three edges, so the outlines cannot be drawn in fewer pieces than half the corners; `order.join` is `retrace`, which draws some short edges twice to join the pieces and lifts the pen about a seventh as often. Set it to `on` to draw every edge once, with many more lifts.
 
@@ -330,9 +331,11 @@ Dots where error diffusion puts them: each grid cell gets a dot or none, and the
 - `dither.spacing_mm` (density): the grid cell; at most one dot per cell.
 - `dither.serpentine`: scans alternate rows in opposite directions, which breaks up diagonal patterns.
 
-**Pens.** A dot is one touch of the pen, so the pen's width is the dot's size; match it to the spacing. Every dot is a pen lift.
+- `render.size`: a dot's width as a share of the spacing. At 1, the default, neighbouring dots touch, so the dots' density alone carries the tone.
 
-**Looks:** Faithful (`dither.spacing_mm` 0.8) and Quick (1.8 mm: about 30 minutes on the median test image, against 93).
+**Pens.** Each dot is filled with a spiral, so a wider pen fills it in fewer turns and plots faster. A dot no wider than the pen is one touch of the pen. Every dot is a pen lift.
+
+**Looks:** Faithful (`dither.spacing_mm` 0.8). No Quick: the dots' ink alone takes most of half an hour, and the spacing that gets there loses the picture.
 
 ### `circles`
 

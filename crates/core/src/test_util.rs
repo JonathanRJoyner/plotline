@@ -22,7 +22,7 @@ use crate::types::{Canvas, Drawing, Fit, Image, Layer, Paths, Pen, Points, ToneM
 
 /// `n` points at the origin.
 pub(crate) fn points(n: usize) -> Artifact {
-    Artifact::Points(Arc::new(Points(vec![[0.0, 0.0]; n])))
+    Artifact::Points(Arc::new(Points(vec![[0.0, 0.0]; n], None)))
 }
 
 /// `n` paths of one vertex each, at the origin.

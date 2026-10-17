@@ -172,7 +172,7 @@ mod tests {
     /// Run the renderer over `points` on a 20 x 20 px map (40 x 40 mm from (10, 10)) of `ink`.
     fn run(points: Vec<[f64; 2]>, ink: impl Fn(u32, u32) -> f32, patch: Value) -> Arc<Paths> {
         let tone = Artifact::Tone(Arc::new(tone_map(20, 20, ink)));
-        let points = Artifact::Points(Arc::new(Points(points)));
+        let points = Artifact::Points(Arc::new(Points(points, None)));
         match run_stage(&DashRenderer, vec![points, tone], patch).1 {
             Artifact::Paths(p) => p,
             a => panic!("expected paths, got {}", a.kind().name()),
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn one_frame_of_dashes_then_the_paths() {
         let tone = Artifact::Tone(Arc::new(tone_map(20, 20, edge)));
-        let points = Artifact::Points(Arc::new(Points(vec![[30.0, 30.0], [20.0, 20.0]])));
+        let points = Artifact::Points(Arc::new(Points(vec![[30.0, 30.0], [20.0, 20.0]], None)));
         let (frames, paths) = run_stage(&DashRenderer, vec![points, tone], json!({}));
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].label, "2 dashes");
@@ -320,7 +320,7 @@ mod tests {
         ] {
             let settings = crate::settings::merge(&DashRenderer.defaults(), &patch);
             let tone = Artifact::Tone(Arc::new(tone_map(1, 1, |_, _| 1.0)));
-            let points = Artifact::Points(Arc::new(Points(vec![])));
+            let points = Artifact::Points(Arc::new(Points(vec![], None)));
             let inputs = Inputs::new([points, tone].into_iter().map(|a| (a.kind(), a)).collect());
             let ctx = RunContext::new(Arc::default());
             let err = DashRenderer.start(inputs, &settings, ctx).err().unwrap();
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn a_finished_run_fails_instead_of_panicking() {
         let tone = Artifact::Tone(Arc::new(tone_map(1, 1, |_, _| 1.0)));
-        let points = Artifact::Points(Arc::new(Points(vec![])));
+        let points = Artifact::Points(Arc::new(Points(vec![], None)));
         let inputs = Inputs::new([points, tone].into_iter().map(|a| (a.kind(), a)).collect());
         let ctx = RunContext::new(Arc::default());
         let mut run = DashRenderer
