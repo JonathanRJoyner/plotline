@@ -1,6 +1,7 @@
 // One flow per user-visible GUI feature, in a real browser against the built bundle. A new
 // feature adds its flow here, as it adds its tour step. Every test also fails on a console error.
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { expect, test as base, type Page } from "@playwright/test";
 
 const test = base.extend<{ errors: string[] }>({
@@ -630,11 +631,95 @@ test("the style picker survives reopening and a run in progress", async ({ page 
     await expect(dialog).toBeHidden();
   }
   await styleButton(page).click();
-  // Every style but `learned`, which needs a downloaded model and so gets no picture.
+  // Every style but `learned`, which needs a downloaded model and so shows plain paper.
   await expect(dialog.locator(".picker img")).toHaveCount(styles.length - 1, { timeout: 150_000 });
-  await expect(dialog.locator(".picker .paper > span")).toHaveCount(1); // no other card left drawing or failed
+  await expect(dialog.locator(".picker .paper > span")).toHaveCount(0); // no card left drawing or failed
   await page.keyboard.press("Escape");
   await ran(page, id);
+});
+
+// The picker's tabs, and the e2e test model, a single convolution built in code.
+const tab = (page: Page, name: string) => picker(page).locator("nav").getByRole("button", { name, exact: true });
+const TINY = fileURLToPath(new URL("fixtures/tiny-conv.onnx", import.meta.url));
+
+// Loads the test model through Load your own, which then shows it in the Styles tab.
+async function loadOwn(page: Page): Promise<void> {
+  await styleButton(page).click();
+  await tab(page, "Load your own").click();
+  await expect(picker(page)).toContainText("You're responsible for the licence of any model you load.");
+  await picker(page).locator('input[type=file][accept=".onnx"]').setInputFiles(TINY);
+  await expect(tab(page, "Styles")).toHaveAttribute("aria-current", "true");
+}
+
+test("a model of your own draws in the learned style", async ({ page }) => {
+  test.setTimeout(120_000);
+  let id = await sample(page);
+  await loadOwn(page);
+  const own = card(page, "learned").filter({ hasText: "your own" });
+  await expect(own).toContainText(/file-[0-9a-f]{12}/);
+  id = await ran(page, id); // adding a model redraws
+  await own.click();
+  await expect(picker(page)).toBeHidden();
+  await expect(styleButton(page)).toHaveAttribute("value", "learned");
+  await ran(page, id);
+  await expect(page.locator(".stats")).toContainText(/[1-9][\d,]* paths?/);
+  // The settings name the model as a choice of the loaded ones, and Focus has nothing to keep.
+  await expect(page.getByRole("combobox", { name: "Model" })).toHaveValue(/^file-[0-9a-f]{12}$/);
+  await expect(page.locator("label.chip", { hasText: "Focus" }).locator("input")).toBeDisabled();
+});
+
+test("a model of your own stays after a reload, and Remove forgets it", async ({ page }) => {
+  await open(page);
+  await loadOwn(page);
+  const own = card(page, "learned").filter({ hasText: "your own" });
+  const name = /file-[0-9a-f]{12}/.exec((await own.textContent())!)![0];
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await styleButton(page).click();
+  await expect(own).toContainText(name);
+  await tab(page, "Get models").click();
+  const row = picker(page).locator("li", { hasText: name });
+  await row.getByRole("button", { name: "Remove" }).click();
+  await expect(row).toHaveCount(0);
+  await tab(page, "Styles").click();
+  await expect(card(page, "learned")).toContainText("needs a model");
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await styleButton(page).click();
+  await expect(card(page, "learned")).toContainText("needs a model");
+});
+
+test("Get models shows the licence before any download", async ({ page }) => {
+  // Every request off the page's own server is recorded and answered with a file of the wrong size.
+  const requests: string[] = [];
+  await page.route((url) => url.hostname !== "localhost", (route) => {
+    requests.push(route.request().url());
+    return route.fulfill({ status: 200, body: "not a model", headers: { "access-control-allow-origin": "*" } });
+  });
+  await open(page);
+  await styleButton(page).click();
+  // Without a model, learned's card says so and opens Get models.
+  await card(page, "learned").click();
+  await expect(tab(page, "Get models")).toHaveAttribute("aria-current", "true");
+  const dialog = picker(page);
+  await expect(dialog).toContainText("Edges (TEED)");
+  await expect(dialog).toContainText("MIT");
+  await dialog.getByRole("button", { name: "Download" }).click();
+  for (const text of ["Copyright (c) 2022 Xavier Soria Poma", "BIPED", "0.3 MB", "Provided as is, without warranty of any kind."]) await expect(dialog).toContainText(text);
+  await expect(dialog.getByRole("link", { name: "https://github.com/xavysp/TEED" })).toBeVisible();
+  await expect(dialog.getByRole("link", { name: "https://arxiv.org/abs/2308.06468" })).toBeVisible();
+  const accept = dialog.getByRole("button", { name: "Accept" });
+  await expect(accept).toBeDisabled();
+  await dialog.getByLabel("I've read the licence").check();
+  await expect(accept).toBeEnabled();
+  expect(requests).toEqual([]);
+  await accept.click();
+  await expect(dialog.locator(".error")).toContainText("wrong size");
+  expect(requests).toHaveLength(1);
+  // Accepted once, the next download asks no more.
+  await dialog.getByRole("button", { name: "Download" }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  await expect(dialog).not.toContainText("Provided as is");
 });
 
 test("Undo and Redo step through style changes", async ({ page }) => {

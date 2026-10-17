@@ -2,7 +2,10 @@
 // in Cache Storage, remembering accepted licences in localStorage, and adding the kept models to
 // the engine at start. Every storage call is wrapped: where storage is blocked the page works,
 // without remembering (spec 2026-10-16-learned-line-models, "Downloads" and "In the GUI").
-import type { CatalogueEntry } from "./protocol";
+import type { CatalogueEntry, ModelInfo } from "./protocol";
+
+/** An engine call that takes the reply's state, as the page makes it. */
+export type Call = (method: string, args?: unknown[]) => Promise<{ value: unknown }>;
 
 const CACHE = "plotline-models";
 const KEPT = "/kept/"; // Cache Storage wants a URL for a key; the origin is the page's own and never fetched
@@ -24,6 +27,15 @@ export async function keptModels(): Promise<{ id: string; bytes: ArrayBuffer }[]
     }
   } catch { /* storage is blocked */ }
   return kept;
+}
+
+/** The ids of the kept models, without reading their files; none where storage is blocked. */
+export async function keptIds(): Promise<string[]> {
+  try {
+    return (await (await caches.open(CACHE)).keys()).map((request) => new URL(request.url).pathname.split("/").pop()!);
+  } catch {
+    return [];
+  }
 }
 
 /** Keep a model's file; false when the browser refuses (blocked, or no room). */
@@ -98,12 +110,26 @@ export async function download(entry: CatalogueEntry, onProgress?: (received: nu
   return bytes.buffer;
 }
 
+/** Download a catalogue model, add it to the engine, and keep it once the engine has taken it. */
+export async function fetchModel(entry: CatalogueEntry, call: Call, onProgress?: (received: number, total: number) => void): Promise<void> {
+  const bytes = await download(entry, onProgress);
+  await call("addModel", [entry.id, new Uint8Array(bytes)]);
+  await keep(entry.id, bytes);
+}
+
+/** Add a model file of the user's own to the engine, and keep it under the id the engine gives it. */
+export async function loadModel(bytes: ArrayBuffer, call: Call): Promise<ModelInfo> {
+  const info = (await call("addModel", [null, new Uint8Array(bytes)])).value as ModelInfo;
+  await keep(info.id, bytes);
+  return info;
+}
+
 /**
  * Add every kept model to the engine. A model the catalogue no longer lists is added as a file of
  * your own and kept again under the id that gives it, so removing it later really forgets it. A
  * model that fails is warned about and the others go on; this never rejects.
  */
-export async function restoreModels(call: (method: string, args?: unknown[]) => Promise<{ value: unknown }>): Promise<void> {
+export async function restoreModels(call: Call): Promise<void> {
   try {
     const files = await keptModels();
     if (!files.length) return;

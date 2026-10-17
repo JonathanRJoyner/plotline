@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { accept, accepted, download, forget, keep, keptModels, restoreModels } from "./models";
+import { accept, accepted, download, fetchModel, forget, keep, keptIds, keptModels, loadModel, restoreModels } from "./models";
 import type { CatalogueEntry } from "./protocol";
 
 const hex = async (bytes: Uint8Array) =>
@@ -144,4 +144,36 @@ test("restore with nothing kept asks the engine for nothing", async () => {
   const call = vi.fn();
   await restoreModels(call);
   expect(call).not.toHaveBeenCalled();
+});
+
+test("keptIds lists the kept models without reading them, and nothing where storage is blocked", async () => {
+  await keep("m-1", copy());
+  await keep("file-0123456789ab", new Uint8Array([1]).buffer);
+  await expect(keptIds()).resolves.toEqual(["m-1", "file-0123456789ab"]);
+  vi.stubGlobal("caches", { open: async () => { throw new Error("blocked"); } });
+  await expect(keptIds()).resolves.toEqual([]);
+});
+
+test("fetchModel keeps a download only once the engine has taken it", async () => {
+  const { files } = stubStorage();
+  serve(DATA);
+  const entry = await entryOf();
+  const refuse = vi.fn(async () => { throw new Error("not a model"); });
+  await expect(fetchModel(entry, refuse)).rejects.toThrow("not a model");
+  expect(files.size).toBe(0);
+  serve(DATA);
+  const take = vi.fn(async () => reply({ id: "m-1" }));
+  await fetchModel(entry, take);
+  expect(take).toHaveBeenCalledWith("addModel", ["m-1", expect.any(Uint8Array)]);
+  expect([...files.keys()]).toEqual(["/kept/m-1"]);
+});
+
+test("loadModel keeps a file of your own under the id the engine gives it, and nothing it refuses", async () => {
+  const { files } = stubStorage();
+  await expect(loadModel(copy(), async () => { throw new Error("not a model"); })).rejects.toThrow("not a model");
+  expect(files.size).toBe(0);
+  const call = vi.fn(async () => reply({ id: "file-aaaaaaaaaaaa", label: "file-aaaaaaaaaaaa", overlap: 64, entry: null }));
+  await expect(loadModel(copy(), call)).resolves.toMatchObject({ id: "file-aaaaaaaaaaaa" });
+  expect(call).toHaveBeenCalledWith("addModel", [null, expect.any(Uint8Array)]);
+  expect([...files.keys()]).toEqual(["/kept/file-aaaaaaaaaaaa"]);
 });

@@ -378,26 +378,35 @@ dialog.modal nav .help { margin: 8px 4px 0; }
 ol.pens { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
 ol.pens button { width: 100%; gap: 8px; font-variant-numeric: tabular-nums; }
 dialog.modal .actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
-/* The style picker: one scrolling panel across the body (beside the tabs once there are two), a
-   heading per family, and a card per style: its picture on paper, its name, then its description. */
-dialog.modal .picker { grid-column: 1 / -1; grid-row: 1 / -1; overflow-y: auto; padding: 0 16px 16px; }
-dialog.modal nav + .picker { grid-column: auto; grid-row: auto; }
+/* The style picker: beside its tabs, one scrolling panel with a heading per family, and a card per
+   style: its picture on paper, its name, then its description. */
+dialog.modal .picker { overflow-y: auto; padding: 0 16px 16px; }
 dialog.modal .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
 dialog.modal .thumbs button { flex-direction: column; align-items: stretch; gap: 4px; width: 100%; height: 100%; padding: 6px; text-align: left; }
 dialog.modal .thumbs button[aria-current] { border-color: var(--accent); }
 dialog.modal .thumbs .paper { display: grid; place-items: center; overflow: hidden; color: #6b7280; font-size: 12px; font-weight: 400; background: #fff; border-radius: 4px; }
-dialog.modal .thumbs img { display: block; width: 100%; height: 100%; }
-dialog.modal .thumbs .name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+dialog.modal .thumbs img { display: block; width: 100%; height: 100%; object-fit: contain; }
+dialog.modal :is(.thumbs, .catalogue) .name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 dialog.modal .thumbs button[aria-current] .name { color: var(--accent); }
 dialog.modal .thumbs .name svg { width: 14px; height: 14px; }
-dialog.modal .thumbs .note { padding: 0 6px; font-size: 11px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; }
+dialog.modal .note { padding: 0 6px; font-size: 11px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; }
 /* Cut to three lines on screen; the whole sentence stays in the text and the tooltip. */
-dialog.modal .thumbs .description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; font-size: 12px; font-weight: 400; color: var(--muted); }
+dialog.modal :is(.thumbs, .catalogue) .description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; font-size: 12px; font-weight: 400; color: var(--muted); }
 /* The enlarged picture of the card pointed at: fixed, so the grid does not move, and deaf to the
    pointer, so the card under it still takes the click. */
 dialog.modal .zoom { position: fixed; z-index: 1; margin: 0; padding: 6px; pointer-events: none; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 dialog.modal .zoom img { display: block; width: 100%; background: #fff; border-radius: 4px; }
 dialog.modal .zoom figcaption { height: 18px; margin-top: 4px; font-size: 13px; font-weight: 500; text-align: center; }
+/* Get models: a card per listed model, then a row per model of your own; and the licence screen. */
+dialog.modal .catalogue { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 8px 0 0; padding: 0; list-style: none; }
+dialog.modal .catalogue li { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); }
+dialog.modal .catalogue img { display: block; width: 100%; background: #fff; border-radius: 4px; }
+dialog.modal .catalogue button, dialog.modal .fields > label.button { align-self: flex-start; width: fit-content; }
+dialog.modal .kept { margin: 0; padding: 0; list-style: none; }
+dialog.modal .kept li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; }
+dialog.modal .licence dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 8px 0; }
+dialog.modal .licence dt { color: var(--muted); }
+dialog.modal .licence dd { margin: 0; overflow-wrap: anywhere; }
 /* The ink swatches, then the picker for any other colour. */
 .inks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
 .inks > span { margin-right: auto; }
