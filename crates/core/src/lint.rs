@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 
 use crate::coverage::{self, Coverage};
 use crate::machine::Machine;
+use crate::pens::INKS;
 use crate::stats::{self, Speeds};
 use crate::style::Style;
 use crate::tone_match::{self, ToneMatch};
@@ -204,6 +205,16 @@ fn step_down(v: f64) -> f64 {
     (v * 10.0 + 1e-9).floor() / 10.0
 }
 
+/// The pen at index `i` as the Pens dialog shows it: its place in the list, then its name and
+/// ink, since pens from the bank share a name across colours.
+fn pen_label(i: usize, pen: &Pen) -> String {
+    let ink = INKS
+        .iter()
+        .find(|(_, c)| c.eq_ignore_ascii_case(&pen.color));
+    let color = ink.map_or(pen.color.as_str(), |(name, _)| name);
+    format!("pen {} ({}, {color})", i + 1, pen.name)
+}
+
 /// The settings and schemas of the session the findings are for.
 struct Context<'a> {
     style: &'a Style,
@@ -349,11 +360,11 @@ pub fn check(
             cx.set(stage, key, step_up(widest)),
         );
     }
-    let worst = (d.layers.iter().zip(&m.layers))
+    let worst = (m.layers.iter().enumerate())
         .filter(|(_, l)| l.inked > 0)
-        .map(|(layer, l)| (layer, l, l.overdrawn as f64 / l.inked as f64))
+        .map(|(i, l)| (i, l, l.overdrawn as f64 / l.inked as f64))
         .max_by(|a, b| a.2.total_cmp(&b.2));
-    if let Some((layer, l, share)) = worst.filter(|w| w.2 > OVERDRAW_SHARE && close.is_none()) {
+    if let Some((i, l, share)) = worst.filter(|w| w.2 > OVERDRAW_SHARE && close.is_none()) {
         let levels = cx.number("hatch", "levels").filter(|&n| n > 1.0);
         let patch = match (levels, spacing) {
             (Some(n), _) => cx.set("hatch", "levels", n - 1.0),
@@ -363,7 +374,7 @@ pub fn check(
         let message = format!(
             "{} % of what {} inks is drawn over {OVERDRAW_PASSES} or more times, up to {}, which wastes ink and can wear through the paper.",
             percent(share),
-            layer.pen.name,
+            pen_label(i, &d.layers[i].pen),
             l.max_passes
         );
         add("overdraw", Severity::Warning, message, share, patch);
@@ -444,9 +455,9 @@ pub fn check(
             Some(patch),
         );
     } else if mode != "one_pen" {
-        let idle: Vec<&str> = (d.layers.iter())
-            .filter(|l| l.paths.is_empty())
-            .map(|l| l.pen.name.as_str())
+        let idle: Vec<String> = (d.layers.iter().enumerate())
+            .filter(|(_, l)| l.paths.is_empty())
+            .map(|(i, l)| pen_label(i, &l.pen))
             .collect();
         if !idle.is_empty() {
             let message = format!(
@@ -714,7 +725,7 @@ mod tests {
     #[test]
     fn pens_that_draw_nothing() {
         let mut d = page(lines(5.0));
-        let red = Pen::new("Red", 0.5, "#ff0000").unwrap();
+        let red = Pen::new("Red", 0.5, "#D0202E").unwrap();
         let style = get_style("hatch").unwrap();
         let mut settings = style.defaults();
         let pens = [d.layers[0].pen.clone(), red.clone()];
@@ -743,8 +754,11 @@ mod tests {
         });
         let found = all(&d, &settings);
         let unused = find(&found, "unused_pens").unwrap();
-        let message = "These pens draw nothing at these settings: Red.";
+        let message = "These pens draw nothing at these settings: pen 2 (Red, red).";
         assert_eq!((unused.message.as_str(), &unused.patch), (message, &None));
+        // A colour that is not one of the inks is given as written.
+        let own = Pen::new("Red", 0.5, "#123456").unwrap();
+        assert_eq!(pen_label(2, &own), "pen 3 (Red, #123456)");
     }
 
     #[test]
