@@ -53,6 +53,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod tests {
     #[test]
     fn version_is_the_release() {
-        assert_eq!(super::VERSION, "0.2.0");
+        assert_eq!(super::VERSION, "0.3.0-dev0");
     }
 }
