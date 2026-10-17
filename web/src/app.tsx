@@ -15,7 +15,7 @@ import { type Entry, groupStyles, StylePicker, type Thumb } from "./picker";
 import { Preview } from "./preview";
 import type { Patch, State } from "./protocol";
 import { Settings } from "./settings";
-import { decodeShare, encodeShare, PREFIX } from "./share";
+import { decodeShare, encodeShare, PREFIX, shareable, withMachine } from "./share";
 import { firstVisit, Tour } from "./tour";
 import { zoomPercent, type View } from "./view";
 
@@ -408,7 +408,8 @@ export function App() {
       // After the remembered setup, so the link's wins and Undo goes back to the remembered one; a link that fails leaves it.
       if (fragment) {
         const read = await decodeShare(fragment);
-        if ("text" in read) await loadPresetText(read.text, "the shared link");
+        const own = await call<{ machine?: unknown }>("preset");
+        if ("text" in read) await loadPresetText(withMachine(read.text, own?.machine), "the shared link");
         else setErrors((es) => ({ ...es, preset: read.error }));
       }
     }, (e) => setFatal(message(e)));
@@ -535,7 +536,7 @@ export function App() {
   async function copyLink() {
     const preset = await call("preset");
     if (!preset) return;
-    const link = location.origin + location.pathname + (await encodeShare(JSON.stringify(preset)));
+    const link = location.origin + location.pathname + (await encodeShare(shareable(preset)));
     let copied = true;
     try {
       await navigator.clipboard.writeText(link);

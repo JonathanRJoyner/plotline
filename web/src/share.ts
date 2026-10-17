@@ -13,6 +13,24 @@ const base64url = (bytes: Uint8Array): string => {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
 
+// A link never carries a machine: its start, end and pen-lift G-code lines would run on the
+// hardware of whoever opens it. The link leaves it out, and opening one keeps your own.
+
+/** The text a share link carries for `preset`: its JSON with the machine left out. */
+export const shareable = (preset: object): string => JSON.stringify({ ...preset, machine: null });
+
+/** A shared preset's `text` with `machine` in place of whatever it holds; text that is not a JSON
+ * object comes back as it is, for the engine to refuse. */
+export function withMachine(text: string, machine: unknown): string {
+  try {
+    const shared: unknown = JSON.parse(text);
+    if (typeof shared !== "object" || shared === null || Array.isArray(shared)) return text;
+    return JSON.stringify({ ...shared, machine: machine ?? null });
+  } catch {
+    return text;
+  }
+}
+
 /** The fragment (with its `#p=`) that carries `text`, usually a preset's JSON. */
 export async function encodeShare(text: string): Promise<string> {
   const packed = new Blob([text]).stream().pipeThrough(new CompressionStream("deflate-raw"));

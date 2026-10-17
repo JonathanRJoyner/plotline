@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { expect, test } from "vitest";
-import { decodeShare, encodeShare, PREFIX } from "./share";
+import { decodeShare, encodeShare, PREFIX, shareable, withMachine } from "./share";
 
 // A preset's shape, with pen names in several scripts and a letter that takes two UTF-8 bytes.
 const preset = {
@@ -51,4 +51,13 @@ test("a small link cannot inflate into a huge text", async () => {
   const fragment = await encodeShare("0".repeat(4 << 20));
   expect(fragment.length).toBeLessThan(10_000);
   expect(await decodeShare(fragment)).toHaveProperty("error");
+});
+
+test("a link leaves the machine out, and opening one keeps your own", () => {
+  const machine = { name: "Mine", start_gcode: "G28" };
+  expect(JSON.parse(shareable({ ...preset, machine }))).toEqual({ ...preset, machine: null });
+  const theirs = JSON.stringify({ ...preset, machine: { name: "Theirs", start_gcode: "M104 S250" } });
+  expect(JSON.parse(withMachine(theirs, machine))).toEqual({ ...preset, machine });
+  expect(JSON.parse(withMachine(theirs, undefined))).toEqual({ ...preset, machine: null });
+  for (const text of ["not json", "[1, 2]", "null", "3"]) expect(withMachine(text, machine)).toBe(text);
 });
