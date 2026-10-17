@@ -196,6 +196,43 @@ test("a link that cannot be read says so and leaves the remembered setup", async
   expect(new URL(page.url()).hash).toBe("");
 });
 
+test("a link to the learned style with a model this browser lacks says it is not loaded", async ({ page, browser }) => {
+  await open(page);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy link", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Link copied.");
+  // The copied link's setup with the learned style and a model the fresh browser below does not hold.
+  const link = await page.evaluate(async (copied) => {
+    const [base, body] = copied.split("#p=");
+    const packed = Uint8Array.from(atob(body.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+    const inflate = new Blob([packed]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    const preset = JSON.parse(await new Response(inflate).text());
+    const text = JSON.stringify({ ...preset, style: "learned", settings: { model: { model: "teed-1" } } });
+    const deflate = new Blob([text]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+    let binary = "";
+    for (const b of new Uint8Array(await new Response(deflate).arrayBuffer())) binary += String.fromCharCode(b);
+    return `${base}#p=${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+  }, await page.evaluate(() => navigator.clipboard.readText()));
+  const fresh = await browser.newContext();
+  try {
+    await fresh.addInitScript(() => localStorage.setItem("plotline.tour", "seen"));
+    const other = await fresh.newPage();
+    const failures: string[] = [];
+    other.on("pageerror", (e) => failures.push(e.message));
+    other.on("console", (m) => { if (m.type() === "error") failures.push(m.text()); });
+    await other.goto(link);
+    await expect(styleButton(other)).toHaveAttribute("value", "learned");
+    await expect(other.locator("fieldset[data-tour=presets] .error")).toHaveCount(0);
+    await other.getByRole("button", { name: "Sample image", exact: true }).click();
+    // The run ends with the model stage's message on its setting, which says how to get the model.
+    await expect(status(other)).toHaveText(/^Run \d+: error: stage 'model', setting 'model': model teed-1 is not loaded; get it from Styles, then Get models/);
+    await expect(other.getByRole("combobox", { name: "Model" }).locator("option:checked")).toHaveText("teed-1 (not loaded)");
+    expect(failures).toEqual([]);
+  } finally {
+    await fresh.close();
+  }
+});
+
 test("a look changes the density setting, Undo takes it back, and Reset to defaults shows Balanced", async ({ page }) => {
   let id = await sample(page);
   // The style the page opens on has a Fine look; the menu lists the labels the engine gives.
