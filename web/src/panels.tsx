@@ -1,13 +1,13 @@
 // The side panels and the status bar of spec 2026-10-12-gui-design section 6.4, laid out as spec
 // 2026-10-12-ink-and-cleanup section 5 has it. Each shows a slice of the state and hands changes
 // back; the app sends them to the engine.
-import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
+import { ArrowDown, ArrowUp, BookmarkPlus, Check, Copy, Download, FolderOpen, Link, PenLine, Plus, Ruler, Save, Settings as Gear, Target, Wand, X } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { filterBank } from "./bank";
 import type { Area, BankPen, Canvas, Finding, FitResult, Ink, Machine, Optimum, Pen, Stats, ToneMatch } from "./events";
 import { download } from "./files";
-import { lengthText, pathsText } from "./format";
+import { lengthText, pathsText, unscoredText } from "./format";
 import { addPen, libraryFile, mergeLibraries, parseLibrary, removePen, samePen, usable } from "./library";
 import type { Patch, Speeds, State, Suggestion } from "./protocol";
 import { controlsFor } from "./schema";
@@ -352,6 +352,8 @@ const UNITS = [["minutes", "min"], ["paths", "paths"], ["metres", "m"], ["dots",
 const FIT_TOLERANCE = 0.02;
 
 type FitProps = {
+  /** Counts the images opened, so a search's suggestion goes with the image it was made for. */
+  image: number;
   disabled: boolean; error?: string; fitted: FitResult | null; optimum: Optimum | null; settings: State["settings"];
   stages: { name: string; label: string; schema: Record<string, unknown> }[];
   onFit: (metric: string, target: number) => void; onOptimize: (metric?: string, target?: number) => void; onApply: (patch: Patch) => void;
@@ -359,7 +361,7 @@ type FitProps = {
 
 // A budget: a target in one of the units, which Fit meets by changing the style's density setting.
 // What a fit or a search says holds only for the settings it was made with, so it shows while they do.
-export function FitPanel({ disabled, error, fitted, optimum, settings, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
+export function FitPanel({ image, disabled, error, fitted, optimum, settings, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
   const [target, setTarget] = useState("");
   const [metric, setMetric] = useState("minutes");
   // Closed until the first need, so the stats lead; a result or an error opens it so none is hidden, and nothing closes it again.
@@ -367,8 +369,8 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
   useEffect(() => { if (error || fitted || optimum) setOpen(true); }, [error, fitted, optimum]);
   // A fit applies its value, so its message shows once the setting holds it and while it still does.
   const fit = fitted && settings[fitted.stage]?.[fitted.key] === fitted.value ? fitted : null;
-  // A search applies nothing, so its suggestion shows while the settings are those of the render it arrived in.
-  const now = JSON.stringify(settings);
+  // A search applies nothing, so its suggestion shows while the image and settings are those of the render it arrived in.
+  const now = JSON.stringify([image, settings]);
   const arrival = useRef<{ optimum: Optimum | null; settings: string }>({ optimum: null, settings: "" });
   if (arrival.current.optimum !== optimum) arrival.current = { optimum, settings: now };
   const search = optimum && arrival.current.settings === now ? optimum : null;
@@ -393,6 +395,7 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
     const at = (v: unknown) => `${String(v)}${c && "unit" in c && c.unit ? ` ${c.unit}` : ""}`;
     const within = o.budget ? ` within ${o.budget.target} ${unit(o.budget.metric)}` : "";
     const time = (minutes: number) => `${minutes.toFixed(1)} min`;
+    if (o.error === null) return unscoredText(o, label, at);
     const b = o.beyond;
     // A value the time limit left out that would have followed the tones more closely, and how to allow it.
     const beyond = b && b.error !== null && b.minutes !== null && o.limit_minutes !== null
@@ -417,7 +420,7 @@ export function FitPanel({ disabled, error, fitted, optimum, settings, stages, o
         </select>
         <button
           type="submit" disabled={disabled}
-          title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says."
+          title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target."
         >
           <Target /> Fit to target
         </button>
@@ -449,7 +452,8 @@ type StatusProps = {
 // Each stage is done, running with its frame's label, or waiting. The first stage not done runs
 // before its first frame arrives.
 export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX.Element {
-  const done = (name: string) => (progress[name]?.progress ?? 0) >= 1;
+  // A done run has run every stage, though a fit or a search ends on a cached trial that sends no frames.
+  const done = (name: string) => run.state === "done" || (progress[name]?.progress ?? 0) >= 1;
   const current = run.state === "running" ? stages.find((s) => !done(s.name)) : undefined;
   return (
     <div class="status">
@@ -459,7 +463,7 @@ export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX
       <ol>
         {stages.map((s) => {
           const p = progress[s.name];
-          if (done(s.name)) return <li data-state="done" title={p.label}>{s.label}: done</li>;
+          if (done(s.name)) return <li data-state="done" title={p?.label}>{s.label}: done</li>;
           if (s === current) return <li data-state="running">{s.label}: {p?.label ?? "running"} <progress value={p?.progress ?? 0} max={1} /></li>;
           return <li>{s.label}: waiting</li>;
         })}
@@ -468,9 +472,11 @@ export function StatusBar({ stages, progress, run, stopping }: StatusProps): JSX
   );
 }
 
-type PresetsProps = { warnings: string[]; error?: string; onSave: () => void; onLoad: (file: File) => void };
+/** A share link just made: copied to the clipboard, or, when the browser refused, only shown. */
+export type ShareLink = { link: string; copied: boolean };
+type PresetsProps = { warnings: string[]; error?: string; shared: ShareLink | null; onSave: () => void; onLoad: (file: File) => void; onCopy: () => void };
 
-export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps): JSX.Element {
+export function PresetsPanel({ warnings, error, shared, onSave, onLoad, onCopy }: PresetsProps): JSX.Element {
   return (
     <fieldset data-tour="presets">
       <legend>Presets</legend>
@@ -486,6 +492,14 @@ export function PresetsPanel({ warnings, error, onSave, onLoad }: PresetsProps):
           }}
         />
       </label>
+      <button type="button" onClick={onCopy}><Link /> Copy link</button>
+      {shared?.copied && <p class="help" role="status">Link copied.</p>}
+      {shared && !shared.copied && (
+        <>
+          <p class="help">Your browser did not allow copying. Copy this link:</p>
+          <input type="text" class="share-link" readOnly aria-label="Share link" value={shared.link} onFocus={(e) => e.currentTarget.select()} />
+        </>
+      )}
       {error && <p class="error">{error}</p>}
       {warnings.length > 0 && <ul class="warnings">{warnings.map((w) => <li>{w}</li>)}</ul>}
     </fieldset>
@@ -537,7 +551,11 @@ const FEEDS: [NumberKey, string][] = [["draw_feed", "Draw"], ["travel_feed", "Tr
 const AREA: [keyof Area, string][] = [["width", "Width"], ["height", "Height"], ["x", "Offset X"], ["y", "Offset Y"]];
 const SPEEDS: [keyof Speeds, string, string, number][] = [
   ["draw_mm_s", "Draw", "mm/s", 0.1], ["travel_mm_s", "Travel", "mm/s", 0.1], ["pen_lift_s", "Pen lift", "s", 0],
+  ["accel_mm_s2", "Acceleration", "mm/s²", 0.1],
 ];
+// The engine's acceleration for a machine whose JSON leaves it out.
+const ACCEL = 1000;
+const ACCEL_HELP = "How fast the pen speeds up and slows down. A short move never reaches full speed and corners slow the pen, so dots and short strokes take longer than their length suggests.";
 const SECTIONS = ["Machine", "Pen lift", "G-code", "HPGL", "Plot time"] as const;
 // A starting point to edit, not a real machine: its values must be replaced with the machine's own.
 const NEW_MACHINE: Machine = {
@@ -601,6 +619,8 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
             <p class="help">Offset is the machine position of the area's corner with the smallest X and Y. The page is centred in the area.</p>
             <h3>Feeds</h3>
             {FEEDS.map(([k, label]) => num(label, "mm/min", machine[k], (v) => onEdit({ ...machine, [k]: v })))}
+            {num("Acceleration", "mm/s²", machine.accel_mm_s2 ?? ACCEL, (v) => onEdit({ ...machine, accel_mm_s2: v }))}
+            <p class="help">{ACCEL_HELP} Only the plot time uses it: the G-code leaves acceleration to the firmware, so give the firmware's own value.</p>
           </>
         )}
       </>
@@ -691,7 +711,8 @@ export function SettingsDialog({ opens, machine, error, speeds, onPick, onEdit, 
             {unit}
           </label>
         ))}
-        {machine && <p class="help">From the machine's feeds and pen lift.</p>}
+        <p class="help">{ACCEL_HELP}</p>
+        {machine && <p class="help">From the machine's feeds, acceleration and pen lift.</p>}
       </>
     ),
   }[section];

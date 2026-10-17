@@ -28,9 +28,9 @@ export type Trial = {
   value: number; error: number | null; minutes: number | null; metric: number | null;
   over: boolean; slow: boolean; warnings: string[]; failed: string | null;
 };
-/** What an optimize search found, in the shape of the engine's `Optimum`; nothing is applied. */
+/** What an optimize search found, in the shape of the engine's `Optimum`; nothing is applied. `error` is null when no trial scored. */
 export type Optimum = {
-  stage: string; key: string; value: unknown; error: number; minutes: number;
+  stage: string; key: string; value: unknown; error: number | null; minutes: number;
   current: unknown; current_error: number | null; current_minutes: number;
   budget: { metric: string; target: number } | null;
   limit_minutes: number | null; beyond: Trial | null;
@@ -46,9 +46,10 @@ export type Event = RunEvent | FrameEvent | ResultEvent | EndEvent;
 /** One style drawn for the styles dialog: its preview as PNG bytes, or why it failed. */
 export type ThumbEvent = { type: "thumb"; id: number; style: string; png: Uint8Array | null; error: string | null };
 export type Area = { x: number; y: number; width: number; height: number };
-/** The engine leaves out the last four fields while they hold their defaults: Z, "", "", none. */
+/** The engine leaves out the last five fields while they hold their defaults: Z, "", "", none, 1000. */
 export type Machine = {
   name: string; area: Area; z_down_mm: number; z_up_mm: number; z_safe_mm: number;
   draw_feed: number; travel_feed: number; z_feed: number; settle_ms: number; start_gcode: string; end_gcode: string;
   pen_lift?: "z" | "gcode"; pen_down_gcode?: string; pen_up_gcode?: string; max_segment_mm?: number | null;
+  accel_mm_s2?: number;
 };

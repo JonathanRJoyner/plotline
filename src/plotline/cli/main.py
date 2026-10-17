@@ -186,12 +186,6 @@ def fit_options(command: Callable[..., Any]) -> Callable[..., Any]:
             help=(
                 f"Fit the style's density setting so that {what} comes near {metavar}, in up to "
                 "eight runs, instead of running once."
-                + (
-                    " The estimate leaves out acceleration, so a style of short strokes or dots "
-                    "plots slower than it says."
-                    if metric == "minutes"
-                    else ""
-                )
             ),
         )(command)
     return command
@@ -326,6 +320,17 @@ machine_option = click.option(
     ),
 )
 
+accel_option = click.option(
+    "--accel",
+    type=click.FloatRange(min=0, min_open=True),
+    metavar="MM_S2",
+    help=(
+        "How fast the pen speeds up and slows down, in mm/s², for the plot time. Short moves "
+        "never reach full speed, so dots and short strokes take longer than their length "
+        "suggests. By default the machine's, or 1000."
+    ),
+)
+
 
 def read_machine(path: str) -> dict[str, Any]:
     """Read the machine in the JSON file at ``path``, which holds either a machine or a preset
@@ -393,6 +398,7 @@ def echo_stats(session: Session) -> None:
     help="Write the style, page, pens and settings used to a preset file.",
 )
 @machine_option
+@accel_option
 @click.option(
     "--gcode",
     type=click.Path(),
@@ -453,6 +459,7 @@ def run(
     look: str | None,
     save_preset: str | None,
     machine: str | None,
+    accel: float | None,
     gcode: str | None,
     hpgl: str | None,
     hpgl_units: float,
@@ -487,6 +494,8 @@ def run(
                 raise click.BadParameter(str(error), param_hint=["--look"]) from error
         if machine is not None:
             use_machine(session, machine)
+        if accel is not None:
+            session.speeds.accel_mm_s2 = accel
         set_page(session, width, height, margin, fit, paper, crop)
         if pens:
             session.set_pens(pens)
@@ -502,12 +511,11 @@ def run(
             if handle.error is not None:
                 raise handle.error
             found = handle.optimum
-            if found is None:
-                click.echo("optimize: no trial stayed within the target", err=True)
-            else:
-                click.echo(f"optimize: {found['reason']}")
-                if fix := _options(found["patch"]):
-                    click.echo(f"  apply: {fix}")
+            assert found is not None  # a search that ended without an error is done
+            # With no trial scored, the reason says why and there is no patch.
+            click.echo(f"optimize: {found['reason']}")
+            if fix := _options(found["patch"]):
+                click.echo(f"  apply: {fix}")
         elif fits:
             [(metric, target)] = fits
             handle = session.fit(metric, target)
@@ -555,6 +563,7 @@ def run(
 @page_options
 @pen_option
 @machine_option
+@accel_option
 def testchart(
     out: str,
     json_out: str | None,
@@ -566,6 +575,7 @@ def testchart(
     paper: str | None,
     pens: list[Pen],
     machine: str | None,
+    accel: float | None,
 ) -> None:
     """Write a test chart for the first pen: small labelled patches of line spacings, dot sizes
     and repeated passes, scaled to the pen. Plot it and compare by eye where lines merge, how big
@@ -574,6 +584,8 @@ def testchart(
     with _errors():
         if machine is not None:
             use_machine(session, machine)
+        if accel is not None:
+            session.speeds.accel_mm_s2 = accel
         set_page(session, width, height, margin, fit, paper)
         if pens:
             session.set_pens(pens)

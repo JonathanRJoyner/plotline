@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { lengthText, pathsText } from "./format";
+import type { Optimum, Trial } from "./events";
+import { lengthText, pathsText, unscoredText } from "./format";
 
 test("a count of paths agrees in number and groups its thousands", () => {
   expect(pathsText(0)).toBe("0 paths");
@@ -20,4 +21,23 @@ test("a length reads in millimetres below a metre and in metres from there", () 
 
 test("a length that rounds up to a metre reads in metres", () => {
   expect(lengthText(999.96)).toBe("1.00 m");
+});
+
+const trial = (value: number, t: Partial<Trial> = {}): Trial => ({ value, error: null, minutes: 0, metric: null, over: false, slow: false, warnings: [], failed: null, ...t });
+const search = (trials: Trial[]): Optimum => ({
+  stage: "hatch", key: "spacing_mm", value: 1, error: null, minutes: 0, current: 1, current_error: null, current_minutes: 0,
+  budget: null, limit_minutes: 60, beyond: null, trials, reason: "", patch: null,
+});
+const mm = (v: number) => `${v} mm`;
+
+test("a search with no score says why, as the engine does", () => {
+  const values = [1, 0.25, 4, 2];
+  expect(unscoredText(search(values.map((v) => trial(v))), "Spacing", mm)).toBe(
+    "No value of Spacing from 0.25 mm to 4 mm draws anything here, so there is nothing to compare. Try a lower threshold, or the tone's black, white and gamma settings.",
+  );
+  expect(unscoredText(search(values.map((v) => trial(v, { minutes: 3 }))), "Spacing", mm)).toBe(
+    "No drawing of Spacing from 0.25 mm to 4 mm follows the image's tones enough for a tone error, so there is no value to suggest; judge this style by eye.",
+  );
+  const left = [trial(1, { error: 0.1, minutes: 3, over: true }), trial(2, { error: 0.1, minutes: 9, over: true, slow: true }), trial(4, { failed: "too many dots", minutes: null })];
+  expect(unscoredText(search(left), "Spacing", mm)).toBe("No value of Spacing from 1 mm to 4 mm can be suggested: of 3 trials, 2 over the target, 1 too slow, 1 failed.");
 });

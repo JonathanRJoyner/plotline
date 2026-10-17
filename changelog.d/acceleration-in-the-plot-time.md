@@ -1,0 +1,3 @@
+Section: Output
+
+- **Plot time with acceleration:** the estimated plot time now counts how fast the pen speeds up and slows down, so dots, short strokes and sharp corners no longer come out optimistic, and Fit to target in minutes, Optimize's time limit and the lint's lifts and travel shares use the slower, truer time. The acceleration is 1000 mm/s² unless you set it: in the GUI's Settings under Plot time, or the machine's own under Machine; with `--accel` on `plotline run` and `plotline testchart`; as a machine's `accel_mm_s2` in a machine file, a preset or the MCP `set_machine`; and as `Speeds.accel_mm_s2` in Python. Presets saved before load unchanged.

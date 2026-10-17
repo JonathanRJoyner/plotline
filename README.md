@@ -46,7 +46,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 ## Features
 
-- **Twenty-one styles,** from dots on a grid to one continuous spiral. The table below describes each one, and the [style guide](docs/styles.md) shows each on the same picture with its settings and pen tips.
+- **Twenty-one styles,** from dots on a grid to one continuous spiral. The table below describes each one, and the [style guide](docs/styles.md) shows each on the same picture with its settings and pen tips. The [first plot guide](docs/guide.md) takes you from a picture to paper and says what to change when a plot is not what you expected.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Suggestions.** The engine measures a new image and suggests changes: line art, levels, uneven paper, invert, noise, page orientation, framing, which crops the image to its subject when that fills only part of it, and colour, for which it picks two to four ink pens that draw the image's colours best. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
 - **Focus points.** Click the preview, or have an assistant set `tone.focus`, to mark where the picture matters: every style keeps its detail near those points and smooths it further away, so a drawing's detail sits where you want it.
@@ -58,7 +58,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 - **Several pens.** Pen use shares a drawing between your pens: light to dark in list order, or each pen by its colour, so cyan, magenta, yellow and black pens can draw a colour image. By default the first pen draws alone.
 - **Real pens.** A bank of common fineliners, technical pens, gel pens, ballpoints and markers gives each pen its maker's line width, and a list of common inks gives it a colour.
 - **Looks.** Most styles offer a few starting points chosen by measuring test images: Balanced is the defaults, Faithful follows the image's tones most closely, Quick plots in about half an hour and Fine draws the densest marks that still plot cleanly. A look changes only the few settings that set it.
-- **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a setup and share it. An exported SVG or JSON drawing carries the preset of the run that made it, and loads as a preset too.
+- **Presets.** A small JSON file holds the style, page, pens, settings and machine of a run, so you can keep a setup and share it. An exported SVG or JSON drawing carries the preset of the run that made it, and loads as a preset too. In the GUI, Copy link puts the setup, without the image, in a link to paste into a forum post.
 - **One engine.** The engine is written in Rust and compiled twice: to a native extension for the Python package, and to WebAssembly for the browser. The Python package and the command line are thin layers over it.
 
 | Style | What it draws |
@@ -141,7 +141,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Write a test chart for a pen, to plot and check spacings, dot sizes, passes and the plot time | `plotline testchart --out chart.svg --pen 'Fine:0.3:blue'`, with `--preview chart.png` for a picture |
 | Open the live preview locally | `plotline gui` |
 
-A machine file holds the same object as a preset's `machine`: `name`, `area` (`x`, `y`, `width` and `height` in the machine's mm), `z_down_mm`, `z_up_mm`, `z_safe_mm`, `draw_feed`, `travel_feed` and `z_feed` in mm per minute, `settle_ms`, `start_gcode` and `end_gcode`. A pen lifted by a servo or a solenoid instead of Z takes `"pen_lift": "gcode"` with `pen_down_gcode` and `pen_up_gcode`, the lines written in place of each Z move. `max_segment_mm` cuts every move into pieces no longer than it, for firmware that would draw a long straight move as a curve. The easiest way to make one is to enter the machine in the GUI's Settings dialog and save a preset, which `--machine` also reads.
+A machine file holds the same object as a preset's `machine`: `name`, `area` (`x`, `y`, `width` and `height` in the machine's mm), `z_down_mm`, `z_up_mm`, `z_safe_mm`, `draw_feed`, `travel_feed` and `z_feed` in mm per minute, `settle_ms`, `start_gcode` and `end_gcode`. A pen lifted by a servo or a solenoid instead of Z takes `"pen_lift": "gcode"` with `pen_down_gcode` and `pen_up_gcode`, the lines written in place of each Z move. `max_segment_mm` cuts every move into pieces no longer than it, for firmware that would draw a long straight move as a curve. `accel_mm_s2`, 1000 when left out, is the machine's acceleration in mm/s², which only the plot time reads; `--accel` sets it for a run without a machine file. The easiest way to make one is to enter the machine in the GUI's Settings dialog and save a preset, which `--machine` also reads.
 
 `plotline gui` serves the browser GUI from your machine. Building it needs Node, wasm-pack and the `wasm32-unknown-unknown` Rust target: run `npm run wasm`, `npm ci` and `npm run build` in `web/`.
 
