@@ -382,7 +382,7 @@ mod tests {
             &serde_json::json!({"model": id, "resolution": 256}),
         )
         .unwrap();
-        let mut drain = |s: &mut Session| {
+        let drain = |s: &mut Session| {
             let mut run = s.start().unwrap();
             while run.next_frame().is_some() {}
             (run.state(), s.error())
