@@ -244,7 +244,7 @@ test("a framing suggestion crops the image to its subject, and Remove crop takes
     const blob = await new Promise<Blob>((done) => canvas.toBlob((b) => done(b!), "image/png"));
     return Array.from(new Uint8Array(await blob.arrayBuffer()));
   });
-  await page.locator('input[type="file"][accept^="image/"]').setInputFiles({ name: "disc.png", mimeType: "image/png", buffer: Buffer.from(png) });
+  await page.locator(".toolbar input[type=file]").setInputFiles({ name: "disc.png", mimeType: "image/png", buffer: Buffer.from(png) });
   const id = await ran(page, 0);
   const pagePanel = page.locator('[data-tour="page"]');
   const apply = page.getByRole("button", { name: /^Apply: The subject fills only part of the image\./ });
