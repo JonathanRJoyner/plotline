@@ -196,8 +196,11 @@ class Session:
     def models(self) -> list[dict[str, Any]]:
         """The models this session holds, in id order, as ``{id, label, overlap, entry}``, where
         ``entry`` is the catalogue entry of a downloaded model and ``None`` for a file of your
-        own. The kept models load when the session starts."""
-        return self._core.models()
+        own, whose label is ``your own`` and its id. The kept models load when the session
+        starts."""
+        return [
+            m if m["entry"] else m | {"label": f"your own {m['id']}"} for m in self._core.models()
+        ]
 
     def add_model(self, path: str | os.PathLike[str]) -> str:
         """Load the ONNX file at ``path`` as a model of your own, for this session only

@@ -652,8 +652,11 @@ def test_models_add_then_list_shows_it(monkeypatch, tmp_path):
     model_id = r.stdout.strip()
     assert model_id.startswith("file-")
     out = run("models", "list").stdout.splitlines()
-    assert out[0].split() == ["demo-1", "Demo", "lines", "0.0", "MB"]
-    assert out[1].split() == [model_id, "your", "own", "downloaded"]
+    assert out[0].split() == ["ID", "NAME", "LICENCE", "STATUS"]
+    assert out[1].split() == ["demo-1", "Demo", "lines", "MIT", "0.0", "MB"]
+    # The licence of a file of your own is not known, so its column is blank.
+    assert out[2].split() == [model_id, "your", "own", "downloaded"]
+    assert out[2].index("downloaded") == out[1].index("0.0 MB")
     # A file that is missing or not a model is an error, and nothing more is kept.
     (tmp_path / "bad.onnx").write_bytes(b"not a model")
     for name in ("missing.onnx", "bad.onnx"):
@@ -700,7 +703,9 @@ def test_models_get_asks_only_until_the_licence_is_accepted(monkeypatch):
     r = run("models", "get", "demo-1")
     assert r.exit_code == 0 and "Accept this licence" not in r.output
     assert [i for i, _ in models.kept()] == ["demo-1"]
-    assert "demo-1  Demo lines  downloaded" in run("models", "list").stdout
+    assert ["demo-1", "Demo", "lines", "MIT", "downloaded"] in [
+        line.split() for line in run("models", "list").stdout.splitlines()
+    ]
 
 
 def test_models_get_refuses_an_unknown_id_and_keeps_nothing_of_a_bad_download(monkeypatch):
@@ -717,8 +722,58 @@ def test_models_remove_deletes_the_file():
     model_id = run("models", "add", str(TINY_MODEL)).stdout.strip()
     r = run("models", "remove", model_id)
     assert r.exit_code == 0 and models.kept() == []
+    assert r.stdout == f"removed {model_id}\n"
     r = run("models", "remove", model_id)
-    assert r.exit_code == 1 and "plotline models list" in r.stderr
+    assert r.exit_code == 1 and "plotline models list" in r.stderr and r.stdout == ""
+
+
+def test_models_list_marks_a_kept_file_that_fails_its_hash_as_damaged(monkeypatch):
+    with_catalogue(monkeypatch)
+    assert run("models", "get", "demo-1", "--accept-licence").exit_code == 0
+    path = models.cache_dir() / "demo-1.onnx"
+
+    def status():
+        lines = run("models", "list").stdout.splitlines()
+        return next(line.split()[-1] for line in lines if "demo-1" in line)
+
+    assert status() == "downloaded"
+    path.write_bytes(b"demo model byteX")  # the right size, the wrong bytes
+    assert status() == "damaged"
+    path.write_bytes(b"short")
+    assert status() == "damaged"
+
+
+def test_models_get_does_not_fetch_a_model_that_is_kept(monkeypatch):
+    with_catalogue(monkeypatch)
+    assert run("models", "get", "demo-1", "--accept-licence").exit_code == 0
+
+    def never(url, **kw):
+        raise AssertionError("fetched a model that is kept")
+
+    monkeypatch.setattr(urllib.request, "urlopen", never)
+    r = run("models", "get", "demo-1")  # not even a licence question
+    assert r.exit_code == 0, r.output
+    assert r.stdout == "demo-1 is already downloaded\n"
+    # A kept file that does not match is fetched again, and mended.
+    (models.cache_dir() / "demo-1.onnx").write_bytes(b"damaged")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, **kw: io.BytesIO(DEMO_BYTES))
+    r = run("models", "get", "demo-1")
+    assert r.exit_code == 0 and "already" not in r.output, r.output
+    assert models.kept()[0][1].read_bytes() == DEMO_BYTES
+
+
+def test_models_get_offline_says_which_model_and_where(monkeypatch):
+    entry = with_catalogue(monkeypatch)
+
+    def offline(url, **kw):
+        raise urllib.error.URLError(OSError(11001, "getaddrinfo failed"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", offline)
+    r = run("models", "get", "demo-1", "--accept-licence")
+    assert r.exit_code == 1 and r.stderr.startswith("Error:"), r.output
+    assert "demo-1" in r.stderr and entry["url"] in r.stderr
+    assert "urlopen" not in r.stderr and "Traceback" not in r.output
+    assert models.kept() == []
 
 
 @pytest.mark.parametrize(
@@ -763,6 +818,15 @@ def test_run_learned_with_a_model_that_is_not_loaded_says_how_to_get_it(image, t
     assert "Styles" not in r.stderr
 
 
+def test_run_learned_with_a_file_of_your_own_that_is_not_loaded_says_how_to_add_it(image, tmp_path):
+    # A file of your own is not in the catalogue: `get` is no advice, `add` is.
+    r = run_learned(image, tmp_path, "model.model=file-0123456789ab")
+    assert r.exit_code == 1, r.output
+    assert "model file-0123456789ab is not loaded" in r.stderr
+    assert "plotline models add <file>" in r.stderr and "models get" not in r.stderr
+    assert "Load your own" not in r.stderr
+
+
 def test_a_preset_naming_a_model_that_is_not_loaded_is_a_plain_error(image, tmp_path):
     preset = tmp_path / "p.json"
     session = Session()
@@ -781,36 +845,3 @@ def test_a_kept_file_that_cannot_load_leaves_a_plain_error(image, tmp_path):
         r = run_learned(image, tmp_path, "model.model=file-0123456789ab")
     assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
     assert "model file-0123456789ab is not loaded" in r.stderr
-
-
-def test_models_get_does_not_fetch_a_model_that_is_kept(monkeypatch):
-    with_catalogue(monkeypatch)
-    assert run("models", "get", "demo-1", "--accept-licence").exit_code == 0
-
-    def never(url, **kw):
-        raise AssertionError("fetched a model that is kept")
-
-    monkeypatch.setattr(urllib.request, "urlopen", never)
-    r = run("models", "get", "demo-1")  # not even a licence question
-    assert r.exit_code == 0, r.output
-    assert r.stdout == "demo-1 is already downloaded\n"
-    # A kept file that does not match is fetched again, and mended.
-    (models.cache_dir() / "demo-1.onnx").write_bytes(b"damaged")
-    monkeypatch.setattr(urllib.request, "urlopen", lambda url, **kw: io.BytesIO(DEMO_BYTES))
-    r = run("models", "get", "demo-1")
-    assert r.exit_code == 0 and "already" not in r.output, r.output
-    assert models.kept()[0][1].read_bytes() == DEMO_BYTES
-
-
-def test_models_get_offline_says_which_model_and_where(monkeypatch):
-    entry = with_catalogue(monkeypatch)
-
-    def offline(url, **kw):
-        raise urllib.error.URLError(OSError(11001, "getaddrinfo failed"))
-
-    monkeypatch.setattr(urllib.request, "urlopen", offline)
-    r = run("models", "get", "demo-1", "--accept-licence")
-    assert r.exit_code == 1 and r.stderr.startswith("Error:"), r.output
-    assert "demo-1" in r.stderr and entry["url"] in r.stderr
-    assert "urlopen" not in r.stderr and "Traceback" not in r.output
-    assert models.kept() == []

@@ -847,11 +847,13 @@ test("a file that is not a model is refused in plain words", async ({ page }) =>
   await expect(tab(page, "Load your own")).toHaveAttribute("aria-current", "true");
 });
 
-test("Get models shows the licence before any download", async ({ page }) => {
+test("Get models shows the licence before any download", async ({ page, errors }) => {
   // Every request off the page's own server is recorded and answered with a file of the wrong size.
   const requests: string[] = [];
+  let offline = false;
   await page.route((url) => url.hostname !== "localhost", (route) => {
     requests.push(route.request().url());
+    if (offline) return route.abort("internetdisconnected");
     return route.fulfill({ status: 200, body: "not a model", headers: { "access-control-allow-origin": "*" } });
   });
   await open(page);
@@ -885,6 +887,13 @@ test("Get models shows the licence before any download", async ({ page }) => {
   await download.click();
   await expect.poll(() => requests.length).toBe(2);
   await expect(dialog).not.toContainText("Provided as is");
+  // With no network the card says which model failed and what to check, not "Failed to fetch".
+  offline = true;
+  await download.click();
+  await expect(teed.locator(".error")).toHaveText("could not download Edges (TEED): check your connection and try again");
+  // The browser logs the dropped request itself; that is the one console error this flow expects.
+  expect(errors).toEqual(["Failed to load resource: net::ERR_INTERNET_DISCONNECTED"]);
+  errors.length = 0;
 });
 
 test("Undo and Redo step through style changes", async ({ page }) => {

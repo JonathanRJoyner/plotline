@@ -66,7 +66,7 @@ A session keeps a model store: a map from model id to a loaded model. A catalogu
 
 The id is an ordinary setting, so the stage cache, presets, the page's undo history, trial runs and MCP runs need nothing new. Two different files never share an id, so a cached tone map always belongs to the model its key names.
 
-A setting that names a model the session has not loaded is a settings error that says how to load it: "model contour-1 is not loaded; get it from Styles, then Get models, or run `plotline models get contour-1`". Loading a preset that names a missing model gives the same message.
+A setting that names a model the session has not loaded is a settings error that says how to load it: "model contour-1 is not loaded; get it from Styles, then Get models, or run `plotline models get contour-1`". Loading a preset that names a missing model gives the same message. A file of your own is not in the catalogue, so `get` is no advice for its id: the message says "model file-0123456789ab is not loaded; it is a file of your own, so load it again with Load your own, or run `plotline models add <file>`". The command line shows only the command, without the browser's menus.
 
 ### The runtime interface
 

@@ -147,6 +147,13 @@ def test_intact_checks_the_kept_file_against_the_entry():
     assert not models.intact(entry)
 
 
+def test_the_session_labels_a_file_of_your_own_by_its_id():
+    model_id = models.add_file(FIXTURE)
+    [held] = Session().models()
+    assert held["label"] == f"your own {model_id}" and held["entry"] is None
+    assert held["id"] == model_id
+
+
 def test_acceptance_is_per_licence_text():
     entry = entry_for(b"x")
     assert not models.accepted(entry)

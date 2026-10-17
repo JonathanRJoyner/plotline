@@ -66,6 +66,18 @@ test("download refuses a failed request", async () => {
   await expect(download(await entryOf())).rejects.toThrow(/404/);
 });
 
+test("download says which model failed when the network does", async () => {
+  // What a browser rejects with when it cannot reach the server is "Failed to fetch", which names nothing.
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+  const error = await download(await entryOf()).catch((e: Error) => e);
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe("could not download Model: check your connection and try again");
+  // A connection that drops part way through the file says the same.
+  const drops = new ReadableStream<Uint8Array>({ start: (c) => { c.enqueue(DATA.slice(0, 10)); c.error(new TypeError("network error")); } });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(drops)));
+  await expect(download(await entryOf())).rejects.toThrow("could not download Model: check your connection and try again");
+});
+
 test("keep reports false when Cache Storage throws", async () => {
   vi.stubGlobal("caches", { open: async () => { throw new Error("blocked"); } });
   await expect(keep("m-1", copy())).resolves.toBe(false);

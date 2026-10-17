@@ -698,7 +698,7 @@ async def test_list_models_reports_downloaded_and_available(monkeypatch):
         names = {tool.name for tool in (await c.list_tools()).tools}
         listed = data(await call(c, "list_models"))
     assert listed == {
-        "downloaded": [{"id": own, "label": own}],
+        "downloaded": [{"id": own, "label": f"your own {own}"}],
         "available": [
             {
                 "id": "demo-1",

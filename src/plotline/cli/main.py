@@ -625,18 +625,21 @@ def models_list() -> None:
     """List the models that can be downloaded and the ones kept on this computer."""
     with _errors():  # an unreadable cache folder
         held = dict(models.kept())
-    catalogue = {entry["id"]: entry for entry in _core.catalogue()}
-    rows = [
-        (
-            e["id"],
-            e["label"],
-            "downloaded" if e["id"] in held else f"{e['bytes'] / 1_000_000:.1f} MB",
-        )
-        for e in catalogue.values()
-    ] + [(i, "your own", "downloaded") for i in held if i not in catalogue]
-    widths = [max(len(row[col]) for row in rows) for col in (0, 1)] if rows else []
+        catalogue = {entry["id"]: entry for entry in _core.catalogue()}
+
+        def status(e: dict[str, Any]) -> str:
+            if e["id"] not in held:
+                return f"{e['bytes'] / 1_000_000:.1f} MB"
+            return "downloaded" if models.intact(e) else "damaged"
+
+        # The licence of a file of your own is not known, so its cell stays blank.
+        rows = [("ID", "NAME", "LICENCE", "STATUS")]
+        rows += [(e["id"], e["label"], e["licence"], status(e)) for e in catalogue.values()]
+        rows += [(i, "your own", "", "downloaded") for i in held if i not in catalogue]
+    widths = [max(len(row[col]) for row in rows) for col in range(3)]
     for row in rows:
-        click.echo("  ".join([row[0].ljust(widths[0]), row[1].ljust(widths[1]), row[2]]))
+        cells = [row[col].ljust(widths[col]) for col in range(3)]
+        click.echo("  ".join([*cells, row[3]]).rstrip())
 
 
 @models_group.command("get")
@@ -692,6 +695,7 @@ def models_remove(id: str) -> None:
         if id not in dict(models.kept()):
             raise click.ClickException(f"{id!r} is not kept; run `plotline models list`")
         models.remove(id)
+    click.echo(f"removed {id}")
 
 
 @main.command()

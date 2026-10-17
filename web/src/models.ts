@@ -79,18 +79,20 @@ export async function accept(entry: CatalogueEntry): Promise<void> {
 
 /**
  * Fetch a catalogue model and check its size, then its SHA-256, before returning it; a mismatch
- * rejects with a plain message and nothing is kept. At most `entry.bytes` plus one chunk is
- * read, so a wrong file at the URL cannot fill memory. The core checks both again when the model
- * is added.
+ * rejects with a plain message and nothing is kept, and so does a connection that fails. At most
+ * `entry.bytes` plus one chunk is read, so a wrong file at the URL cannot fill memory. The core
+ * checks both again when the model is added.
  */
 export async function download(entry: CatalogueEntry, onProgress?: (received: number, total: number) => void): Promise<ArrayBuffer> {
-  const res = await fetch(entry.url);
+  // A browser that cannot reach the server only says "Failed to fetch", which names nothing.
+  const offline = (): never => { throw new Error(`could not download ${entry.label}: check your connection and try again`); };
+  const res = await fetch(entry.url).catch(offline);
   if (!res.ok || !res.body) throw new Error(`could not download ${entry.label}: the server answered ${res.status}`);
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = await reader.read().catch(offline);
     if (done) break;
     chunks.push(value);
     received += value.length;

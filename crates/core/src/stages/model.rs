@@ -97,10 +97,18 @@ impl Stage for ModelStage {
         }
         let Some(info) = ctx.models().get(&s.model) else {
             let id = &s.model;
-            return Err(wrong(format!(
-                "model {id} is not loaded; get it from Styles, then Get models, or run \
-                 `plotline models get {id}`"
-            )));
+            // A file of your own is not in the catalogue, so `get` cannot fetch it again.
+            return Err(wrong(if id.starts_with("file-") {
+                format!(
+                    "model {id} is not loaded; it is a file of your own, so load it again with \
+                     Load your own, or run `plotline models add <file>`"
+                )
+            } else {
+                format!(
+                    "model {id} is not loaded; get it from Styles, then Get models, or run \
+                     `plotline models get {id}`"
+                )
+            }));
         };
         let runtime = ctx
             .models()
@@ -237,7 +245,8 @@ impl StageRun for ModelRun {
         Ok(Step::Frame(Frame {
             stage: String::new(),
             progress: self.next as f32 / self.tiles.len() as f32,
-            label: "model".into(),
+            // The stage's name goes in front wherever the label is shown.
+            label: format!("tile {} of {}", self.next, self.tiles.len()),
             points: None,
             paths: None,
             pen: 0,
@@ -409,6 +418,29 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_file_of_your_own_says_how_to_load_it() {
+        // `plotline models get` knows only the catalogue's models, so it is no advice here.
+        let models = Arc::new(ModelStore::default());
+        let settings = json!({"model": "file-0123456789ab"});
+        let err = run_stage(
+            &ModelStage,
+            &gradient(8, 8),
+            &page(Fit::Fit),
+            settings,
+            models,
+        )
+        .unwrap_err();
+        let StageError::Settings(SettingsError::Invalid { message, .. }) = err else {
+            panic!("{err:?}");
+        };
+        assert_eq!(
+            message,
+            "model file-0123456789ab is not loaded; it is a file of your own, so load it again \
+             with Load your own, or run `plotline models add <file>`"
+        );
+    }
+
+    #[test]
     fn one_step_runs_one_tile() {
         let (models, id) = standin();
         let image = Image {
@@ -422,7 +454,11 @@ mod tests {
         assert_eq!(frames.len(), tiles(1024, 768, 64).len());
         assert!(frames.windows(2).all(|w| w[0].progress < w[1].progress));
         assert_eq!(frames.last().unwrap().progress, 1.0);
-        assert!(frames.iter().all(|f| f.label == "model"));
+        // The label follows the stage name wherever it is shown, so it holds no `model` of its own.
+        let total = frames.len();
+        for (i, f) in frames.iter().enumerate() {
+            assert_eq!(f.label, format!("tile {} of {total}", i + 1));
+        }
     }
 
     #[test]
@@ -564,7 +600,7 @@ mod tests {
         let frame = run.next_frame().unwrap();
         assert_eq!(
             (frame.stage.as_str(), frame.label.as_str()),
-            ("model", "model")
+            ("model", "tile 1 of 6")
         );
         run.cancel();
         assert!(run.next_frame().is_none());
