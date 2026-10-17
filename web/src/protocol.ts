@@ -125,6 +125,18 @@ export class Protocol {
         return id;
       },
       cancelThumbs: () => { this.thumbsId++; },
+      // When the pen gets where in the last drawing's plot at the current speeds, for the playback;
+      // null without a drawing.
+      timeline: () => {
+        const t = s().timeline();
+        if (!t) return null;
+        try {
+          const layers = Array.from({ length: t.layerCount() }, (_, i) => ({ travel: t.layerTravel(i), vertices: t.layerVertices(i) }));
+          return { start: Array.from(t.start()), layers };
+        } finally {
+          free(t);
+        }
+      },
       svg: () => s().svg(),
       json: () => s().json(),
     };

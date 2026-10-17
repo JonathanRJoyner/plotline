@@ -2,8 +2,8 @@
 // with, the run view that takes the run events, and the three columns. Only replies re-render the
 // page; a run's frames and its end re-render just the parts that show them, so they never reset
 // an input the user is typing into.
-import { CircleHelp, Crosshair, Download, Image as ImageIcon, ImageUp, LayoutGrid, Maximize, Monitor, Moon, Play, Redo2, RotateCcw, Route, Settings as Gear, Sparkles, Square, Sun, Undo2 } from "lucide-preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { CirclePlay, CircleHelp, Crosshair, Download, Image as ImageIcon, ImageUp, LayoutGrid, Maximize, Monitor, Moon, Play, Redo2, RotateCcw, Route, Settings as Gear, Sparkles, Square, Sun, Undo2 } from "lucide-preact";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { choice, CompareControls, offers, type Against } from "./compare";
 import { Engine } from "./engine";
 import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, ResultEvent } from "./events";
@@ -12,6 +12,7 @@ import { History, setupOf } from "./history";
 import { loadLibrary, saveLibrary } from "./library";
 import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, type ShareLink, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
 import { type Entry, groupStyles, StylePicker, type Thumb } from "./picker";
+import { duration, fits as timed, moment, PLAY_SECONDS, PlaybackBar, type Timeline } from "./playback";
 import { Preview } from "./preview";
 import type { Patch, State } from "./protocol";
 import { Settings } from "./settings";
@@ -167,7 +168,7 @@ function OpenInput({ onOpen }: { onOpen: (file: File | undefined) => void }) {
   );
 }
 
-type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "compare" | "previous" | "view" | "onView" | "fits" | "focusing"> & {
+type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "compare" | "previous" | "playback" | "view" | "onView" | "fits" | "focusing"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; settings: State["settings"]; image: number; error?: string; fitError?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
   onSettings: () => void; onTour: () => void; onUndo?: () => void; onRedo?: () => void;
@@ -191,6 +192,12 @@ function RunView({ engine, status, stages, settings, image, error, fitError, onO
   const [comparing, setComparing] = useState(false);
   const [against, setAgainst] = useState<Against>("previous");
   const [swipe, setSwipe] = useState(50);
+  // The plot playback: whether it is shown, whether it plays, its time in seconds and the engine's
+  // timeline of the result at the current speeds.
+  const [replay, setReplay] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [at, setAt] = useState(0);
+  const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [focusing, setFocusing] = useState(false);
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const [fits, setFits] = useState(0);
@@ -204,6 +211,36 @@ function RunView({ engine, status, stages, settings, image, error, fitError, onO
   const latest = useRef(0);
   const offered = offers(previous, result);
   const shown = choice(against, offered);
+  // A new result, or new stats after a change of speeds, is timed again.
+  useEffect(() => {
+    if (!replay || !result) return;
+    let dead = false;
+    engine.call<Timeline | null>("timeline").then(
+      ({ value }) => { if (!dead) setTimeline(value && timed(value, result.layers) ? value : null); },
+      () => {},
+    );
+    return () => { dead = true; };
+  }, [replay, result, stats?.estimated_seconds]);
+  const timing = timeline && result && timed(timeline, result.layers) ? timeline : null;
+  const total = timing ? duration(timing) : null;
+  const playback = useMemo(() => (replay && timing && result ? moment(result.layers, timing, Math.min(at, total ?? 0)) : null), [replay, timing, result, at, total]);
+  // The whole plot plays in PLAY_SECONDS of the page's clock, then stops at the end.
+  useEffect(() => {
+    if (!playing || total === null) return;
+    let id = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      setAt((a) => Math.min(total, a + (dt * total) / PLAY_SECONDS));
+      id = requestAnimationFrame(tick);
+    };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [playing, total]);
+  useEffect(() => {
+    if (playing && total !== null && at >= total) setPlaying(false);
+  }, [playing, at, total]);
   const current = useRef<ResultEvent | null>(null); // the `result` state for the event handler, which is set up once
   useEffect(() => {
     engine.onEvent = (e) => {
@@ -281,10 +318,10 @@ function RunView({ engine, status, stages, settings, image, error, fitError, onO
         </span>
       </div>
       {error && <p class="error">{error}</p>}
-      <div class={comparing && shown ? "preview comparing" : "preview"} data-tour="preview">
+      <div class={comparing && shown ? "preview comparing" : replay && result ? "preview playing" : "preview"} data-tour="preview">
         <Preview
           {...preview} frames={frames} result={result} running={run.state === "running"} showSource={showSource}
-          showTravel={showTravel} compare={comparing && shown ? { against: shown, at: swipe } : null} previous={previous}
+          showTravel={showTravel} compare={comparing && shown ? { against: shown, at: swipe } : null} previous={previous} playback={playback}
           view={view} onView={setView} fits={fits} focusing={focusing}
         />
         {/* Not over a test chart, which draws with no image. */}
@@ -298,8 +335,23 @@ function RunView({ engine, status, stages, settings, image, error, fitError, onO
         )}
         <CompareControls
           on={comparing} enabled={result !== null} against={shown} offered={offered} at={swipe}
-          onOn={setComparing} onAgainst={setAgainst} onAt={setSwipe}
-        />
+          onOn={(on) => { setComparing(on); if (on) { setReplay(false); setPlaying(false); } }} onAgainst={setAgainst} onAt={setSwipe}
+        >
+          <label class="chip" title="Play the plot: the drawing as the pen lays it down, in plot order" data-tour="play">
+            <input
+              class="visually-hidden" type="checkbox" checked={replay}
+              onChange={(e) => {
+                const on = e.currentTarget.checked;
+                setReplay(on);
+                setPlaying(on);
+                setAt(0);
+                if (on) setComparing(false);
+              }}
+            />
+            <CirclePlay /> <span class="label">Play</span>
+          </label>
+        </CompareControls>
+        {replay && result && <PlaybackBar total={total} at={Math.min(at, total ?? 0)} playing={playing} onAt={setAt} onPlaying={setPlaying} />}
         {thin && <p class="hint">At this zoom the pen is under a pixel wide: zoom in to see its marks.</p>}
       </div>
       <footer data-tour="status">

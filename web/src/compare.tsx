@@ -2,7 +2,7 @@
 // image, on the same page at the same zoom. The preview paints the swipe; this file holds the
 // rules for what can be compared and the controls over the preview.
 import { Columns2 } from "lucide-preact";
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import type { ResultEvent } from "./events";
 
 export type Against = "previous" | "source";
@@ -39,12 +39,14 @@ type Props = {
   onOn: (on: boolean) => void;
   onAgainst: (against: Against) => void;
   onAt: (at: number) => void;
+  /** More chips for the card, after Compare's. */
+  children?: ComponentChildren;
 };
 
 // Over the preview, which positions it: the card at the top left with the Compare chip and, once it
 // is on, the menu; the slider along the bottom; and a handle on the divider, which drags like the
 // slider. The handle comes first, so the others sit over it.
-export function CompareControls({ on, enabled, against, offered, at, onOn, onAgainst, onAt }: Props): JSX.Element {
+export function CompareControls({ on, enabled, against, offered, at, onOn, onAgainst, onAt, children }: Props): JSX.Element {
   const swipe = on && against !== null;
   return (
     <>
@@ -64,6 +66,7 @@ export function CompareControls({ on, enabled, against, offered, at, onOn, onAga
           <input class="visually-hidden" type="checkbox" checked={on} onChange={(e) => onOn(e.currentTarget.checked)} />
           <Columns2 /> <span class="label">Compare</span>
         </label>
+        {children}
         {on && against === null && <span>Run again to compare with the previous drawing.</span>}
         {swipe && (
           <select aria-label="Compare with" value={against} onChange={(e) => onAgainst(e.currentTarget.value as Against)}>

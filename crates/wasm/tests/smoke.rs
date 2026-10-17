@@ -33,6 +33,18 @@ fn grid_matches_the_golden_file() {
     let d = s.drawing().unwrap();
     let canvas: serde_json::Value = serde_json::from_str(&d.canvas()).unwrap();
     assert_eq!(canvas["width_mm"], 100.0);
+    // The playback's times: one per vertex, a move per path, ending at the plot time.
+    let t = s.timeline().unwrap();
+    assert_eq!((t.layer_count(), t.start()), (1, vec![5.0, 5.0]));
+    let vertices = t.layer_vertices(0).unwrap();
+    assert_eq!(2 * vertices.length(), d.layer_coords(0).unwrap().length());
+    assert_eq!(
+        t.layer_travel(0).unwrap().length(),
+        2 * (d.layer_offsets(0).unwrap().length() - 1)
+    );
+    let end = vertices.get_index(vertices.length() - 1);
+    let total = stats["estimated_seconds"].as_f64().unwrap();
+    assert!((end - total).abs() < 1e-6 * total, "{end} {total}");
     let rect: serde_json::Value = serde_json::from_str(&d.tone_rect().unwrap()).unwrap();
     assert_eq!(
         (
