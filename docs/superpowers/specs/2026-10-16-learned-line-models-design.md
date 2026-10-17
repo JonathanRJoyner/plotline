@@ -154,7 +154,7 @@ The models stay out of the main repository, which keeps its rule of no third-par
 A download goes through the same steps in every front end:
 
 1. Show the licence screen: the label, the licence text, the attribution, the training note, the source and paper links, the size, and "Provided as is, without warranty of any kind."
-2. Wait for the user to accept. Acceptance is kept per model id and per hash of the licence text, so a changed licence asks again.
+2. Wait for the user to accept. Acceptance is kept per model id and per hash of the licence, the attribution and the training note, so a change to any of them asks again.
 3. Fetch the file from the catalogue URL.
 4. Check `bytes` and `sha256`. On a mismatch, discard the file and report a plain error.
 5. Keep the file, then load it into the session's store.

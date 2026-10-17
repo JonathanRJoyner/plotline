@@ -23,6 +23,7 @@ def entry_for(data: bytes, **changes) -> dict:
         "bytes": len(data),
         "licence": "MIT",
         "attribution": "Demo authors",
+        "training": "Trained on demo photos.",
     }
     return entry | changes
 
@@ -160,6 +161,7 @@ def test_acceptance_is_per_licence_text():
     models.accept(entry)
     assert models.accepted(entry)
     assert not models.accepted(entry | {"licence": "CC-BY-NC-4.0"})
+    assert not models.accepted(entry | {"training": "Trained on other data."})
     assert not models.accepted(entry | {"id": "other-1"})
 
 

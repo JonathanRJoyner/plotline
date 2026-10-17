@@ -46,7 +46,7 @@ def kept() -> list[tuple[str, Path]]:
 
 
 def _licence_hash(entry: dict[str, Any]) -> str:
-    text = entry["licence"] + "\n" + entry["attribution"]
+    text = entry["licence"] + "\n" + entry["attribution"] + "\n" + entry["training"]
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -60,13 +60,13 @@ def _acceptances() -> dict[str, str]:
 
 
 def accepted(entry: dict[str, Any]) -> bool:
-    """Whether the person has accepted this model's current licence and attribution. A changed
-    text asks again, because the hash of it is what is kept."""
+    """Whether the person has accepted this model's current licence, attribution and training
+    note. A changed text asks again, because the hash of it is what is kept."""
     return _acceptances().get(entry["id"]) == _licence_hash(entry)
 
 
 def accept(entry: dict[str, Any]) -> None:
-    """Keep that the person accepted this model's licence and attribution."""
+    """Keep that the person accepted this model's licence, attribution and training note."""
     folder = cache_dir()
     folder.mkdir(parents=True, exist_ok=True)
     data = _acceptances() | {entry["id"]: _licence_hash(entry)}

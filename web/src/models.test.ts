@@ -107,13 +107,14 @@ test("accepted survives a throwing localStorage", async () => {
   await expect(accept(entry)).resolves.toBeUndefined();
 });
 
-test("acceptance is per licence text", async () => {
+test("acceptance is per licence, attribution and training note", async () => {
   const entry = await entryOf();
   await expect(accepted(entry)).resolves.toBe(false);
   await accept(entry);
   await expect(accepted(entry)).resolves.toBe(true);
   await expect(accepted({ ...entry, licence: "MIT, changed" })).resolves.toBe(false);
   await expect(accepted({ ...entry, attribution: "By someone else" })).resolves.toBe(false);
+  await expect(accepted({ ...entry, training: "Trained on other data." })).resolves.toBe(false);
   await expect(accepted({ ...entry, id: "m-2" })).resolves.toBe(false);
   await expect(accepted({ ...entry, label: "Renamed", bytes: 1 })).resolves.toBe(true);
 });

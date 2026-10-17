@@ -57,11 +57,11 @@ export async function forget(id: string): Promise<void> {
 }
 
 // The key holds the id and the hash of the licence text, as the CLI keeps them, so a changed
-// licence or attribution is a different key and asks again. `crypto.subtle` is async, so the two
-// functions below are too.
-const acceptKey = async (e: CatalogueEntry) => `${ACCEPTED}${e.id}.${await hex(new TextEncoder().encode(`${e.licence}\n${e.attribution}`))}`;
+// licence, attribution or training note is a different key and asks again. `crypto.subtle` is
+// async, so the two functions below are too.
+const acceptKey = async (e: CatalogueEntry) => `${ACCEPTED}${e.id}.${await hex(new TextEncoder().encode(`${e.licence}\n${e.attribution}\n${e.training}`))}`;
 
-/** Whether the user accepted this model's current licence and attribution; false where storage is blocked. */
+/** Whether the user accepted this model's current licence, attribution and training note; false where storage is blocked. */
 export async function accepted(entry: CatalogueEntry): Promise<boolean> {
   try {
     return localStorage.getItem(await acceptKey(entry)) === "1";
@@ -70,7 +70,7 @@ export async function accepted(entry: CatalogueEntry): Promise<boolean> {
   }
 }
 
-/** Remember that the user accepted this model's licence and attribution; forgotten where storage is blocked. */
+/** Remember that the user accepted this model's licence, attribution and training note; forgotten where storage is blocked. */
 export async function accept(entry: CatalogueEntry): Promise<void> {
   try {
     localStorage.setItem(await acceptKey(entry), "1");
