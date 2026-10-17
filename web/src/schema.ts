@@ -27,7 +27,7 @@ function referenced(prop: Json, root: Json): Json | null {
 }
 
 // Options from an `enum`, or from a `oneOf` of `const` entries; null when neither. A value shows
-// with its underscores as spaces.
+// as its `title`, or else with its underscores as spaces.
 function optionsOf(schema: Json): Option[] | null {
   const label = (v: unknown) => String(v).replaceAll("_", " ");
   if (Array.isArray(schema.enum)) {
@@ -35,7 +35,7 @@ function optionsOf(schema: Json): Option[] | null {
   }
   const entries = schema.oneOf;
   if (Array.isArray(entries) && entries.every((e: Json) => "const" in e)) {
-    return entries.map((e: Json) => ({ value: String(e.const), label: label(e.const), title: str(e.description) }));
+    return entries.map((e: Json) => ({ value: String(e.const), label: str(e.title) ?? label(e.const), title: str(e.description) }));
   }
   return null;
 }
@@ -108,4 +108,16 @@ export function splitStages<S extends { name: string; label: string }>(stages: S
   const own = stages.filter((s) => s.name !== PENS && !SHARED.some(([name]) => name === s.name));
   const shared = SHARED.flatMap(([name, label]) => stages.filter((s) => s.name === name).map((s) => ({ ...s, label: label ?? s.label })));
   return { own, shared, pens: stages.filter((s) => s.name === PENS) };
+}
+
+// The model stage's `model` setting as a choice of the loaded models, by label. A value no loaded
+// model has stays a choice of its own, so the menu never shows a model the setting does not name.
+export function withModelChoice<S extends { name: string; schema: Json }>(stages: S[], models: { id: string; label: string }[], current: string): S[] {
+  return stages.map((s) => {
+    const props = s.schema.properties as Record<string, Json> | undefined;
+    if (s.name !== "model" || !props?.model) return s;
+    const missing = models.some((m) => m.id === current) ? [] : [{ const: current, title: current ? `${current} (not loaded)` : "None" }];
+    const oneOf = [...missing, ...models.map((m) => ({ const: m.id, title: m.label }))];
+    return { ...s, schema: { ...s.schema, properties: { ...props, model: { ...props.model, oneOf } } } };
+  });
 }

@@ -26,6 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from plotline import _core
+from plotline.models import kept
 from plotline.registry import get_style
 from plotline.types import (
     Cancelled,
@@ -173,6 +174,41 @@ class Session:
         self._handle: RunHandle | None = None
         self._subscribers: dict[object, Callable[[Frame], None]] = {}
         self._last_delivery = -math.inf
+        self._load_kept_models()
+
+    def _load_kept_models(self) -> None:
+        # A kept file whose id the catalogue no longer lists is a file of the person's own now.
+        # One that fails to load is skipped, so a damaged file cannot stop every session.
+        listed = {entry["id"] for entry in _core.catalogue()}
+        try:
+            files = kept()
+        except (OSError, RuntimeError) as e:  # no home folder, or an unreadable cache folder
+            warnings.warn(f"the model cache could not be read: {e}", UserWarning, stacklevel=3)
+            return
+        for model_id, path in files:
+            try:
+                self._core.add_model(model_id if model_id in listed else None, path.read_bytes())
+            except (OSError, ValueError) as e:
+                warnings.warn(
+                    f"kept model {model_id} was not loaded: {e}", UserWarning, stacklevel=3
+                )
+
+    def models(self) -> list[dict[str, Any]]:
+        """The models this session holds, in id order, as ``{id, label, overlap, entry}``, where
+        ``entry`` is the catalogue entry of a downloaded model and ``None`` for a file of your
+        own, whose label is ``your own`` and its id. The kept models load when the session
+        starts."""
+        return [
+            m if m["entry"] else m | {"label": f"your own {m['id']}"} for m in self._core.models()
+        ]
+
+    def add_model(self, path: str | os.PathLike[str]) -> str:
+        """Load the ONNX file at ``path`` as a model of your own, for this session only
+        (``plotline.models.add_file`` keeps one), and return its id, ``file-`` and 12 hex digits of
+        its SHA-256. Choose it with ``update("model", model=id)`` in the ``learned`` style. Raises
+        ``OSError`` when the file cannot be read and ``ValueError`` when it is over 200 MB or not
+        a model that takes ``1 x 3 x 512 x 512`` floats and gives ``1 x 1 x 512 x 512``."""
+        return str(self._core.add_model(None, Path(path).read_bytes())["id"])
 
     @property
     def image(self) -> NDArray[np.float32] | None:

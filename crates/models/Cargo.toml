@@ -1,0 +1,38 @@
+[package]
+name = "plotline-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# The browser build of this crate as its own WebAssembly module (`npm run wasm:models` in web/),
+# exporting `load`, `infer` and `unload` for the engine module's bridge.
+web = ["dep:wasm-bindgen"]
+
+[dependencies]
+plotline-core = { path = "../core" }
+# Without `transformers`: it adds attention-model operators that plain convolution graphs never
+# use, and the module is size-limited.
+tract-onnx = { version = "0.23", default-features = false }
+# The version tract-onnx itself uses: its ONNX types are prost messages, and the tiny model is
+# encoded with them.
+prost = "0.14"
+wasm-bindgen = { version = "0.2", optional = true }
+
+# For the `model_cards` example only: it settles the core's settings with JSON and saves a greyscale PNG.
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = "1"
+
+# On WebAssembly, tract's random-number operators take their seed from the browser's crypto API.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tract-onnx = { version = "0.23", default-features = false, features = ["getrandom-js"] }
+
+# Size-tuned with the crates' opt-levels in the workspace Cargo.toml; -Os runs as fast as -O3 and is
+# smaller (spec 2026-10-16-learned-line-models, "Measurements").
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Os"]

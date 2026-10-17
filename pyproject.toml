@@ -76,7 +76,7 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 
 [[tool.mypy.overrides]]
-module = ["plotline.session", "plotline.types"]
+module = ["plotline.models", "plotline.session", "plotline.types"]
 check_untyped_defs = true
 disallow_any_generics = true
 disallow_incomplete_defs = true

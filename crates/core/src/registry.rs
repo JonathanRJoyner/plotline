@@ -13,6 +13,7 @@ use crate::stages::grid::{DotRenderer, GridPlacer};
 use crate::stages::hatch::HatchStage;
 use crate::stages::hilbert::HilbertStage;
 use crate::stages::ink::InkStage;
+use crate::stages::model::ModelStage;
 use crate::stages::mosaic::MosaicStage;
 use crate::stages::order::OrderStage;
 use crate::stages::poisson::PoissonPlacer;
@@ -145,6 +146,26 @@ pub fn ink_style() -> Style {
         Arc::new(InkStage),
     )
     .with_defaults("tone", json!({"resolution": 2500}))
+}
+
+/// The lines a trained model finds, drawn down their middles: model, split, ink, order. The model
+/// stage gives the lines as a tone map, which the ink stage in centreline mode traces; the model
+/// is chosen in the `model` setting and must be loaded into the session first.
+pub fn learned_style() -> Style {
+    Style::new(
+        "learned",
+        "Learned lines",
+        "Draws the lines a trained line-drawing model finds in the image, each once down its \
+         middle. It needs a model: get one in the style picker or with `plotline models get`.",
+        vec![
+            Arc::new(ModelStage),
+            Arc::new(SplitStage),
+            Arc::new(InkStage),
+            Arc::new(OrderStage),
+        ],
+    )
+    .expect("the learned style is valid")
+    .with_defaults("ink", json!({"mode": "centreline"}))
 }
 
 /// Evenly spread dots, each sized by the ink: tone, split, voronoi, stipple, order.
@@ -393,6 +414,7 @@ fn builtins() -> Vec<Arc<Style>> {
         Arc::new(waves_style()),
         Arc::new(spiral_style()),
         Arc::new(ink_style()),
+        Arc::new(learned_style()),
         Arc::new(stipple_style()),
         Arc::new(line_style()),
         Arc::new(dashes_style()),
@@ -429,9 +451,14 @@ pub fn get_style(name: &str) -> Option<Arc<Style>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{StandIn, STANDIN_BYTES, STANDIN_FLOOR_BYTES, STANDIN_HALF_BYTES};
+    use crate::session::Session;
     use crate::stage::{Artifact, Kind, Lane};
     use crate::synthetic::{flat, gradient, radial, scene};
-    use crate::test_util::{assert_inside, black, run_stage_in_lane, run_to_drawing, tone_map};
+    use crate::test_util::{
+        assert_inside, black, run_stage_in_lane, run_to_drawing, standin_half_id, standin_id,
+        tone_map,
+    };
     use crate::types::{Paths, ToneMap};
     use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -465,17 +492,18 @@ mod tests {
                 .map(|s| s.name.as_str())
                 .collect::<Vec<_>>(),
             [
-                "grid", "hatch", "waves", "spiral", "ink", "stipple", "line", "dashes", "sketch",
-                "tree", "mesh", "cells", "halftone", "dither", "circles", "contours", "flow",
-                "hilbert", "scribble", "mosaic", "truchet"
+                "grid", "hatch", "waves", "spiral", "ink", "learned", "stipple", "line", "dashes",
+                "sketch", "tree", "mesh", "cells", "halftone", "dither", "circles", "contours",
+                "flow", "hilbert", "scribble", "mosaic", "truchet"
             ]
         );
         assert!(get_style("_slow").is_some());
         assert!(get_style("nope").is_none());
     }
     #[test]
-    fn every_style_but_ink_has_one_density_setting() {
-        // The budget solver fits the one setting marked x-density; see crate::fit.
+    fn every_style_but_ink_and_learned_has_one_density_setting() {
+        // The budget solver fits the one setting marked x-density; see crate::fit. The two that
+        // draw a picture's lines as they are have none.
         for style in list_styles() {
             let marks: Vec<String> = (style.stages.iter())
                 .flat_map(|stage| {
@@ -491,8 +519,8 @@ mod tests {
                 })
                 .collect();
             let density = crate::fit::Density::of(&style);
-            if style.name == "ink" {
-                assert!(marks.is_empty() && density.is_none());
+            if matches!(style.name.as_str(), "ink" | "learned") {
+                assert!(marks.is_empty() && density.is_none(), "{}", style.name);
                 continue;
             }
             let d = density.unwrap_or_else(|| panic!("{} has no density setting", style.name));
@@ -575,7 +603,8 @@ mod tests {
     #[test]
     fn every_listed_style_splits_right_after_tone() {
         for style in list_styles() {
-            let tone = style.stage_index("tone");
+            // A learned style makes its tone map with the model stage.
+            let tone = (style.stage_index("tone")).or_else(|| style.stage_index("model"));
             assert!(tone.is_some(), "{} has no tone stage", style.name);
             assert_eq!(
                 style.stage_index("split"),
@@ -583,6 +612,53 @@ mod tests {
                 "{}",
                 style.name
             );
+        }
+    }
+    #[test]
+    fn learned_draws_centrelines_with_the_standin() {
+        // Through a session, so that its models reach the run.
+        let mut s = Session::new(64 << 20);
+        s.set_model_runtime(Arc::new(StandIn::default()));
+        s.add_model(None, STANDIN_BYTES).unwrap();
+        s.add_model(None, STANDIN_HALF_BYTES).unwrap();
+        s.set_image(scene(64, 48));
+        s.set_style("learned").unwrap();
+        assert_eq!(s.settings()["ink"]["mode"], "centreline");
+        let mut paths = |model: String| {
+            // The least resolution: the stand-in finds lines where the picture changes sharply.
+            s.update("model", &json!({"model": model, "resolution": 256}))
+                .unwrap();
+            let mut run = s.start().unwrap();
+            while run.next_frame().is_some() {}
+            assert_eq!(run.error(), None);
+            s.drawing().unwrap().layers[0].paths.coords().to_vec()
+        };
+        let sobel = paths(standin_id());
+        assert!(!sobel.is_empty());
+        // The setting picks the model: half the answer draws other lines.
+        assert_ne!(paths(standin_half_id()), sobel);
+    }
+    #[test]
+    fn learned_draws_nothing_on_blank_paper() {
+        // The core passes a model's answer through, so blank paper gives no paths only when the
+        // model answers 0 there. A model with a floor of 0.5 shows what that costs.
+        let paths = |bytes: &'static [u8], value: f32| {
+            let mut s = Session::new(64 << 20);
+            s.set_model_runtime(Arc::new(StandIn::default()));
+            let id = s.add_model(None, bytes).unwrap().id;
+            s.set_image(flat(64, 48, value));
+            s.set_style("learned").unwrap();
+            s.update("model", &json!({"model": id, "resolution": 256}))
+                .unwrap();
+            s.update("ink", &json!({"threshold": 0.4})).unwrap();
+            let mut run = s.start().unwrap();
+            while run.next_frame().is_some() {}
+            assert_eq!(run.error(), None);
+            s.drawing().unwrap().layers[0].paths.len()
+        };
+        for value in [1.0, 0.5] {
+            assert_eq!(paths(STANDIN_BYTES, value), 0, "flat {value}");
+            assert!(paths(STANDIN_FLOOR_BYTES, value) > 0, "flat {value}");
         }
     }
     #[test]
@@ -602,7 +678,7 @@ mod tests {
         }
     }
     #[test]
-    fn every_style_but_ink_keeps_its_pens_apart() {
+    fn every_style_but_ink_and_learned_keeps_its_pens_apart() {
         // The same tone in two lanes, as where two pens both hold ink: a cone of ink over a floor
         // of 0.15, under which a shared lane never lifts the pen, so only the spreading rules tell
         // the lanes apart. The map is 80 by 60 mm at 0.2 mm a pixel, about 24 pixels to each
@@ -621,7 +697,11 @@ mod tests {
         // edge count.
         let off_edge = |p: &&[f64; 2]| x < p[0] && p[0] < x + w && y < p[1] && p[1] < y + h;
         let bits = |p: &[f64; 2]| p.map(f64::to_bits);
-        for style in list_styles().into_iter().filter(|s| s.name != "ink") {
+        // Ink traces shapes, and learned feeds them to it; neither places points to spread.
+        for style in list_styles()
+            .into_iter()
+            .filter(|s| !matches!(s.name.as_str(), "ink" | "learned"))
+        {
             let name = &style.name;
             let single = lane_paths(&style, &tone, Lane::SINGLE);
             let first = lane_paths(&style, &tone, Lane { index: 0, count: 2 });

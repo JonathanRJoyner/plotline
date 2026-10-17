@@ -27,6 +27,7 @@ use crate::fit::{places_points, Density, FitRun, Metric};
 use crate::image::{self, ImageError};
 use crate::lint::{self, Finding, Measure};
 use crate::machine::{Machine, MachineError};
+use crate::models::{ModelError, ModelInfo, ModelRuntime, ModelStore};
 use crate::optimize::{Budget, OptimizeRun};
 use crate::presets::{self, PresetError};
 use crate::preview::{self, PreviewError};
@@ -124,6 +125,8 @@ pub struct Session {
     paper: String,
     /// The machine the G-code export writes for, if one is set.
     machine: Option<Machine>,
+    /// The learned line models, shared with the runs that use them.
+    models: Arc<ModelStore>,
     style: Arc<Style>,
     /// Every stage's full settings object, keyed by stage name.
     settings: Value,
@@ -158,6 +161,7 @@ impl Session {
             pen_library: Vec::new(),
             paper: DEFAULT_PAPER.to_string(),
             machine: None,
+            models: Arc::default(),
             settings: style.defaults(),
             changed: BTreeSet::new(),
             style,
@@ -285,6 +289,44 @@ impl Session {
         }
         self.machine = m;
         Ok(())
+    }
+
+    /// Run models with `runtime`. The session starts with none, so [`Session::add_model`] fails
+    /// until the host sets one. Models loaded into an earlier runtime are dropped from the list;
+    /// a run already going keeps the models it started with.
+    pub fn set_model_runtime(&mut self, runtime: Arc<dyn ModelRuntime>) {
+        self.models = Arc::new(ModelStore::new(Some(runtime)));
+    }
+
+    /// Load the ONNX file `bytes` as a model. With `Some(id)` the bytes must be the catalogue
+    /// model of that id, with the size and SHA-256 it lists; with `None` they are a file of the
+    /// user's own, named by its hash (see [`crate::models::file_id`]). A file over 200 MB is
+    /// refused before it is looked at. Adding an id the session already holds replaces it, and
+    /// on any error the models are unchanged.
+    pub fn add_model(&mut self, id: Option<&str>, bytes: &[u8]) -> Result<ModelInfo, ModelError> {
+        self.models.add(id, bytes)
+    }
+
+    /// Unload the model `id` and empty the stage cache, so a later run cannot draw the model's
+    /// lines from it. An id the session does not hold changes nothing.
+    pub fn remove_model(&mut self, id: &str) {
+        if self.models.get(id).is_none() {
+            return;
+        }
+        self.models.remove(id);
+        // shortcut: the cache has no index by model, so all of it goes and the next run starts
+        // from the image; add one if removing models while other styles are cached gets common.
+        self.cache.lock().unwrap().clear();
+    }
+
+    /// The models the session holds, in id order.
+    pub fn models(&self) -> Vec<ModelInfo> {
+        self.models.list()
+    }
+
+    /// The models, for a run to read.
+    pub fn model_store(&self) -> Arc<ModelStore> {
+        self.models.clone()
     }
 
     /// The chosen style.
@@ -416,7 +458,8 @@ impl Session {
             self.shared.clone(),
             self.cancel.clone(),
             generation,
-        ))
+        )
+        .with_models(self.models.clone()))
     }
 
     /// Cancel the latest run and return a fit, which reruns the style with its density setting
@@ -558,7 +601,8 @@ impl Session {
             slot.clone(),
             Arc::default(),
             0, // a fresh slot's generation
-        );
+        )
+        .with_models(self.models.clone());
         Ok((run, slot))
     }
 

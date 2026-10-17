@@ -40,6 +40,7 @@ def test_styles_and_schema():
         "waves",
         "spiral",
         "ink",
+        "learned",
         "stipple",
         "line",
         "dashes",

@@ -12,6 +12,7 @@ pub mod hilbert;
 pub mod ink;
 pub mod join;
 pub mod lines;
+pub mod model;
 pub mod mosaic;
 pub mod order;
 pub mod poisson;

@@ -1,18 +1,20 @@
 """The command line interface: list the styles, describe one, analyse an image, run a style on it,
-and serve the web interface and the MCP server.
+keep learned line models, and serve the web interface and the MCP server.
 
 ``run`` sets a ``Session`` up from its options, runs the style and writes the outputs, once for
 each image it is given. ``testchart`` writes a calibration chart for a pen. ``analyse`` prints the
 session's analysis of an image, with the palette picked from a pen library file when one is given.
 ``styles`` and ``describe`` read the style registry.
-``gui`` serves the web bundle that a release wheel carries. ``mcp`` serves a session to an AI
-assistant on stdio. The work all happens in the session layer, so this module holds no algorithm
-code.
+``models`` lists, downloads, adds and removes the models the ``learned`` style draws with; a
+download shows its licence and asks first. ``gui`` serves the web bundle that a release wheel
+carries. ``mcp`` serves a session to an AI assistant on stdio. The work all happens in the session
+layer, so this module holds no algorithm code.
 """
 
 import http.server
 import importlib.util
 import json
+import re
 import sys
 import webbrowser
 from collections import Counter
@@ -26,7 +28,7 @@ from typing import Any
 
 import click
 
-from plotline import inks
+from plotline import _core, inks, models
 from plotline.registry import get_style, list_styles
 from plotline.session import Session
 from plotline.types import Pen
@@ -86,15 +88,22 @@ def parse_pen(value: str) -> Pen:
         raise click.BadParameter(f"{value!r}: {error}") from error
 
 
+# The engine's advice for a model that is missing names the browser's menus before the command, and
+# a command line has only the command.
+_BROWSER_ADVICE = re.compile(
+    r"(?:get (?:it|one) from Styles, then Get models|load it again with Load your own), or run "
+)
+
+
 @contextmanager
 def _errors() -> Iterator[None]:
     """Turn the errors that bad input causes in the session into a one-line CLI error. The engine
-    reports a refused value as ``ValueError``, and a file that cannot be read is an
-    ``OSError``."""
+    reports a refused value as ``ValueError``, and a file that cannot be read is an ``OSError``.
+    A failed run, a model that is not loaded and a missing home folder are ``RuntimeError``."""
     try:
         yield
-    except (ValueError, OSError) as error:
-        raise click.ClickException(str(error)) from error
+    except (ValueError, OSError, RuntimeError) as error:
+        raise click.ClickException(_BROWSER_ADVICE.sub("run ", str(error))) from error
 
 
 @click.group()
@@ -779,6 +788,89 @@ def _options(patch: dict[str, Any] | None) -> str:
     if page := patch.get("page"):
         sets.append(f"--width {page['width_mm']:g} --height {page['height_mm']:g}")
     return " ".join(sets)
+
+
+@main.group("models")
+def models_group() -> None:
+    """Keep the learned line models that the learned style draws with."""
+
+
+@models_group.command("list")
+def models_list() -> None:
+    """List the models that can be downloaded and the ones kept on this computer."""
+    with _errors():  # an unreadable cache folder
+        held = dict(models.kept())
+        catalogue = {entry["id"]: entry for entry in _core.catalogue()}
+
+        def status(e: dict[str, Any]) -> str:
+            if e["id"] not in held:
+                return f"{e['bytes'] / 1_000_000:.1f} MB"
+            return "downloaded" if models.intact(e) else "damaged"
+
+        # The licence of a file of your own is not known, so its cell stays blank.
+        rows = [("ID", "NAME", "LICENCE", "STATUS")]
+        rows += [(e["id"], e["label"], e["licence"], status(e)) for e in catalogue.values()]
+        rows += [(i, "your own", "", "downloaded") for i in held if i not in catalogue]
+    widths = [max(len(row[col]) for row in rows) for col in range(3)]
+    for row in rows:
+        cells = [row[col].ljust(widths[col]) for col in range(3)]
+        click.echo("  ".join([*cells, row[3]]).rstrip())
+
+
+@models_group.command("get")
+@click.argument("id")
+@click.option(
+    "--accept-licence", is_flag=True, help="Accept the licence without asking, for scripts."
+)
+def models_get(id: str, accept_licence: bool) -> None:
+    """Show the licence of the model ID, ask to accept it, and download the model."""
+    entry = next((e for e in _core.catalogue() if e["id"] == id), None)
+    if entry is None:
+        click.echo(f"Error: {id!r} is not in the catalogue; run `plotline models list`", err=True)
+        sys.exit(2)
+    with _errors():
+        if models.intact(entry):  # nothing to accept or fetch
+            click.echo(f"{id} is already downloaded")
+            return
+    for line in (
+        entry["label"],
+        f"Licence: {entry['licence']}",
+        f"Attribution: {entry['attribution']}",
+        f"Training: {entry['training']}",
+        f"Source: {entry['source']}",
+        f"Paper: {entry['paper']}",
+        f"Size: {entry['bytes'] / 1_000_000:.1f} MB",
+        "Provided as is, without warranty of any kind.",
+    ):
+        click.echo(line)
+    with _errors():
+        # A licence accepted before is not asked again; a changed one is (models.accepted).
+        asked = not (accept_licence or models.accepted(entry))
+    if asked:  # outside `_errors`, because the abort of a "no" is a RuntimeError too
+        click.confirm("Accept this licence and download?", abort=True)
+    with _errors():
+        path = models.download(entry)
+        models.accept(entry)  # after the download, so a failed one keeps nothing at all
+    click.echo(f"Downloaded {id} to {path}")
+
+
+@models_group.command("add")
+@click.argument("file", type=click.Path())
+def models_add(file: str) -> None:
+    """Copy the ONNX model FILE, a model of your own, into the cache and print its id."""
+    with _errors():
+        click.echo(models.add_file(Path(file)))
+
+
+@models_group.command("remove")
+@click.argument("id")
+def models_remove(id: str) -> None:
+    """Delete the kept model ID."""
+    with _errors():
+        if id not in dict(models.kept()):
+            raise click.ClickException(f"{id!r} is not kept; run `plotline models list`")
+        models.remove(id)
+    click.echo(f"removed {id}")
 
 
 @main.command()

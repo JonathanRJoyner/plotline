@@ -2,6 +2,8 @@
 
 Date: 2026-10-16. Status: proposed. The owner delegates the taste decisions; each is recorded in the brief's decision log under "Style picker", and the "Try all styles" row is amended to point there.
 
+Amended on 2026-10-17: the learned line models work added the Get models and Load your own tabs, so `TABS` now holds three names and the tab column shows ([models in the style picker](../../decisions/2026-10-17-models-in-the-style-picker.md)). Sections 4.1 and 9 below describe the picker as first built.
+
 Twenty-one styles in a dropdown is already a long list, and the only way to see them drawn was a second button, Try all styles, which opened its own dialog. This spec puts both into one **style picker**: a dialog that shows every style grouped by family, each with a picture of it drawn on the current image, its label and its one-line description. The sidebar keeps a compact button that shows the current style and opens the picker.
 
 The picker is the second of four pieces planned on 2026-10-16. A later piece adds two tabs to it, "Get models" and "Load your own", and learned line models appear as entries in its Styles tab once downloaded. This spec builds only the Styles tab, lays the dialog out so that adding a tab is a small change, and lets an entry carry an optional note and picture. It builds no model code.

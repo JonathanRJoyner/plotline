@@ -14,6 +14,7 @@ use rand_pcg::Pcg64;
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::models::ModelStore;
 use crate::settings::SettingsError;
 use crate::types::{Canvas, Image, Layer, Paths, Pen, Points, ToneMap, Tones};
 
@@ -186,27 +187,39 @@ impl Lane {
 }
 
 /// What a running stage may use besides its inputs: the cancel flag, seeded randomness, the lane
-/// it runs in and the lane's part of a per-pen budget.
+/// it runs in, the lane's part of a per-pen budget and the session's learned line models.
 pub struct RunContext {
     cancel: Arc<AtomicBool>,
     lane: Lane,
     budget: [f64; 2],
+    models: Arc<ModelStore>,
 }
 
 impl RunContext {
-    /// A context in [`Lane::SINGLE`], with a whole budget, that reports cancelled once `cancel` is
-    /// set.
+    /// A context in [`Lane::SINGLE`], with a whole budget and no models, that reports cancelled
+    /// once `cancel` is set.
     pub fn new(cancel: Arc<AtomicBool>) -> RunContext {
         RunContext {
             cancel,
             lane: Lane::SINGLE,
             budget: [0.0, 1.0],
+            models: Arc::default(),
         }
     }
 
     /// The context for the same run in `lane`.
     pub fn in_lane(self, lane: Lane) -> RunContext {
         RunContext { lane, ..self }
+    }
+
+    /// The context for the same run with `models` for the stages that run them.
+    pub fn with_models(self, models: Arc<ModelStore>) -> RunContext {
+        RunContext { models, ..self }
+    }
+
+    /// The learned line models the run may use.
+    pub fn models(&self) -> &ModelStore {
+        &self.models
     }
 
     /// The context for the same run whose lane spends `budget` of a per-pen budget; see

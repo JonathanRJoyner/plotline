@@ -46,10 +46,10 @@ plotline converts raster images into vector line art, such as stippling, single 
 
 ## Features
 
-- **Twenty-one styles,** from dots on a grid to one continuous spiral. The table below describes each one, and the [style guide](docs/styles.md) shows each on the same picture with its settings and pen tips. The [first plot guide](docs/guide.md) takes you from a picture to paper and says what to change when a plot is not what you expected.
+- **Twenty-two styles,** from dots on a grid to one continuous spiral. The table below describes each one, and the [style guide](docs/styles.md) shows each on the same picture with its settings and pen tips. The [first plot guide](docs/guide.md) takes you from a picture to paper and says what to change when a plot is not what you expected.
 - **Live preview.** The browser GUI shows the drawing being built. It runs the engine inside the page as WebAssembly, so your image is never uploaded.
 - **Suggestions.** The engine measures a new image and suggests changes: line art, levels, uneven paper, invert, noise, page orientation, framing, which crops the image to its subject when that fills only part of it, and colour, for which it picks two to four ink pens that draw the image's colours best. You apply each one with a click. The tone stage's Levels can also be Auto, which sets black and white from the image.
-- **Focus points.** Click the preview, or have an assistant set `tone.focus`, to mark where the picture matters: every style keeps its detail near those points and smooths it further away, so a drawing's detail sits where you want it.
+- **Focus points.** Click the preview, or have an assistant set `tone.focus`, to mark where the picture matters: every style but `learned`, which has no tone stage, keeps its detail near those points and smooths it further away, so a drawing's detail sits where you want it.
 - **Plot lint.** After every run the engine checks the drawing for trouble on paper: marks drawn over each other, specks, lines closer than the pen, a drawing too light for the image's darks, heavy pen lifting or travel, and marks off the page or the machine. Where a setting fixes one, it says which.
 - **Budgets.** Give a plot time, a path count, metres of pen-down line or a dot count, and plotline finds the value of the style's density setting, such as its line spacing, that meets it in up to eight runs.
 - **Tone match.** Every run scores how closely the drawing's tones follow the image, seen from a metre or two, as a tone error and an SSIM. Optimize tries the style's density setting from a quarter to four times its value and suggests the one that brings them closest, with its plot time. It skips values that would plot over twice as long (or an hour) or that the plot lint warns about, and stays within a budget if you give one; nothing changes until you apply it. The tone stage's Response can also be Auto, which measures how much paper the style covers at each grey on a small test wedge and corrects the image for it.
@@ -69,6 +69,7 @@ plotline converts raster images into vector line art, such as stippling, single 
 | `spiral` | One spiral from the centre out that ripples the same way. |
 | `truchet` | Quarter-circle arcs on square tiles in random turns, joining into winding curves, with more nested arcs where the image is darker. |
 | `ink` | Line art, lettering and inked drawings. It outlines every ink shape and fills it with rings, and draws strokes thinner than the pen once down the middle, so the drawing keeps its own shapes and weights. |
+| `learned` | The lines a trained model finds in the image, each drawn once down its middle. It needs a model file, which you download from Styles, then Get models in the browser, or with `plotline models` on the command line. |
 | `stipple` | Points that spread evenly while staying dense in dark areas (weighted Voronoi relaxation), each drawn as a dot sized by the ink under it. |
 | `line` | The same points joined into one unbroken line that does not cross itself. |
 | `dashes` | A short stroke at each point, along the image's edges. |
@@ -130,6 +131,7 @@ This writes `drawing.svg` and `preview.png`, and prints a one-line summary with 
 | Also find the density whose drawing follows the image's tones best for its plot time, and print the `--set` that applies it | `--optimize`, within a budget when given with a `--fit-…` option |
 | Correct the tone map for the style's own response | `--set tone.response=auto` |
 | List a style's settings | `plotline describe grid` |
+| Get a model for the `learned` style, then draw with it | `plotline models get teed-1`, then `plotline run learned your-photo.jpg --set model.model=teed-1 --out drawing.svg`; `plotline models list` shows the models, and `add` and `remove` keep your own |
 | Start from one of the style's looks, which `plotline describe` lists | `--look faithful`, `quick` or `fine` |
 | Save the run's setup as a preset | `--save-preset my-setup.json` |
 | Start a later run from a preset, or from an exported SVG or JSON drawing | `--preset my-setup.json` or `--preset drawing.svg` |
@@ -149,7 +151,7 @@ A machine file holds the same object as a preset's `machine`: `name`, `area` (`x
 
 ## With an AI assistant
 
-`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, starting from one of their looks if it likes, and read the tone match and the plot lint's findings in each result, `fit` one to a budget, ask `optimize` for the density that matches the image's tones best for its plot time, draw a `testchart` for the pen, look at previews, also zoomed in on a part of the page, and export the result, as G-code too once `set_machine` has described the plotter.
+`plotline mcp` serves plotline to an AI assistant over the Model Context Protocol, on stdio. From a clone, `uv sync` installs the MCP extra; once there is a release, `pip install "plotline[mcp]"` will. Give an MCP client the server as `{"command": "plotline", "args": ["mcp"]}`, where `command` is the `plotline` on the client's PATH or the full path to it (for a clone, the one in its `.venv`). The assistant can load an image, ask `analyse_image` what would suit it, run styles, starting from one of their looks if it likes, and read the tone match and the plot lint's findings in each result, `fit` one to a budget, ask `optimize` for the density that matches the image's tones best for its plot time, ask `list_models` which models the `learned` style can draw with (a person downloads one, in the GUI or with `plotline models get`, because each needs its licence accepted), draw a `testchart` for the pen, look at previews, also zoomed in on a part of the page, and export the result, as G-code too once `set_machine` has described the plotter.
 
 ## Roadmap
 

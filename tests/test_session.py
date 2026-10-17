@@ -46,6 +46,7 @@ def test_registry_lists_public_styles_and_finds_hidden_ones():
         "waves",
         "spiral",
         "ink",
+        "learned",
         "stipple",
         "line",
         "dashes",

@@ -10,11 +10,13 @@ import type { BankPen, FitResult, FrameEvent, Ink, Machine, Optimum, Pen, Result
 import { ACCEPT, download, imageFile } from "./files";
 import { History, setupOf } from "./history";
 import { loadLibrary, saveLibrary } from "./library";
+import { restoreModels } from "./models";
 import { ExportPanel, FitPanel, LintList, PagePanel, PensDialog, PensPanel, PresetsPanel, type ShareLink, SettingsDialog, StatsPanel, StatusBar, SuggestionsPanel } from "./panels";
 import { type Entry, groupStyles, StylePicker, type Thumb } from "./picker";
 import { duration, fits as timed, moment, PLAY_SECONDS, PlaybackBar, type Timeline } from "./playback";
 import { Preview } from "./preview";
-import type { Patch, State } from "./protocol";
+import type { CatalogueEntry, Patch, State } from "./protocol";
+import { withModelChoice } from "./schema";
 import { Settings } from "./settings";
 import { decodeShare, encodeShare, PREFIX, shareable, withMachine } from "./share";
 import { firstVisit, Tour } from "./tour";
@@ -181,6 +183,8 @@ type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "r
 // None of them has an input that can be half typed, so a re-render per frame resets nothing.
 function RunView({ engine, status, stages, settings, image, error, fitError, onOpen, onSample, onRun, onStop, onSvg, onSettings, onTour, onUndo, onRedo, onFit, onFitted, onOptimize, onApply, lintError, ...preview }: RunViewProps) {
   const { run, stats, lint, tone } = useStatus(status);
+  // Focus points shape the Image stage's tone map; a style without one, such as learned, keeps none.
+  const toned = stages.some((s) => s.name === "tone");
   // The latest frame with geometry from each pen, by pen index, for the preview.
   const [frames, setFrames] = useState<(FrameEvent | undefined)[]>([]);
   const [result, setResult] = useState<ResultEvent | null>(null);
@@ -303,8 +307,8 @@ function RunView({ engine, status, stages, settings, image, error, fitError, onO
           </label>
         </span>
         <span class="group shrink">
-          <label class="chip" data-tour="focus" title="Focus: click the drawn image to keep detail around that point, click a point to remove it; dragging still pans">
-            <input class="visually-hidden" type="checkbox" checked={focusing} onChange={(e) => setFocusing(e.currentTarget.checked)} />
+          <label class="chip" data-tour="focus" title={toned ? "Focus: click the drawn image to keep detail around that point, click a point to remove it; dragging still pans" : "Focus: this style has no Image settings, so it keeps no focus points"}>
+            <input class="visually-hidden" type="checkbox" disabled={!toned} checked={focusing && toned} onChange={(e) => setFocusing(e.currentTarget.checked)} />
             <Crosshair /> <span class="label">Focus</span>
           </label>
           <button type="button" title="Show the whole page; 0 does the same with the preview focused" onClick={() => setFits((n) => n + 1)}><Maximize /> <span class="label">Fit page</span></button>
@@ -322,7 +326,7 @@ function RunView({ engine, status, stages, settings, image, error, fitError, onO
         <Preview
           {...preview} frames={frames} result={result} running={run.state === "running"} showSource={showSource}
           showTravel={showTravel} compare={comparing && shown ? { against: shown, at: swipe } : null} previous={previous} playback={playback}
-          view={view} onView={setView} fits={fits} focusing={focusing}
+          view={view} onView={setView} fits={fits} focusing={focusing && toned}
         />
         {/* Not over a test chart, which draws with no image. */}
         {!preview.hasImage && result === null && (
@@ -377,6 +381,7 @@ export function App() {
     return new Engine(worker);
   });
   const [styles, setStyles] = useState<Style[] | null>(null);
+  const [catalogue, setCatalogue] = useState<CatalogueEntry[]>([]);
   const [bank, setBank] = useState<BankPen[]>([]);
   const [inks, setInks] = useState<Ink[]>([]);
   const [state, setState] = useState<State | null>(null);
@@ -421,6 +426,13 @@ export function App() {
     save.current = setTimeout(() => engine.call("preset").then((r) => remember(JSON.stringify(r.value)), () => {}), 500);
   };
 
+  // Sends a command and takes the state from its reply; a refusal rejects with the engine's message.
+  async function send(method: string, args: unknown[] = []) {
+    const reply = await engine.call(method, args);
+    take(reply.state);
+    return reply;
+  }
+
   // Sends a command and takes the state from its reply. A refusal shows the message under
   // `where` and asks for the state again.
   async function call<T = unknown>(method: string, args: unknown[] = [], where = "", transfer?: Transferable[]): Promise<T | undefined> {
@@ -440,6 +452,7 @@ export function App() {
     engine.call("setPenLibrary", [library]).then(() => {}, () => {});
     engine.call<BankPen[]>("listPens").then((r) => setBank(r.value), () => {});
     engine.call<Ink[]>("listInks").then((r) => setInks(r.value), () => {});
+    engine.call<CatalogueEntry[]>("catalogue").then((r) => setCatalogue(r.value), () => {});
     // A share link's setup is read once and its fragment removed, so a reload does not apply it over later edits.
     const fragment = location.hash.startsWith(PREFIX) ? location.hash : null;
     if (fragment) window.history.replaceState(null, "", location.pathname + location.search);
@@ -458,6 +471,8 @@ export function App() {
         } catch { /* keeps the grid state */ }
       }
       take(state);
+      // The kept models go back into the engine; each reply brings the state with the model in it.
+      void restoreModels(send);
       // After the remembered setup, so the link's wins and Undo goes back to the remembered one; a link that fails leaves it.
       if (fragment) {
         const read = await decodeShare(fragment);
@@ -663,6 +678,7 @@ export function App() {
   const settings = { ...state.settings };
   for (const k in draft) settings[k] = { ...settings[k], ...draft[k] };
   const suggestions = state.suggestions.filter((s) => !dismissed.has(s.kind));
+  const model = String(settings.model?.model ?? "");
 
   return (
     <div
@@ -721,7 +737,7 @@ export function App() {
           <button type="button" data-tour="reset" onClick={() => call("resetSettings")}><RotateCcw /> Reset to defaults</button>
         </fieldset>
         <div class="stages" data-tour="settings">
-          <Settings stages={stages} values={settings} errors={errors} help={help} onChange={onSetting} />
+          <Settings stages={withModelChoice(stages, state.models, model)} values={settings} errors={errors} help={help} onChange={onSetting} />
         </div>
       </aside>
       <aside class="side-right">
@@ -763,7 +779,11 @@ export function App() {
       />
       <StylePicker
         opens={stylesOpens} styles={styles} style={state.style} canvas={state.canvas} paper={state.paper} hasImage={state.image} thumbs={thumbs}
-        onPick={(name) => name !== state.style && call("setStyle", [name])}
+        model={model} models={state.models} catalogue={catalogue} send={send}
+        // A model's entry sets the style and its model in one change, so it redraws once.
+        onPick={(e) => e.model !== undefined
+          ? (e.name !== state.style || e.model !== model) && call("apply", [{ style: e.name !== state.style ? e.name : undefined, settings: { model: { model: e.model } } }])
+          : e.name !== state.style && call("setStyle", [e.name])}
         onClose={() => { pickerOpen.current = false; call("cancelThumbs"); }}
       />
       <Tour opens={tourOpens} />
