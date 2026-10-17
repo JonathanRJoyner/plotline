@@ -37,6 +37,7 @@ use plotline_core::stages::tone::{flatten, guided};
 use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
 use plotline_core::style::Style;
 use plotline_core::synthetic::{flat_noise, gradient, ramp, scene, still_life, strokes};
+use plotline_core::tone_match;
 use plotline_core::{Canvas, Drawing, Fit, Image, Paths, Pen, Run, RunState, Session, Speeds};
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -1202,31 +1203,33 @@ fn an_optimize_suggestion_keeps_the_limits() {
         prop_assert_eq!(found.current_minutes, minutes);
         prop_assert!(!found.reason.is_empty());
         let Some(error) = found.error else {
-            // Nothing scored: no trial within the limits had a tone error, and nothing is offered.
+            // Nothing scored: no trial within the limits had a score, and nothing is offered.
             prop_assert!(found.patch.is_none() && found.beyond.is_none());
             prop_assert!(found
                 .trials
                 .iter()
-                .all(|t| t.error.is_none() || t.over || t.slow || !t.warnings.is_empty()));
+                .all(|t| t.score.is_none() || t.over || t.slow || !t.warnings.is_empty()));
             return Ok(());
         };
-        // It is the quickest of the trials within the limits whose tone error is within a tenth
-        // of the lowest, and only a trial left out for its time beats it by more.
+        // It is the quickest of the trials within the limits whose score is within a tenth of the
+        // lowest, and only a trial left out for its time beats it by more.
         let kept: Vec<_> = (found.trials.iter())
-            .filter(|t| t.error.is_some() && !t.over && !t.slow && t.warnings.is_empty())
+            .filter(|t| t.score.is_some() && !t.over && !t.slow && t.warnings.is_empty())
             .collect();
         let lowest = kept
             .iter()
-            .filter_map(|t| t.error)
+            .filter_map(|t| t.score)
             .fold(f64::INFINITY, f64::min);
-        prop_assert!(error <= (1.0 + CLOSE) * lowest);
+        let best =
+            (kept.iter()).find(|t| t.minutes == Some(found.minutes) && t.error == Some(error));
+        prop_assert!(best.is_some_and(|t| t.score.unwrap() <= (1.0 + CLOSE) * lowest));
         prop_assert!(
             kept.iter()
-                .all(|t| t.error.unwrap() > (1.0 + CLOSE) * lowest
+                .all(|t| t.score.unwrap() > (1.0 + CLOSE) * lowest
                     || t.minutes >= Some(found.minutes))
         );
         if let Some(b) = &found.beyond {
-            prop_assert!(b.slow && (1.0 + CLOSE) * b.error.unwrap() < lowest);
+            prop_assert!(b.slow && (1.0 + CLOSE) * b.score.unwrap() < lowest);
         }
         // The suggestion, applied, plots in the time it reports, within the limit, and with no
         // warning the current settings' drawing does not have.
@@ -1739,6 +1742,37 @@ fn acceleration_never_shortens_the_plot_time() {
         };
         let limit = stats::compute(&d, unbounded).estimated_seconds;
         prop_assert!((limit - full).abs() <= eps, "{limit} s against {full} s");
+        Ok(())
+    });
+}
+
+/// No drawing's tone error is above blank paper's, and blank paper never beats a drawing: a
+/// drawing with no ink scores blank paper's error with no contrast, which Optimize never picks.
+/// In colour, blank paper takes away none of its own difference from the image, and no drawing
+/// takes away more than all of it.
+#[test]
+fn blank_paper_bounds_the_tone_match_and_never_wins() {
+    check("blank", 12, case(all_styles()), |c| {
+        let mut s = c.session();
+        run(&mut s)?;
+        let (Some(d), Some(m)) = (s.drawing(), s.tone_match()) else {
+            return Ok(());
+        };
+        let tone = d.tone.as_deref().unwrap();
+        prop_assert!(m.error <= m.blank, "{m:?}");
+        let blank = tone_match::compare(&vec![0.0; tone.ink.len()], tone).unwrap();
+        prop_assert_eq!((blank.error, blank.contrast), (m.blank, 0.0));
+        prop_assert!(blank.score() >= m.score() && blank.score() == f64::INFINITY);
+        if let Some(colour) = m.colour {
+            prop_assert!(colour.gain <= 1.0, "{colour:?}");
+            let empty = Drawing {
+                layers: vec![],
+                ..(*d).clone()
+            };
+            let paper = tone_match::colour(&empty, &c.picture.image(), s.paper()).unwrap();
+            // The eye filter rounds a flat page in f32, so blank paper comes back to within a hair.
+            prop_assert!(paper.gain.abs() < 1e-3, "{paper:?}");
+        }
         Ok(())
     });
 }

@@ -263,7 +263,7 @@ def test_tone_match_and_auto_response():
     # The engine's pinned values, since the image, page and style are the same.
     match = s.tone_match()
     assert (match["error"], match["ssim"]) == (0.08197368769144689, 0.7488977156057808)
-    assert set(match) == {"error", "ssim", "floor", "reach"}
+    assert set(match) == {"error", "ssim", "floor", "reach", "contrast", "blank", "colour"}
     s.update("tone", response="auto")
     frames = []
     s.subscribe(frames.append)

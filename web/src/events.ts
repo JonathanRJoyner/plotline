@@ -22,7 +22,10 @@ export type FitResult = {
   samples: { value: number; metric: number }[];
 };
 /** How the drawing's tones follow its tone map, in the shape of the engine's `ToneMatch`. */
-export type ToneMatch = { error: number; ssim: number; floor: number; reach: number };
+export type ToneMatch = {
+  error: number; ssim: number; floor: number; reach: number; contrast: number; blank: number;
+  colour: { error: number; blank: number; gain: number } | null;
+};
 /** One run of an optimize search, in the shape of the engine's `Trial`. */
 export type Trial = {
   value: number; error: number | null; minutes: number | null; metric: number | null;

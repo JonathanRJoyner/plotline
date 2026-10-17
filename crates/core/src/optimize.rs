@@ -18,10 +18,13 @@
 //! never newly warned, so only a budget can leave it out. The stop rule counts trials, never
 //! time, so every target takes the same steps.
 //!
-//! The best trial is the quickest to plot of those whose tone error is within [`CLOSE`] of the
-//! lowest. Near its low the error is flat, and neighbouring values differ by up to a fifth as the
-//! marks fall differently on the image's detail, so the lowest error alone buys accidents with
-//! plot time (see `docs/decisions/2026-10-16-optimize-limits.md`).
+//! The best trial is the quickest to plot of those whose score is within [`CLOSE`] of the
+//! lowest. Near its low the score is flat, and neighbouring values differ by up to a fifth as the
+//! marks fall differently on the image's detail, so the lowest score alone buys accidents with
+//! plot time (see `docs/decisions/2026-10-16-optimize-limits.md`). The score is
+//! [`ToneMatch::score`](crate::tone_match::ToneMatch::score): the tone error divided by a power of
+//! the drawing's contrast, so of two values whose drawings follow the tones alike the darker wins
+//! (see `docs/decisions/2026-10-17-contrast-and-colour-match.md`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -59,12 +62,15 @@ pub struct Budget {
     pub target: f64,
 }
 
-/// One trial: the value tried, its drawing's tone error if there was anything to compare, its
-/// plot time, the budget's metric when there is a budget, and what left it out, if anything.
+/// One trial: the value tried, its drawing's tone error, contrast and score if there was anything
+/// to compare, its plot time, the budget's metric when there is a budget, and what left it out, if
+/// anything. A drawing with no contrast has no score.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Trial {
     pub value: f64,
     pub error: Option<f64>,
+    pub contrast: Option<f64>,
+    pub score: Option<f64>,
     /// The estimated plot time in minutes, `None` when the run failed.
     pub minutes: Option<f64>,
     pub metric: Option<f64>,
@@ -80,10 +86,10 @@ pub struct Trial {
 }
 
 impl Trial {
-    /// The score the search compares: the tone error, or infinity for a trial left out.
-    fn score(&self) -> f64 {
-        match self.error {
-            Some(e) if !self.over && !self.slow && self.warnings.is_empty() => e,
+    /// The score the search compares, or infinity for a trial left out.
+    fn rank(&self) -> f64 {
+        match self.score {
+            Some(s) if !self.over && !self.slow && self.warnings.is_empty() => s,
             _ => f64::INFINITY,
         }
     }
@@ -189,7 +195,7 @@ impl Search {
     fn lowest(&self) -> f64 {
         self.trials
             .iter()
-            .map(Trial::score)
+            .map(Trial::rank)
             .fold(f64::INFINITY, f64::min)
     }
 
@@ -199,7 +205,7 @@ impl Search {
         let near = (1.0 + CLOSE) * self.lowest();
         self.trials
             .iter()
-            .filter(|t| t.score().is_finite() && t.score() <= near)
+            .filter(|t| t.rank().is_finite() && t.rank() <= near)
             .fold(None, |best: Option<&Trial>, t| match best {
                 Some(b) if b.minutes <= t.minutes => Some(b),
                 _ => Some(t),
@@ -214,7 +220,7 @@ impl Search {
             (lo.min(t.value), hi.max(t.value))
         });
         let range = format!("{} from {lo} to {hi}{unit}", self.density.key);
-        if t.iter().all(|t| t.error.is_none()) {
+        if t.iter().all(|t| t.score.is_none()) {
             // A drawing with no marks plots in no time.
             return if t.iter().all(|t| t.minutes.is_none_or(|m| m == 0.0)) {
                 format!(
@@ -235,7 +241,7 @@ impl Search {
             (count(|t| !t.warnings.is_empty()), "with a new lint warning"),
             (count(|t| t.failed.is_some()), "failed"),
             (
-                count(|t| t.failed.is_none() && t.error.is_none()),
+                count(|t| t.failed.is_none() && t.score.is_none()),
                 "with no tone error",
             ),
         ]
@@ -250,17 +256,17 @@ impl Search {
         )
     }
 
-    /// The trial left out only for its plot time with the lowest tone error, when that error is
-    /// more than [`CLOSE`] under the lowest score, so that it would have been best without the
+    /// The trial left out only for its plot time with the lowest score, when that score is more
+    /// than [`CLOSE`] under the lowest of the others, so that it would have been best without the
     /// limit; the earliest of equals.
     pub fn beyond(&self) -> Option<&Trial> {
-        let slow = |t: &&Trial| t.slow && !t.over && t.warnings.is_empty() && t.error.is_some();
+        let slow = |t: &&Trial| t.slow && !t.over && t.warnings.is_empty() && t.score.is_some();
         (self.trials.iter().filter(slow))
             .fold(None, |best: Option<&Trial>, t| match best {
-                Some(b) if b.error <= t.error => Some(b),
+                Some(b) if b.score <= t.score => Some(b),
                 _ => Some(t),
             })
-            .filter(|t| t.error.is_some_and(|e| (1.0 + CLOSE) * e < self.lowest()))
+            .filter(|t| t.score.is_some_and(|s| (1.0 + CLOSE) * s < self.lowest()))
     }
 }
 
@@ -384,6 +390,9 @@ impl OptimizeRun {
                         Trial {
                             value,
                             error: measure.tone_match.map(|t| t.error),
+                            contrast: measure.tone_match.map(|t| t.contrast),
+                            score: (measure.tone_match.map(|t| t.score()))
+                                .filter(|s| s.is_finite()),
                             minutes: Some(seconds / 60.0),
                             metric,
                             over,
@@ -404,6 +413,8 @@ impl OptimizeRun {
                     _ => Trial {
                         value,
                         error: None,
+                        contrast: None,
+                        score: None,
                         minutes: None,
                         metric: None,
                         over: false,
@@ -419,10 +430,12 @@ impl OptimizeRun {
                     .trials()
                     .last()
                     .expect("a trial was just recorded");
-                let score = match (&t.failed, t.error) {
-                    (Some(why), _) => format!("failed, {why}"),
-                    (None, Some(e)) => format!("tone error {e:.3}"),
-                    (None, None) => "no tone to compare".to_string(),
+                let score = match (&t.failed, t.error, t.contrast) {
+                    (Some(why), _, _) => format!("failed, {why}"),
+                    (None, Some(e), Some(c)) => {
+                        format!("tone error {e:.3}, contrast {:.0} %", 100.0 * c)
+                    }
+                    _ => "no tone to compare".to_string(),
                 };
                 let mut notes: Vec<String> = t
                     .minutes
@@ -504,7 +517,7 @@ impl OptimizeRun {
         }
         let d = &self.search.density;
         let first = &self.search.trials()[0];
-        let current_error = (first.score().is_finite()).then_some(first.score());
+        let current_error = first.error.filter(|_| first.rank().is_finite());
         // A search that ends done made the first trial's drawing.
         let current_minutes = first.minutes.expect("the first trial has a drawing");
         let unit = if d.integer { "" } else { " mm" };
@@ -633,6 +646,8 @@ mod tests {
         Trial {
             value,
             error,
+            contrast: error.map(|_| 1.0),
+            score: error,
             minutes: Some(10.0),
             metric: None,
             over: false,

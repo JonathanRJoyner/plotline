@@ -37,7 +37,7 @@ use crate::stage::Artifact;
 use crate::stats::{self, Speeds, Stats};
 use crate::style::{same, Look, Style, StyleError};
 use crate::testchart;
-use crate::tone_match::ToneMatch;
+use crate::tone_match::{self, ColourMatch, ToneMatch};
 use crate::types::{check_color, Canvas, Drawing, Fit, Image, Pen, TypeError, DEFAULT_PAPER};
 
 /// Why a session refused a change or could not start a run; the message is shown to users.
@@ -137,7 +137,12 @@ pub struct Session {
     cancel: Arc<AtomicBool>,
     /// The plot lint measurement of the drawing it was taken for, kept until the drawing changes.
     measured: Mutex<Option<(Weak<Drawing>, Arc<Measure>)>>,
+    /// The colour match of the drawing and paper it was taken for.
+    coloured: Mutex<Option<Coloured>>,
 }
+
+/// A colour match, and the drawing and paper it was taken for.
+type Coloured = (Weak<Drawing>, String, Option<ColourMatch>);
 
 impl Session {
     /// A session with a stage cache of `cache_bytes`, no image, an A4 page with a 10 mm margin
@@ -161,6 +166,7 @@ impl Session {
             shared: Arc::default(),
             cancel: Arc::default(),
             measured: Mutex::default(),
+            coloured: Mutex::default(),
         }
     }
 
@@ -649,10 +655,28 @@ impl Session {
     }
 
     /// How the last finished drawing's tones follow its tone map; see [`crate::tone_match`]. It
-    /// comes from the same measurement as [`Session::lint`]. `None` without a drawing, and when
-    /// there is nothing to compare.
+    /// comes from the same measurement as [`Session::lint`], with the colour match of a drawing
+    /// in more than one colour against the image on the session's paper. `None` without a
+    /// drawing, and when there is nothing to compare.
     pub fn tone_match(&self) -> Option<ToneMatch> {
-        self.measure()?.1.tone_match
+        let (d, m) = self.measure()?;
+        let mut t = m.tone_match?;
+        if let Some(image) = self.image.as_ref().filter(|_| tone_match::coloured(&d)) {
+            let mut coloured = self.coloured.lock().unwrap();
+            t.colour = match &*coloured {
+                Some((w, paper, c))
+                    if Weak::ptr_eq(w, &Arc::downgrade(&d)) && *paper == self.paper =>
+                {
+                    *c
+                }
+                _ => {
+                    let c = tone_match::colour(&d, image, &self.paper);
+                    *coloured = Some((Arc::downgrade(&d), self.paper.clone(), c));
+                    c
+                }
+            };
+        }
+        Some(t)
     }
 
     /// The last finished drawing and its plot lint measurement, taken on the first call after
