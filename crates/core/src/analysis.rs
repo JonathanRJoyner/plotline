@@ -11,7 +11,8 @@
 //! doi:10.1006/cviu.1996.0060) and the tone at the border. It also measures Otsu's separability
 //! once the paper's tone is flattened out (see [`crate::stages::tone::flatten`]), which tells a
 //! drawing on uneven paper from a photograph. For a colour image it also picks the pens that draw
-//! it best; see [`ImageStats::palette`].
+//! it best, from the user's pen library when there is one, and the inks worth adding to that
+//! library; see [`ImageStats::palette`] and [`ImageStats::palette_additions`].
 //!
 //! Every value is a deterministic function of the pixels: integer histograms with fixed bin
 //! edges, sums in row-major order, and `sqrt` (exact in IEEE 754) as the only float library call
@@ -43,6 +44,8 @@ const PALETTE_MAX: usize = 4;
 /// The least an added ink must lower the mean colour difference to be kept: about one just
 /// noticeable difference in CIELAB.
 const PALETTE_GAIN: f64 = 2.3;
+/// The most inks the additions to a pen library list.
+const ADDITIONS_MAX: usize = 3;
 
 /// What [`measure`] reports about an image. Luminance is 0..1; the shares are 0..1.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -71,13 +74,33 @@ pub struct ImageStats {
     pub noise: f64,
     /// Mean luminance of the outer band, 5 % of the shorter edge wide.
     pub border: f64,
-    /// The inks from [`INKS`] that draw a colour image best under the Pen use stage's colour model,
-    /// lightest first by luma; empty for an image that is not colourful enough (colourfulness
-    /// past 40) or that no ink improves on white paper.
-    pub palette: Vec<&'static str>,
+    /// The colours that draw a colour image best under the Pen use stage's colour model, lightest
+    /// first by luma: inks from [`INKS`], or the pen library's colours when it has any; empty for
+    /// an image that is not colourful enough (colourfulness past 40) or that no colour improves
+    /// on white paper.
+    pub palette: Vec<PaletteInk>,
     /// The palette's mean CIE 1976 colour difference ΔE*ab from the image (white paper's, if the
     /// palette is empty); 0 when the image is not colourful enough for the fit to run.
     pub palette_error: f64,
+    /// Inks from [`INKS`] that the pen library lacks and that would draw the image clearly better
+    /// than its palette, best first, at most three; empty without a library. See [`additions`].
+    pub palette_additions: Vec<PaletteAddition>,
+}
+
+/// One colour of a palette: the ink's name, or the name of the first library pen with that
+/// colour, and the colour written as `#rrggbb`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaletteInk {
+    pub name: String,
+    pub color: String,
+}
+
+/// An ink the pen library lacks, and the mean ΔE*ab the palette would reach with it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaletteAddition {
+    pub name: String,
+    pub color: String,
+    pub error: f64,
 }
 
 /// Counts of `lum` in `bins` equal bins on 0..1; bin `min(floor(v * bins), bins - 1)`.
@@ -304,27 +327,37 @@ fn mean_error(samples: &[Sample], absorb: &[[f64; 3]]) -> f64 {
     sum / weight
 }
 
-/// The inks of [`INKS`] that draw an image best, by forward stepwise selection (T. Hastie,
-/// R. Tibshirani and J. Friedman, *The Elements of Statistical Learning*, 2nd ed., Springer,
-/// 2009, section 3.3.2): from no ink, each step adds the ink that lowers [`mean_error`] most, the
-/// earlier ink in [`INKS`] on a tie, and the fit stops at `PALETTE_MAX` inks or when the best
-/// addition lowers the error by under `PALETTE_GAIN`, about one just noticeable difference (M.
-/// Mahy, L. Van Eycken and A. Oosterlinck, "Evaluation of uniform color spaces developed after
-/// the adoption of CIELAB and CIELUV", *Color Research and Application* 19(2), 1994). Returns
-/// the ink names, lightest first (BT.601 luma, ties in [`INKS`] order), and the chosen set's mean
-/// error.
+/// How much of each channel the colour `hex`, written as `#rrggbb`, absorbs: the Pen use stage's
+/// [`split::absorption`].
+fn absorb(hex: &str) -> [f64; 3] {
+    split::absorption(&Pen {
+        name: String::new(),
+        width_mm: 1.0,
+        color: hex.to_string(),
+    })
+}
+
+/// BT.601 luma of the colour `hex`, written as `#rrggbb`.
+fn luma(hex: &str) -> f64 {
+    let [r, g, b] = rgb(hex).map(|byte| f64::from(byte) / 255.0);
+    0.299 * r + 0.587 * g + 0.114 * b
+}
+
+/// The `candidates`, as `(name, "#rrggbb")`, that draw an image best, by forward stepwise
+/// selection (T. Hastie, R. Tibshirani and J. Friedman, *The Elements of Statistical Learning*,
+/// 2nd ed., Springer, 2009, section 3.3.2): from no ink, each step adds the candidate that lowers
+/// [`mean_error`] most, the earlier candidate on a tie, and the fit stops at `PALETTE_MAX` inks
+/// or when the best addition lowers the error by under `PALETTE_GAIN`, about one just noticeable
+/// difference (M. Mahy, L. Van Eycken and A. Oosterlinck, "Evaluation of uniform color spaces
+/// developed after the adoption of CIELAB and CIELUV", *Color Research and Application* 19(2),
+/// 1994). Returns the chosen candidates' indices in candidate order, and their mean error.
 ///
 /// The commonest colours of the image are not the answer: the inks are transparent and mix, so a
 /// green is best drawn by yellow over blue, and the inks that reproduce an image best are not its
 /// most common colours.
-fn fit_palette(samples: &[Sample]) -> (Vec<&'static str>, f64) {
-    let absorb: Vec<[f64; 3]> = INKS
-        .iter()
-        .map(|&(name, hex)| {
-            split::absorption(&Pen::new(name, 1.0, hex).expect("the inks are valid colours"))
-        })
-        .collect();
-    // The set is always in `INKS` order, so the result does not depend on the order of adding.
+fn fit_palette(samples: &[Sample], candidates: &[(&str, &str)]) -> (Vec<usize>, f64) {
+    let absorb: Vec<[f64; 3]> = candidates.iter().map(|&(_, hex)| absorb(hex)).collect();
+    // The set is always in candidate order, so the result does not depend on the order of adding.
     let error_of = |set: &[usize]| {
         let absorb: Vec<_> = set.iter().map(|&i| absorb[i]).collect();
         mean_error(samples, &absorb)
@@ -333,7 +366,7 @@ fn fit_palette(samples: &[Sample]) -> (Vec<&'static str>, f64) {
     let mut error = error_of(&chosen);
     while chosen.len() < PALETTE_MAX {
         let mut best: Option<(usize, f64)> = None;
-        for i in (0..INKS.len()).filter(|i| !chosen.contains(i)) {
+        for i in (0..candidates.len()).filter(|i| !chosen.contains(i)) {
             let mut set = chosen.clone();
             set.push(i);
             set.sort_unstable();
@@ -351,17 +384,100 @@ fn fit_palette(samples: &[Sample]) -> (Vec<&'static str>, f64) {
             _ => break,
         }
     }
-    let luma = |i: usize| {
-        let [r, g, b] = rgb(INKS[i].1).map(|byte| f64::from(byte) / 255.0);
-        0.299 * r + 0.587 * g + 0.114 * b
-    };
-    chosen.sort_by(|&i, &j| luma(j).total_cmp(&luma(i)));
-    (chosen.iter().map(|&i| INKS[i].0).collect(), error)
+    (chosen, error)
 }
 
-/// Measure `image`; see [`ImageStats`]. An image with no pixels reports its size and zero for
-/// everything else.
+/// The inks of [`INKS`] missing from the `candidates` that would draw the image clearly better
+/// than the palette `chosen` (indices into `candidates`, whose mean error is `error`). It looks
+/// one step on from the fit, the neighbourhood move of local search (C. H. Papadimitriou and
+/// K. Steiglitz, *Combinatorial Optimization: Algorithms and Complexity*, Prentice-Hall, 1982,
+/// the chapter on local search): each ink is tried added to the palette, when it has fewer than
+/// `PALETTE_MAX` colours, and in place of each of its colours. The ink's error is the lowest of
+/// those sets', and the ink is kept when that is at least `PALETTE_GAIN` below `error`, so an ink
+/// close to a colour already there drops out with no threshold of its own. Best first, ties in
+/// [`INKS`] order, at most `ADDITIONS_MAX`.
+fn additions(
+    samples: &[Sample],
+    candidates: &[(&str, &str)],
+    chosen: &[usize],
+    error: f64,
+) -> Vec<PaletteAddition> {
+    let base: Vec<[f64; 3]> = chosen.iter().map(|&i| absorb(candidates[i].1)).collect();
+    let owned = |hex: &str| candidates.iter().any(|c| c.1.eq_ignore_ascii_case(hex));
+    let mut out = Vec::new();
+    for &(name, hex) in INKS.iter().filter(|ink| !owned(ink.1)) {
+        let ink = absorb(hex);
+        let mut sets = Vec::new();
+        if base.len() < PALETTE_MAX {
+            let mut set = base.clone();
+            set.push(ink);
+            sets.push(set);
+        }
+        for j in 0..base.len() {
+            let mut set = base.clone();
+            set[j] = ink;
+            sets.push(set);
+        }
+        let best = sets
+            .iter()
+            .map(|set| mean_error(samples, set))
+            .fold(f64::INFINITY, f64::min);
+        if error - best >= PALETTE_GAIN {
+            out.push(PaletteAddition {
+                name: name.to_string(),
+                color: hex.to_string(),
+                error: best,
+            });
+        }
+    }
+    // A stable sort, so ties stay in `INKS` order.
+    out.sort_by(|a, b| a.error.total_cmp(&b.error));
+    out.truncate(ADDITIONS_MAX);
+    out
+}
+
+/// The palette of `samples`, lightest first (BT.601 luma, ties in candidate order), its mean
+/// error and the additions: fitted to [`INKS`] when `library` is empty, and otherwise to the
+/// library's distinct colours, compared without case and each named after the first pen with it.
+fn palette_of(samples: &[Sample], library: &[Pen]) -> (Vec<PaletteInk>, f64, Vec<PaletteAddition>) {
+    let mut candidates: Vec<(&str, &str)> = Vec::new();
+    for pen in library {
+        if !candidates
+            .iter()
+            .any(|c| c.1.eq_ignore_ascii_case(&pen.color))
+        {
+            candidates.push((&pen.name, &pen.color));
+        }
+    }
+    if library.is_empty() {
+        candidates = INKS.to_vec();
+    }
+    let (mut chosen, error) = fit_palette(samples, &candidates);
+    let more = if library.is_empty() {
+        Vec::new()
+    } else {
+        additions(samples, &candidates, &chosen, error)
+    };
+    chosen.sort_by(|&i, &j| luma(candidates[j].1).total_cmp(&luma(candidates[i].1)));
+    let palette = chosen
+        .iter()
+        .map(|&i| PaletteInk {
+            name: candidates[i].0.to_string(),
+            color: candidates[i].1.to_string(),
+        })
+        .collect();
+    (palette, error, more)
+}
+
+/// Measure `image` with no pen library; see [`measure_with`].
 pub fn measure(image: &Image) -> ImageStats {
+    measure_with(image, &[])
+}
+
+/// Measure `image`; see [`ImageStats`]. The palette is fitted to the colours of the pen `library`
+/// when it has any, and to [`INKS`] otherwise. An image with no pixels reports its size and zero
+/// for everything else.
+pub fn measure_with(image: &Image, library: &[Pen]) -> ImageStats {
     let (w, h) = (image.width as usize, image.height as usize);
     if w == 0 || h == 0 {
         return ImageStats {
@@ -381,10 +497,10 @@ pub fn measure(image: &Image) -> ImageStats {
     let flat_two_level = otsu(&flatten(&lum, gw, gh, gw.max(gh) as f64 / 16.0)).1;
     let (otsu, two_level) = otsu(&lum);
     let colourfulness = colourfulness(&r, &g, &b);
-    let (palette, palette_error) = if colourfulness > COLOUR_CUT {
-        fit_palette(&samples(&r, &g, &b))
+    let (palette, palette_error, palette_additions) = if colourfulness > COLOUR_CUT {
+        palette_of(&samples(&r, &g, &b), library)
     } else {
-        (Vec::new(), 0.0)
+        (Vec::new(), 0.0, Vec::new())
     };
     let dark = lum.iter().filter(|&&v| v < 0.25).count();
     let light = lum.iter().filter(|&&v| v > 0.75).count();
@@ -405,11 +521,12 @@ pub fn measure(image: &Image) -> ImageStats {
         border: border(&lum, gw, gh),
         palette,
         palette_error,
+        palette_additions,
     }
 }
 
 /// A change that would suit the image, and why. The reasons are sentences written for a person
-/// and read by the assistant as well; all but the colour one are fixed.
+/// and read by the assistant as well; all but the colour and `pens_to_add` ones are fixed.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Suggestion {
     pub kind: &'static str,
@@ -446,13 +563,17 @@ const TURN_GAIN: f64 = 1.3;
 /// default (`levels` manual, `flatten_mm` 0, `invert` off, `blur_mm` 0, `resolution` 1000, `mode`
 /// one pen). `pens` are the session's: the colour suggestion gives the palette's pens the first
 /// one's width, and is left out when Pen use is by colour and the pens already have the palette's
-/// colours. The cut-offs are hand-set starting values, not a fitted model.
+/// colours. `library` is the session's pen library, the one `stats` was measured with: with one,
+/// the colour suggestion's pens are the library's own, of each colour the one closest to the
+/// first pen's width, and a `pens_to_add` note lists [`ImageStats::palette_additions`]. The
+/// cut-offs are hand-set starting values, not a fitted model.
 pub fn suggest(
     stats: &ImageStats,
     canvas: &Canvas,
     style: &str,
     settings: &Value,
     pens: &[Pen],
+    library: &[Pen],
 ) -> Vec<Suggestion> {
     let mut out = Vec::new();
     // Nothing to say about no pixels; the zeroed statistics would trip the rules below.
@@ -522,41 +643,104 @@ pub fn suggest(
         .and_then(Value::as_str)
         == Some("by_colour");
     if stats.colourfulness > COLOUR_CUT && stats.palette.len() >= 2 {
-        let hex = |name: &str| {
-            INKS.iter()
-                .find(|ink| ink.0 == name)
-                .map_or("", |ink| ink.1)
-        };
         // In effect when the pens' colours and the palette's are the same set, ignoring case.
         let inked = |pen: &Pen| {
             stats
                 .palette
                 .iter()
-                .any(|&n| pen.color.eq_ignore_ascii_case(hex(n)))
+                .any(|ink| pen.color.eq_ignore_ascii_case(&ink.color))
         };
-        let held = |n: &str| pens.iter().any(|p| p.color.eq_ignore_ascii_case(hex(n)));
-        let in_effect =
-            by_colour && pens.iter().all(inked) && stats.palette.iter().all(|&n| held(n));
+        let held = |ink: &PaletteInk| {
+            pens.iter()
+                .any(|p| p.color.eq_ignore_ascii_case(&ink.color))
+        };
+        let in_effect = by_colour && pens.iter().all(inked) && stats.palette.iter().all(held);
         if !in_effect {
             let width = pens.first().map_or(0.3, |p| p.width_mm);
-            let list: Vec<Value> = stats
+            let chosen: Vec<Pen> = stats
                 .palette
                 .iter()
-                .map(|&name| {
-                    let label = format!("{} {width}", capitalise(name));
-                    json!({"name": label, "width_mm": width, "color": hex(name)})
+                .map(|ink| {
+                    // The library pen of this colour closest to the first pen's width, the
+                    // earlier one on a tie; without one, a pen named after the ink and the width.
+                    library
+                        .iter()
+                        .filter(|p| p.color.eq_ignore_ascii_case(&ink.color))
+                        .reduce(|best, p| {
+                            let off = |p: &Pen| (p.width_mm - width).abs();
+                            if off(p) < off(best) {
+                                p
+                            } else {
+                                best
+                            }
+                        })
+                        .cloned()
+                        .unwrap_or_else(|| Pen {
+                            name: format!("{} {width}", capitalise(&ink.name)),
+                            width_mm: width,
+                            color: ink.color.clone(),
+                        })
                 })
                 .collect();
-            let (last, rest) = stats.palette.split_last().expect("two or more inks");
-            let named = capitalise(&format!("{} and {last}", rest.join(", ")));
-            let reason = format!(
-                "This is a colour image. {named} pens draw its colours best, with Pen use set to by colour."
-            );
+            let reason = if library.is_empty() {
+                let names: Vec<&str> = stats.palette.iter().map(|ink| ink.name.as_str()).collect();
+                let named = capitalise(&listed(&names));
+                format!("This is a colour image. {named} pens draw its colours best, with Pen use set to by colour.")
+            } else {
+                let names: Vec<&str> = chosen.iter().map(|p| p.name.as_str()).collect();
+                let named = listed(&names);
+                format!("This is a colour image. Your pens {named} draw its colours best, with Pen use set to by colour.")
+            };
+            let list: Vec<Value> = chosen
+                .iter()
+                .map(|p| json!({"name": p.name, "width_mm": p.width_mm, "color": p.color}))
+                .collect();
             let patch = json!({"pens": list, "settings": {"split": {"mode": "by_colour"}}});
             add("colour", &reason, Some(patch));
         }
     }
+    if !stats.palette_additions.is_empty() {
+        let article = |name: &str| {
+            if name.starts_with(['a', 'e', 'i', 'o', 'u']) {
+                "an"
+            } else {
+                "a"
+            }
+        };
+        let parts: Vec<String> = stats
+            .palette_additions
+            .iter()
+            .enumerate()
+            .map(|(i, ink)| {
+                let with = format!("with {} {} pen", article(&ink.name), ink.name);
+                if i == 0 {
+                    let from = stats.palette_error;
+                    format!(
+                        "{with} the mean colour difference falls from {from:.1} to {:.1}",
+                        ink.error
+                    )
+                } else {
+                    format!("{with} to {:.1}", ink.error)
+                }
+            })
+            .collect();
+        let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+        let reason = format!(
+            "Pens you don't have would draw its colours closer: {}.",
+            listed(&parts)
+        );
+        add("pens_to_add", &reason, None);
+    }
     out
+}
+
+/// `items` joined as a list in a sentence: "a", "a and b", "a, b and c".
+fn listed(items: &[&str]) -> String {
+    match items.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 /// `word` with its first letter in capitals.
@@ -592,7 +776,7 @@ mod tests {
     }
 
     fn run_with(image: &Image, style: &str, settings: &Value, pens: &[Pen]) -> Vec<Suggestion> {
-        suggest(&measure(image), &page(), style, settings, pens)
+        suggest(&measure(image), &page(), style, settings, pens, &[])
     }
 
     /// Pens in the given inks, in order, at 0.3 mm.
@@ -759,7 +943,7 @@ mod tests {
     fn the_flatten_window_is_a_sixteenth_of_the_longer_side() {
         let stats = measure(&lit_strokes(256, 256, 0.4));
         let window = |canvas: Canvas| {
-            let all = suggest(&stats, &canvas, "grid", &json!({}), &black(0.3));
+            let all = suggest(&stats, &canvas, "grid", &json!({}), &black(0.3), &[]);
             patch(&all, "paper").unwrap()["settings"]["tone"]["flatten_mm"].clone()
         };
         // 277 / 16 = 17.3125 on A4 and 100 / 16 = 6.25, to the nearest half mm; 1000 / 16 is past the
@@ -854,7 +1038,7 @@ mod tests {
         let stats = measure(&ramp(400, 200, 0.0, 1.0));
         let pens = black(0.3);
         assert!(find(
-            &suggest(&stats, &fill, "grid", &settings, &pens),
+            &suggest(&stats, &fill, "grid", &settings, &pens, &[]),
             "orientation"
         )
         .is_none());
@@ -890,12 +1074,11 @@ mod tests {
             stats.palette_error
         );
         // Lightest first by BT.601 luma.
-        let luma = |name: &str| {
-            let hex = INKS.iter().find(|ink| ink.0 == name).unwrap().1;
-            let [r, g, b] = rgb(hex).map(f64::from);
-            0.299 * r + 0.587 * g + 0.114 * b
-        };
-        assert!(stats.palette.windows(2).all(|w| luma(w[0]) >= luma(w[1])));
+        assert!(stats
+            .palette
+            .windows(2)
+            .all(|w| luma(&w[0].color) >= luma(&w[1].color)));
+        assert!(stats.palette_additions.is_empty());
     }
 
     #[test]
@@ -915,8 +1098,10 @@ mod tests {
         let colour = patch(&all, "colour").expect("colour bars are colourful");
         let pens = colour["pens"].as_array().unwrap();
         assert_eq!(pens.len(), palette.len());
-        for (pen, name) in pens.iter().zip(&palette) {
-            let hex = INKS.iter().find(|ink| ink.0 == *name).unwrap().1;
+        for (pen, ink) in pens.iter().zip(&palette) {
+            let name = &ink.name;
+            let hex = INKS.iter().find(|i| i.0 == name).unwrap().1;
+            assert_eq!(ink.color, hex);
             let label = format!("{}{} 0.5", name[..1].to_uppercase(), &name[1..]);
             assert_eq!(pen, &json!({"name": label, "width_mm": 0.5, "color": hex}));
         }
@@ -930,6 +1115,7 @@ mod tests {
     fn colour_is_left_out_once_in_effect() {
         let image = color_bars(256, 64);
         let palette = measure(&image).palette;
+        let palette: Vec<&str> = palette.iter().map(|ink| ink.name.as_str()).collect();
         let mut settings = defaults("grid");
         let mut pens = inks(&palette);
         // The palette's pens alone do not set Pen use.
@@ -961,11 +1147,24 @@ mod tests {
             width_px: 10,
             height_px: 10,
             colourfulness: 50.0,
-            palette: palette.to_vec(),
+            palette: palette
+                .iter()
+                .map(|&name| PaletteInk {
+                    name: name.to_string(),
+                    color: INKS.iter().find(|i| i.0 == name).unwrap().1.to_string(),
+                })
+                .collect(),
             ..ImageStats::default()
         };
         let reason = |palette: &[&'static str]| {
-            let all = suggest(&stats(palette), &page(), "grid", &json!({}), &black(0.3));
+            let all = suggest(
+                &stats(palette),
+                &page(),
+                "grid",
+                &json!({}),
+                &black(0.3),
+                &[],
+            );
             find(&all, "colour").map(|s| s.reason.clone())
         };
         let draws = "pens draw its colours best, with Pen use set to by colour.";
@@ -988,6 +1187,163 @@ mod tests {
         // One ink is not worth a suggestion, and a grey image has no palette.
         assert_eq!(reason(&["black"]), None);
         assert_eq!(reason(&[]), None);
+    }
+
+    /// Library pens from `(name, width, ink name or #rrggbb)`.
+    fn lib(specs: &[(&str, f64, &str)]) -> Vec<Pen> {
+        specs
+            .iter()
+            .map(|&(name, width, colour)| {
+                let hex = INKS.iter().find(|i| i.0 == colour).map_or(colour, |i| i.1);
+                Pen::new(name, width, hex).unwrap()
+            })
+            .collect()
+    }
+
+    fn with_library(image: &Image, pens: &[Pen], library: &[Pen]) -> (ImageStats, Vec<Suggestion>) {
+        let stats = measure_with(image, library);
+        let all = suggest(&stats, &page(), "grid", &defaults("grid"), pens, library);
+        (stats, all)
+    }
+
+    fn owned_colours() -> Vec<Pen> {
+        lib(&[
+            ("My yellow", 0.3, "yellow"),
+            ("My blue", 0.3, "blue"),
+            ("My pink", 0.3, "pink"),
+            ("My black", 0.3, "black"),
+        ])
+    }
+
+    #[test]
+    fn a_library_palette_uses_only_library_colours() {
+        let library = owned_colours();
+        let (stats, _) = with_library(&color_bars(256, 64), &black(0.3), &library);
+        assert!(!stats.palette.is_empty());
+        for ink in &stats.palette {
+            assert!(
+                library
+                    .iter()
+                    .any(|p| p.name == ink.name && p.color.eq_ignore_ascii_case(&ink.color)),
+                "{ink:?} is not a library pen"
+            );
+        }
+    }
+
+    #[test]
+    fn the_reason_names_owned_pens() {
+        let library = owned_colours();
+        let (_, all) = with_library(&color_bars(256, 64), &black(0.3), &library);
+        let colour = find(&all, "colour").expect("the library draws the colour bars");
+        assert!(
+            colour
+                .reason
+                .starts_with("This is a colour image. Your pens "),
+            "{}",
+            colour.reason
+        );
+        for pen in colour.patch.as_ref().unwrap()["pens"].as_array().unwrap() {
+            let name = pen["name"].as_str().unwrap();
+            assert!(name.starts_with("My "), "{name}");
+            assert!(colour.reason.contains(name), "{}", colour.reason);
+        }
+    }
+
+    #[test]
+    fn the_closest_width_draws_a_colour() {
+        let image = color_bars(256, 64);
+        let colours = [
+            ("Y", 0.3, "yellow"),
+            ("P", 0.3, "pink"),
+            ("V", 0.3, "purple"),
+        ];
+        let black_pen = |library: &[Pen], width: f64| {
+            let (_, all) = with_library(&image, &black(width), library);
+            let colour = patch(&all, "colour").expect("the library draws the colour bars");
+            let pens = colour["pens"].as_array().unwrap().clone();
+            let black = pens.iter().find(|p| p["color"] == "#000000").cloned();
+            black.expect("black is in the palette")["name"].clone()
+        };
+        let library = lib(&[
+            colours.as_slice(),
+            &[("B1", 0.1, "black"), ("B5", 0.5, "black")],
+        ]
+        .concat());
+        assert_eq!(black_pen(&library, 0.45), "B5");
+        assert_eq!(black_pen(&library, 0.15), "B1");
+        // Equally far: the earlier pen.
+        let library = lib(&[
+            colours.as_slice(),
+            &[("B25", 0.25, "black"), ("B75", 0.75, "black")],
+        ]
+        .concat());
+        assert_eq!(black_pen(&library, 0.5), "B25");
+    }
+
+    #[test]
+    fn black_pens_only_get_pens_to_add() {
+        let library = lib(&[("Fine black", 0.3, "black"), ("Bold black", 0.8, "#000000")]);
+        let (stats, all) = with_library(&color_bars(256, 64), &black(0.3), &library);
+        assert!(find(&all, "colour").is_none());
+        let note = find(&all, "pens_to_add").expect("the colour bars want more than black");
+        assert_eq!(note.patch, None);
+        assert!(note
+            .reason
+            .starts_with("Pens you don't have would draw its colours closer: with "));
+        let more = &stats.palette_additions;
+        assert!((1..=3).contains(&more.len()), "{more:?}");
+        for ink in more {
+            assert!(!ink.color.eq_ignore_ascii_case("#000000"));
+            assert!(stats.palette_error - ink.error >= PALETTE_GAIN, "{ink:?}");
+        }
+        assert!(more.windows(2).all(|w| w[0].error <= w[1].error));
+    }
+
+    #[test]
+    fn a_library_of_every_ink_has_no_additions() {
+        let image = color_bars(256, 64);
+        let library: Vec<Pen> = INKS
+            .iter()
+            .map(|&(name, hex)| Pen::new(name, 0.3, hex).unwrap())
+            .collect();
+        let stats = measure_with(&image, &library);
+        assert!(stats.palette_additions.is_empty());
+        // The same candidates in the same order fit the same palette as no library.
+        assert_eq!(stats.palette, measure(&image).palette);
+        assert!(measure(&image).palette_additions.is_empty());
+    }
+
+    #[test]
+    fn pens_to_add_reads_as_a_sentence() {
+        let addition = |name: &str, error| PaletteAddition {
+            name: name.to_string(),
+            color: INKS.iter().find(|i| i.0 == name).unwrap().1.to_string(),
+            error,
+        };
+        let reason = |more: Vec<PaletteAddition>| {
+            let stats = ImageStats {
+                width_px: 10,
+                height_px: 10,
+                colourfulness: 50.0,
+                palette_error: 12.34,
+                palette_additions: more,
+                ..ImageStats::default()
+            };
+            let all = suggest(&stats, &page(), "grid", &json!({}), &black(0.3), &[]);
+            find(&all, "pens_to_add").map(|s| s.reason.clone())
+        };
+        let start = "Pens you don't have would draw its colours closer:";
+        assert_eq!(
+            reason(vec![addition("orange", 5.06)]),
+            Some(format!(
+                "{start} with an orange pen the mean colour difference falls from 12.3 to 5.1."
+            ))
+        );
+        assert_eq!(
+            reason(vec![addition("orange", 5.0), addition("pink", 7.4), addition("red", 8.0)]),
+            Some(format!("{start} with an orange pen the mean colour difference falls from 12.3 to 5.0, with a pink pen to 7.4 and with a red pen to 8.0."))
+        );
+        assert_eq!(reason(Vec::new()), None);
     }
 
     #[test]
@@ -1065,10 +1421,21 @@ mod tests {
             width_px: 10,
             height_px: 10,
             colourfulness: 50.0,
-            palette: vec!["yellow", "blue"],
+            palette: [("yellow", "#f5c400"), ("blue", "#1d4fb8")]
+                .map(|(name, color)| PaletteInk {
+                    name: name.to_string(),
+                    color: color.to_string(),
+                })
+                .to_vec(),
             ..ImageStats::default()
         };
-        let all = suggest(&stats, &page(), "grid", &json!({}), &black(0.3));
+        let shape = serde_json::to_value(&stats).unwrap();
+        assert_eq!(
+            shape["palette"][0],
+            json!({"name": "yellow", "color": "#f5c400"})
+        );
+        assert_eq!(shape["palette_additions"], json!([]));
+        let all = suggest(&stats, &page(), "grid", &json!({}), &black(0.3), &[]);
         assert_eq!(
             serde_json::to_value(find(&all, "colour").unwrap()).unwrap(),
             json!({
