@@ -602,3 +602,135 @@ def test_a_gcode_run_needs_a_machine_that_works(tmp_path, image):
     r = coarse(tmp_path, image, "--machine", str(good), "--width", "300", "--gcode", str(out))
     assert r.exit_code == 1 and "larger than the machine's" in r.stderr, r.output
     assert not out.exists()
+
+
+FAST = ("--set", "tone.resolution=64", "--set", "points.spacing_mm=5", "--quiet")
+
+
+def pictures(folder, *names):
+    """Make ``folder`` hold a small PNG for each name, whatever its extension, and return it."""
+    folder.mkdir(exist_ok=True)
+    for name in names:
+        write_png(folder / name, _core.synthetic_gradient(64, 48))
+    return folder
+
+
+def layer_stroke(svg):
+    layer = ET.parse(svg).getroot().find("{http://www.w3.org/2000/svg}g")
+    return None if layer is None else layer.get("stroke")
+
+
+def test_a_folder_of_images_writes_one_output_per_image_named_by_its_stem(tmp_path):
+    photos = pictures(tmp_path / "photos", "b.png", "A.PNG")
+    (photos / "notes.txt").write_text("not an image")
+    pictures(photos / "deeper", "c.png")  # a folder inside is not searched
+    out = tmp_path / "drawings"  # does not exist yet
+    other = {name: tmp_path / name for name in ("json", "preview", "preset", "hpgl")}
+    options = ["--json", other["json"], "--preview", other["preview"]]
+    options += ["--save-preset", other["preset"], "--hpgl", other["hpgl"]]
+    r = run("run", "grid", str(photos), "--out", str(out), *map(str, options), *FAST)
+    assert r.exit_code == 0, r.output
+    # Sorted by name, and every output option is a folder holding a file for each image.
+    assert sorted(f.name for f in out.iterdir()) == ["A.svg", "b.svg"]
+    for name, ext in (
+        ("json", ".json"),
+        ("preview", ".png"),
+        ("preset", ".json"),
+        ("hpgl", ".hpgl"),
+    ):
+        assert sorted(f.name for f in other[name].iterdir()) == ["A" + ext, "b" + ext]
+    # One stdout line for each image: its path, its output and the stats the single run prints.
+    first, second = r.stdout.splitlines()
+    assert first.startswith(f"{photos / 'A.PNG'} -> {out / 'A.svg'}  paths: ")
+    assert second.startswith(f"{photos / 'b.png'} -> {out / 'b.svg'}  paths: ")
+    assert "pen down:" in first and "estimated:" in first
+
+
+def test_explicit_files_are_a_batch_and_every_option_applies_to_each(tmp_path):
+    one = pictures(tmp_path / "x", "one.png") / "one.png"
+    two = pictures(tmp_path / "y", "two.png") / "two.png"
+    out = tmp_path / "o"
+    r = run("run", "grid", str(one), str(two), "--out", str(out), "--pen", "Red:0.5:#ff0000", *FAST)
+    assert r.exit_code == 0, r.output
+    assert layer_stroke(out / "one.svg") == layer_stroke(out / "two.svg") == "#ff0000"
+    assert len(r.stdout.splitlines()) == 2
+
+
+def test_a_folder_with_one_image_is_a_single_run(tmp_path):
+    photos = pictures(tmp_path / "photos", "only.png")
+    r = run("run", "grid", str(photos), "--out", str(tmp_path / "o.svg"), *FAST)
+    assert r.exit_code == 0 and (tmp_path / "o.svg").is_file(), r.output
+    assert r.stdout.startswith("paths: ") and "->" not in r.stdout
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    r = run("run", "grid", str(empty), "--out", str(tmp_path / "e.svg"), *FAST)
+    assert r.exit_code == 2 and "holds no PNG, JPEG or WebP files" in r.output
+
+
+def test_a_clashing_stem_is_refused_before_anything_runs(tmp_path):
+    a = pictures(tmp_path / "a", "same.png", "other.png") / "same.png"
+    b = pictures(tmp_path / "b", "SAME.jpg") / "SAME.jpg"
+    out = tmp_path / "drawings"
+    r = run("run", "grid", str(a), str(b), "--out", str(out), *FAST)
+    assert r.exit_code == 2 and str(a) in r.output and str(b) in r.output, r.output
+    assert not out.exists()
+    # An output may not land on an input, nor two options on the same file.
+    photos = str(tmp_path / "a")
+    r = run("run", "grid", photos, "--out", str(out), "--preview", photos, *FAST)
+    assert r.exit_code == 2 and "over an input image" in r.output and not out.exists()
+    shared = str(tmp_path / "shared")
+    r = run(
+        "run", "grid", photos, "--out", str(out), "--json", shared, "--save-preset", shared, *FAST
+    )
+    assert r.exit_code == 2 and "written twice" in r.output and not out.exists()
+
+
+def test_one_unreadable_image_fails_without_stopping_the_others(tmp_path):
+    photos = pictures(tmp_path / "photos", "good.png", "later.png")
+    (photos / "bad.png").write_bytes(b"this is not a picture")
+    out = tmp_path / "drawings"
+    r = run("run", "grid", str(photos), "--out", str(out), *FAST)
+    assert r.exit_code == 1, r.output
+    assert sorted(f.name for f in out.iterdir()) == ["good.svg", "later.svg"]
+    assert f"{photos / 'bad.png'}: failed: " in r.stderr
+    done = [line.split(" -> ")[0] for line in r.stdout.splitlines()]
+    assert done == [str(photos / "good.png"), str(photos / "later.png")]
+    # A missing file is another image that fails.
+    gone, good = photos / "gone.png", photos / "good.png"
+    r = run("run", "grid", str(gone), str(good), "--out", str(out), *FAST)
+    assert r.exit_code == 1 and "gone.png: failed: [Errno 2] No such file or directory" in r.stderr
+
+
+def test_strict_fails_a_batch_whose_images_have_a_warning(tmp_path):
+    photos = pictures(tmp_path / "photos", "a.png", "b.png")
+    args = ["run", "waves", str(photos), "--out", str(tmp_path / "o"), "--quiet", "--strict"]
+    args += [
+        "--set",
+        "tone.resolution=64",
+        "--pen",
+        "Wide:1:black",
+        "--set",
+        "waves.spacing_mm=0.5",
+    ]
+    r = run(*args)
+    assert r.exit_code == 1 and sorted(f.name for f in (tmp_path / "o").iterdir()) == [
+        "a.svg",
+        "b.svg",
+    ]
+    assert f"{photos / 'b.png'}: warning: Marks 0.5 mm apart" in r.stderr
+
+
+def test_gcode_in_a_batch_gets_a_subfolder_per_image(tmp_path):
+    photos = pictures(tmp_path / "photos", "a.png", "b.png")
+    machine, gcode = tmp_path / "m.json", tmp_path / "g"
+    machine.write_text(json.dumps(MACHINE))
+    args = ["--machine", str(machine), "--gcode", str(gcode)]
+    r = run("run", "grid", str(photos), "--out", str(tmp_path / "o"), *args, *FAST)
+    assert r.exit_code == 0, r.output
+    assert sorted(d.name for d in gcode.iterdir()) == ["a", "b"]
+    assert [f.name for f in (gcode / "b").iterdir()] == ["plot_1_Black_0.3.gcode"]
+    assert f"gcode: 1 file in {gcode / 'a'}" in r.stderr and "gcode:" not in r.stdout
+    # A wrong option fails every image alike, so it stops the batch at once.
+    r = run("run", "grid", str(photos), "--out", str(tmp_path / "p"), "--gcode", str(gcode), *FAST)
+    assert r.exit_code == 2 and "--gcode needs a machine" in r.output
+    assert not list((tmp_path / "p").iterdir())
