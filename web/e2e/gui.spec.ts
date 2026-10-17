@@ -407,6 +407,7 @@ test("the stats read in metres and a single path", async ({ page }) => {
 test("the stats show the tone match", async ({ page }) => {
   await sample(page);
   await expect(page.locator(".stats")).toContainText(/tone error \d\.\d{3} · SSIM -?\d\.\d{2}/);
+  await expect(page.locator(".stats")).toContainText(/ · contrast \d+ %/);
 });
 
 test("Optimize suggests a spacing and changes nothing until Apply", async ({ page }) => {

@@ -279,7 +279,7 @@ fn border(lum: &[f32], w: usize, h: usize) -> f64 {
 /// root above `(6/29)^3` and `t / (3 (6/29)^2) + 4/29` below (CIE 15:2004, *Colorimetry*, 3rd ed.;
 /// IEC 61966-2-1:1999, *Colour management in multimedia systems: default RGB colour space,
 /// sRGB*). Channels outside 0..1 are clamped to it.
-fn lab(srgb: [f64; 3]) -> [f64; 3] {
+pub(crate) fn lab(srgb: [f64; 3]) -> [f64; 3] {
     const M: [[f64; 3]; 3] = [
         [0.4124, 0.3576, 0.1805],
         [0.2126, 0.7152, 0.0722],
@@ -308,7 +308,7 @@ fn lab(srgb: [f64; 3]) -> [f64; 3] {
 }
 
 /// The CIE 1976 colour difference ΔE*ab: the distance between two CIELAB colours.
-fn delta_e(p: [f64; 3], q: [f64; 3]) -> f64 {
+pub(crate) fn delta_e(p: [f64; 3], q: [f64; 3]) -> f64 {
     let d = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
     (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
 }

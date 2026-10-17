@@ -13,17 +13,29 @@
 //! Wang, A. C. Bovik, H. R. Sheikh and E. P. Simoncelli, "Image quality assessment: from error
 //! visibility to structural similarity", *IEEE Trans. Image Processing* 13(4), 2004, pp.
 //! 600-612). All sums run in pixel order in f64, so the numbers are the same on every target.
+//!
+//! How dark the drawing gets is reported beside the error as the fitted line's rise from white to
+//! full ink, its contrast. The error never exceeds blank paper's, the spread of the tone map about
+//! its mean. [`ToneMatch::score`], which Optimize ranks, divides the error by a power of the
+//! contrast, so of two drawings that follow the tones alike the darker one scores better (see
+//! `docs/decisions/2026-10-17-contrast-and-colour-match.md`). A drawing in more than one colour is
+//! also compared with the source image in CIELAB by [`colour`].
 
 use serde::Serialize;
 
+use crate::analysis::{delta_e, lab};
 use crate::math;
-use crate::types::ToneMap;
+use crate::preview::{render_ink, rgb};
+use crate::types::{Drawing, Image, ToneMap};
 
 /// The eye filter's sigma in mm: line texture at the default spacings of 1 to 2 mm fades under
 /// it, as when a plot is seen from a metre or two. A taste default, recorded in the brief.
 pub const EYE_SIGMA_MM: f64 = 1.5;
 /// Below this gain the drawing's ink does not follow its tone, and there is nothing to compare.
 const MIN_GAIN: f64 = 0.01;
+/// The power of the contrast that [`ToneMatch::score`] divides the error by; measured on the
+/// gallery's images, see `docs/decisions/2026-10-17-contrast-and-colour-match.md`.
+pub const CONTRAST_WEIGHT: f64 = 0.25;
 /// SSIM's constants for values in 0..1: `(0.01)^2` and `(0.03)^2` (Wang et al., 2004).
 const C1: f64 = 1e-4;
 const C2: f64 = 9e-4;
@@ -32,13 +44,50 @@ const C2: f64 = 9e-4;
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct ToneMatch {
     /// The RMS difference, in tone-map ink, between the tone map and the drawing's coverage put on
-    /// its scale, both seen through the eye filter; 0 is a perfect match.
+    /// its scale, both seen through the eye filter; 0 is a perfect match, and never above
+    /// `blank`.
     pub error: f64,
     /// The mean structural similarity of the same two maps; 1 is identical.
     pub ssim: f64,
     /// The coverage the fitted line puts at white, and at full ink.
     pub floor: f64,
     pub reach: f64,
+    /// How much of the tone map's range the drawing reaches, unscaled: the fitted line's rise
+    /// from white to full ink, `reach - floor`, and 0 when it does not rise. At 1 the drawing inks
+    /// as much more where the image is darkest than where it is lightest as the tone map does.
+    pub contrast: f64,
+    /// Blank paper's tone error: the RMS of the blurred tone map about its mean, which a drawing
+    /// whose ink does not follow the tones scores.
+    pub blank: f64,
+    /// How the drawing's colours follow the source image, for a drawing in more than one colour;
+    /// see [`colour`].
+    pub colour: Option<ColourMatch>,
+}
+
+impl ToneMatch {
+    /// What Optimize ranks, lower is better: the error as a share of blank paper's, divided by the
+    /// contrast, at most 1, to the power [`CONTRAST_WEIGHT`]. Infinite for a drawing with no
+    /// contrast or no better than blank paper, so blank paper never beats a drawing.
+    pub fn score(&self) -> f64 {
+        if self.contrast <= 0.0 || self.error >= self.blank {
+            return f64::INFINITY;
+        }
+        let shape = self.error / self.blank;
+        shape / math::exp(CONTRAST_WEIGHT * math::ln(self.contrast.min(1.0)))
+    }
+}
+
+/// How a drawing's colours follow its source image, at viewing distance.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct ColourMatch {
+    /// The mean CIE 1976 colour difference ΔE*ab between the drawing and the source image, both
+    /// through the eye filter, over the image's rectangle.
+    pub error: f64,
+    /// The same for blank paper.
+    pub blank: f64,
+    /// The share of blank paper's difference that the drawing takes away, `1 - error / blank`: 0
+    /// for blank paper, 1 for a perfect match, below 0 for a drawing further from the image.
+    pub gain: f64,
 }
 
 /// The share of inked cells over each pixel of `t`: the box average of a raster of `width` by
@@ -88,7 +137,7 @@ pub fn pixel_coverage(
 }
 
 /// Compare `coverage`, one value per pixel of `t` as [`pixel_coverage`] gives it, with `t`'s ink;
-/// see [`ToneMatch`]. `None` when the tone map is flat or the drawing's ink does not rise with it.
+/// see [`ToneMatch`], whose `colour` this leaves out. `None` when the tone map is flat.
 pub fn compare(coverage: &[f32], t: &ToneMap) -> Option<ToneMatch> {
     let f = Fitted::new(coverage, t)?;
     let (w, h) = (t.width as usize, t.height as usize);
@@ -97,11 +146,15 @@ pub fn compare(coverage: &[f32], t: &ToneMap) -> Option<ToneMatch> {
         ssim: ssim(&f.x, &f.y, w, h, f.sigma),
         floor: f.floor,
         reach: f.floor + f.gain,
+        contrast: f.gain.max(0.0),
+        blank: f.blank,
+        colour: None,
     })
 }
 
 /// Both maps through the eye filter, the coverage put on the tone map's scale by the fitted line,
-/// and the RMS difference.
+/// and the RMS difference, at most blank paper's. Below [`MIN_GAIN`] the coverage cannot be put on
+/// the scale and is taken as the tone map's mean, blank paper's best guess.
 struct Fitted {
     x: Vec<f32>,
     y: Vec<f32>,
@@ -109,6 +162,7 @@ struct Fitted {
     floor: f64,
     gain: f64,
     error: f64,
+    blank: f64,
 }
 
 impl Fitted {
@@ -126,11 +180,23 @@ impl Fitted {
             var += dy * dy;
             cov += dy * dc;
         }
-        if var <= 0.0 || cov / var < MIN_GAIN {
+        if var <= 0.0 {
             return None;
         }
         let gain = cov / var;
         let floor = mc - gain * my;
+        let blank = (var / n).sqrt();
+        if gain < MIN_GAIN {
+            return Some(Fitted {
+                x: vec![my as f32; w * h],
+                y,
+                sigma,
+                floor,
+                gain,
+                error: blank,
+                blank,
+            });
+        }
         // The coverage on the tone map's scale.
         let x: Vec<f32> = c
             .iter()
@@ -147,9 +213,91 @@ impl Fitted {
             sigma,
             floor,
             gain,
-            error: (sq / n).sqrt(),
+            error: (sq / n).sqrt().min(blank),
+            blank,
         })
     }
+}
+
+/// The page is rendered at this many pixels per mm and averaged down to [`COLOUR_PX_MM`], so a
+/// line a few tenths of a millimetre wide keeps its share of each compared pixel.
+const RENDER_PX_MM: f64 = 4.0;
+const COLOUR_PX_MM: f64 = 2.0;
+
+/// How the colours of `d`, drawn on `paper`, follow `image` at viewing distance; see
+/// [`ColourMatch`]. The drawing is rendered as the preview draws its ink, both pictures are put on a
+/// grid of [`COLOUR_PX_MM`] over the tone map's rectangle, the part of the image the page shows,
+/// and blurred by the eye filter, and each pixel's CIE 1976 ΔE*ab is averaged (CIE 15:2004,
+/// *Colorimetry*, 3rd ed.), and blank paper's the same way. `None` without a tone map, when its
+/// rectangle has no pixel, or when blank paper matches the image.
+pub fn colour(d: &Drawing, image: &Image, paper: &str) -> Option<ColourMatch> {
+    let page_px = (d.canvas.width_mm * RENDER_PX_MM).round() as u32;
+    let (rw, rh, rgba) = render_ink(d, page_px, paper);
+    let [ix, iy, iw, ih] = d.tone.as_ref()?.rect_mm();
+    let k = (RENDER_PX_MM / COLOUR_PX_MM) as usize;
+    let (w, h) = (
+        (iw * COLOUR_PX_MM).floor() as usize,
+        (ih * COLOUR_PX_MM).floor() as usize,
+    );
+    if rgba.is_empty() || w == 0 || h == 0 || image.width == 0 || image.height == 0 {
+        return None;
+    }
+    let (ox, oy) = (
+        (ix * RENDER_PX_MM).round() as usize,
+        (iy * RENDER_PX_MM).round() as usize,
+    );
+    let (rw, rh) = (rw as usize, rh as usize);
+    let sw = image.width as usize;
+    let [x0, y0, cw, ch] = d.canvas.shown(image.width, image.height);
+    let mut drawn = [vec![0f32; w * h], vec![0f32; w * h], vec![0f32; w * h]];
+    let mut source = [vec![0f32; w * h], vec![0f32; w * h], vec![0f32; w * h]];
+    for y in 0..h {
+        for x in 0..w {
+            // The box average of the rendered pixels, in encoded values: close enough to compare.
+            let mut sum = [0u32; 3];
+            for dy in 0..k {
+                for dx in 0..k {
+                    let px = (ox + x * k + dx).min(rw - 1);
+                    let py = (oy + y * k + dy).min(rh - 1);
+                    let i = 4 * (py * rw + px);
+                    for (s, &v) in sum.iter_mut().zip(&rgba[i..i + 3]) {
+                        *s += u32::from(v);
+                    }
+                }
+            }
+            // The source pixel under the grid pixel's centre, in the part the page shows.
+            let sx = x0 + ((2 * x + 1) * cw / (2 * w)).min(cw - 1);
+            let sy = y0 + ((2 * y + 1) * ch / (2 * h)).min(ch - 1);
+            let si = 3 * (sy * sw + sx);
+            for c in 0..3 {
+                drawn[c][y * w + x] = sum[c] as f32 / (255 * k * k) as f32;
+                source[c][y * w + x] = image.rgb[si + c];
+            }
+        }
+    }
+    let sigma = EYE_SIGMA_MM * COLOUR_PX_MM;
+    let [dr, dg, db] = drawn.map(|p| math::blur(&p, w, h, sigma));
+    let [sr, sg, sb] = source.map(|p| math::blur(&p, w, h, sigma));
+    let paper_lab = lab(rgb(paper).map(|v| f64::from(v) / 255.0));
+    let (mut error, mut blank) = (0.0, 0.0);
+    for i in 0..w * h {
+        let s = lab([sr[i], sg[i], sb[i]].map(f64::from));
+        error += delta_e(lab([dr[i], dg[i], db[i]].map(f64::from)), s);
+        blank += delta_e(paper_lab, s);
+    }
+    let n = (w * h) as f64;
+    let (error, blank) = (error / n, blank / n);
+    (blank > 0.0).then(|| ColourMatch {
+        error,
+        blank,
+        gain: 1.0 - error / blank,
+    })
+}
+
+/// Whether `d` draws in more than one colour, which the luminance tone map cannot judge.
+pub fn coloured(d: &Drawing) -> bool {
+    let first = d.layers.first().map(|l| l.pen.color.to_ascii_lowercase());
+    (d.layers.iter()).any(|l| Some(l.pen.color.to_ascii_lowercase()) != first)
 }
 
 /// The mean SSIM of `x` and `y`, with local statistics over Gaussian windows of `sigma` pixels.
@@ -210,6 +358,7 @@ mod tests {
             m.floor.abs() < 1e-5 && (m.reach - 1.0).abs() < 1e-5,
             "{m:?}"
         );
+        assert!((m.contrast - 1.0).abs() < 1e-5, "{m:?}");
     }
 
     #[test]
@@ -225,6 +374,32 @@ mod tests {
     }
 
     #[test]
+    fn a_fainter_drawing_of_the_same_shape_scores_worse() {
+        let t = scene();
+        // Every drawing has some error, so the two shapes are the same, slightly bent.
+        let dark: Vec<f32> = t.ink.iter().map(|v| 0.6 * v * v).collect();
+        let faint: Vec<f32> = t.ink.iter().map(|v| 0.06 * v * v).collect();
+        let (dark, faint) = (compare(&dark, &t).unwrap(), compare(&faint, &t).unwrap());
+        assert!(
+            (dark.error - faint.error).abs() < 1e-4,
+            "{dark:?} {faint:?}"
+        );
+        assert!(dark.contrast > 5.0 * faint.contrast, "{dark:?} {faint:?}");
+        assert!(dark.score() < faint.score(), "{dark:?} {faint:?}");
+    }
+
+    #[test]
+    fn the_error_never_exceeds_blank_papers() {
+        let t = scene();
+        // A gain just over the floor, whose fitted error would be divided by almost nothing.
+        let noisy: Vec<f32> = (t.ink.iter().enumerate())
+            .map(|(i, v)| 0.02 * v + if i % 2 == 0 { 0.3 } else { 0.0 })
+            .collect();
+        let m = compare(&noisy, &t).unwrap();
+        assert!(m.error <= m.blank && m.blank > 0.0, "{m:?}");
+    }
+
+    #[test]
     fn a_bent_response_scores_worse_than_a_straight_one() {
         let t = scene();
         let bent: Vec<f32> = t.ink.iter().map(|v| v * v * v).collect();
@@ -233,10 +408,13 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_or_flat_drawing_has_no_match() {
+    fn a_blank_drawing_scores_blank_paper_and_a_flat_map_has_no_match() {
         let t = scene();
-        assert_eq!(compare(&vec![0.0; t.ink.len()], &t), None);
-        assert_eq!(compare(&vec![0.4; t.ink.len()], &t), None);
+        for flat in [0.0, 0.4] {
+            let m = compare(&vec![flat; t.ink.len()], &t).unwrap();
+            assert_eq!((m.error, m.contrast), (m.blank, 0.0), "{m:?}");
+            assert_eq!(m.score(), f64::INFINITY);
+        }
         let flat = map(20, 20, |_, _| 0.5);
         assert_eq!(compare(&flat.ink, &flat), None);
     }

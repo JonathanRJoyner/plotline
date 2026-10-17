@@ -667,7 +667,11 @@ def run(
                 session.export_hpgl(hpgl, hpgl_units)
         lines = [stats_line(session)]
         if (match := session.tone_match()) is not None:
-            lines.append(f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}")
+            line = f"tone error: {match['error']:.3f}  ssim: {match['ssim']:.3f}"
+            line += f"  contrast: {match['contrast']:.0%}"
+            if (colour := match["colour"]) is not None:
+                line += f"  colour ΔE: {colour['error']:.1f} (blank {colour['blank']:.1f})"
+            lines.append(line)
         click.echo(f"{image} -> {out}  {'  '.join(lines)}" if batch else "\n".join(lines))
         findings = session.lint()
         for finding in findings:
