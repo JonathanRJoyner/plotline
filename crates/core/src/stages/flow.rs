@@ -193,6 +193,7 @@ impl FlowRun {
             ink,
             mm_per_px: tone.mm_per_px,
             origin_mm: tone.origin_mm,
+            gamma: tone.gamma,
         };
         let rect = tone.rect_mm();
         let min = s.min_spacing_mm;
