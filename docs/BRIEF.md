@@ -32,7 +32,7 @@ The engine is one Rust crate compiled two ways: a native Python extension behind
 
 **The first release succeeds when** a user can run `plotline gui` or open the hosted page, load a photo, then:
 - watch a Voronoi stipple converge in the preview
-- switch the rendering between stipple, continuous line and dashes without the points being recomputed (a style switch keeps the changed settings of shared stages, see §14, "Settings across a style switch")
+- switch the rendering between stipple, continuous line and dashes without the points being recomputed (a style switch keeps the changed settings of shared stages, see §14, "Settings across a style switch"). Amended on 2026-10-17: the styles that join points, `line` among them, place points by ink squared and the dot styles by ink, so a switch between the two groups places the points again unless `voronoi.exponent` is set alike; see [ink squared for joined points](decisions/2026-10-17-ink-squared-for-joined-points.md)
 - try Sketch Lines
 - export a layered SVG at a chosen paper size
 

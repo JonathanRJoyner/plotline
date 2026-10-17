@@ -1545,6 +1545,43 @@ fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero(
     });
 }
 
+#[test]
+fn styles_that_join_points_place_them_by_ink_squared() {
+    // A line through points darkens with the square root of their density, so these styles
+    // default to an exponent of 2 (see docs/decisions/2026-10-17-ink-squared-for-joined-points.md).
+    for name in ["line", "scribble", "tree", "mesh", "cells"] {
+        let exponent = &get_style(name).unwrap().defaults()["voronoi"]["exponent"];
+        assert_eq!(exponent, &json!(2.0), "{name}");
+    }
+    // On a ramp from light at the left to dark at the right, a higher exponent puts a larger share
+    // of the points in the dark half.
+    check(
+        "exponent",
+        8,
+        (0.6..0.95f32, 0.0..0.3f32),
+        |(light, dark)| {
+            let dark_share = |exponent: f64| -> Result<f64, TestCaseError> {
+                let mut s = Session::new(64 << 20);
+                s.set_image(ramp(60, 40, light, dark));
+                s.set_style("stipple").unwrap();
+                let settings = json!({"count": 200, "iterations": 10, "exponent": exponent});
+                s.update("voronoi", &settings).unwrap();
+                run(&mut s)?;
+                let d = s.drawing().unwrap();
+                let [x, _, w, _] = d.canvas.drawing_rect();
+                let xs: Vec<f64> = (d.layers.iter())
+                    .flat_map(|l| l.paths.iter().map(|p| p[0][0]))
+                    .collect();
+                let right = xs.iter().filter(|&&px| px > x + w / 2.0).count();
+                Ok(right as f64 / xs.len().max(1) as f64)
+            };
+            let (one, two) = (dark_share(1.0)?, dark_share(2.0)?);
+            prop_assert!(two > one, "the dark half holds {two} at 2 and {one} at 1");
+            Ok(())
+        },
+    );
+}
+
 /// Each segment of `paths` between two different points, as its two ends sorted, once.
 fn segments_of(paths: &Paths) -> Vec<[[i64; 2]; 2]> {
     let point = |p: [f64; 2]| [p[0] as i64, p[1] as i64];

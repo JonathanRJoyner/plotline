@@ -43,7 +43,7 @@ pub struct VoronoiSettings {
     /// Relaxation passes; more passes spread the points more evenly.
     #[schemars(range(min = 0, max = 200))]
     pub iterations: u32,
-    /// Density follows ink to this power; 2 suits the line, tree, mesh and cells renderers, which put more ink between close points.
+    /// Density follows ink to this power; the styles that join their points default to 2, since a line darkens with the square root of the points' density, and dots to 1.
     #[schemars(range(min = 0.5, max = 3.0), extend("x-step" = 0.1))]
     pub exponent: f64,
     /// Starting scatter.
@@ -332,7 +332,7 @@ mod tests {
         for (key, help) in [
             ("count", "Points to place per pen; by colour the pens share them by their ink; more points give finer detail and a longer plot."),
             ("iterations", "Relaxation passes; more passes spread the points more evenly."),
-            ("exponent", "Density follows ink to this power; 2 suits the line, tree, mesh and cells renderers, which put more ink between close points."),
+            ("exponent", "Density follows ink to this power; the styles that join their points default to 2, since a line darkens with the square root of the points' density, and dots to 1."),
             ("seed", "Starting scatter."),
         ] {
             assert_eq!(s["properties"][key]["description"], help, "{key}");

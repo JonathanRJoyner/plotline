@@ -1,0 +1,3 @@
+Section: Styles
+
+- **Darker darks for the joined-point styles:** `line`, `scribble`, `tree`, `mesh` and `cells` now place their points with a density that follows ink squared (`voronoi.exponent` 2) instead of ink, because a line through the points darkens with the square root of their density. Across the regression gallery's images their tone error falls by 12 to 43 % and their contrast rises by 35 to 82 %, and they plot a little faster. `stipple` and `dashes`, whose dots darken with the density itself, keep 1. Presets of the five styles saved earlier draw differently; set `voronoi.exponent` to 1 for the old drawing.
