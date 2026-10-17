@@ -11,7 +11,7 @@ use pyo3::types::{PyBytes, PyDict};
 use serde::de::DeserializeOwned;
 
 use crate::convert::{
-    drawing_to_py, frame_to_py, image_array, preview_error, py_to_value, serde_to_py,
+    drawing_to_py, frame_to_py, image_array, model_error, preview_error, py_to_value, serde_to_py,
     session_error, value_error, value_to_py,
 };
 
@@ -41,9 +41,35 @@ impl Session {
     #[new]
     #[pyo3(signature = (cache_bytes = DEFAULT_CACHE_BYTES))]
     fn new(cache_bytes: usize) -> Session {
-        Session {
-            inner: plotline_core::Session::new(cache_bytes),
-        }
+        let mut inner = plotline_core::Session::new(cache_bytes);
+        inner.set_model_runtime(Arc::new(plotline_models::TractRuntime::default()));
+        Session { inner }
+    }
+
+    /// Load the ONNX file `data` as a model and return its entry, `{id, label, overlap, entry}`.
+    /// With an `id` the bytes must be that catalogue model, with the size and SHA-256 it lists;
+    /// with `None` they are a file of your own, named `file-` and 12 hex digits of its hash.
+    /// Raises `ValueError` for a file or id the engine refuses and changes nothing.
+    #[pyo3(signature = (id, data))]
+    fn add_model<'py>(
+        &mut self,
+        py: Python<'py>,
+        id: Option<&str>,
+        data: &[u8],
+    ) -> PyResult<Bound<'py, PyAny>> {
+        // Parsing and optimising a large graph takes seconds, so other threads keep running.
+        let info = py.detach(|| self.inner.add_model(id, data));
+        serde_to_py(py, &info.map_err(model_error)?)
+    }
+
+    /// Unload the model `id`; an id the session does not hold changes nothing.
+    fn remove_model(&mut self, id: &str) {
+        self.inner.remove_model(id);
+    }
+
+    /// The models the session holds, in id order, as `{id, label, overlap, entry}`.
+    fn models<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        serde_to_py(py, &self.inner.models())
     }
 
     /// Decode PNG, JPEG or WebP bytes and use the picture as the source image.

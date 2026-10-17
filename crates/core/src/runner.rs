@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::cache::StageCache;
+use crate::models::ModelStore;
 use crate::presets;
 use crate::response::{self, Prelude};
 use crate::settings::merge;
@@ -147,6 +148,8 @@ pub struct Run {
     response: Option<(Arc<Vec<f32>>, String)>,
     /// The tone map as the tone stage made it, when the later stages read it through the lookup.
     source: Option<Arc<ToneMap>>,
+    /// The learned line models every stage's context carries.
+    models: Arc<ModelStore>,
     state: RunState,
     error: Option<String>,
 }
@@ -203,9 +206,17 @@ impl Run {
             prelude,
             response: None,
             source: None,
+            models: Arc::default(),
             state: RunState::Idle,
             error: None,
         }
+    }
+
+    /// The run with `models` in every stage's context, for a style whose stages run them; without
+    /// this call the run has none.
+    pub fn with_models(mut self, models: Arc<ModelStore>) -> Run {
+        self.models = models;
+        self
     }
 
     /// Do work until there is a frame to show, and return it. Returns `None` once the run has
@@ -329,6 +340,7 @@ impl Run {
                     });
                 }
                 let ctx = RunContext::new(self.cancel.clone())
+                    .with_models(self.models.clone())
                     .in_lane(lane.unwrap_or(Lane::SINGLE))
                     .with_budget(budget);
                 match stage.start(Inputs::new(inputs), &settings, ctx) {

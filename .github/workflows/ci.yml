@@ -49,6 +49,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked -p plotline-core
+      - run: cargo test --locked -p plotline-models
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check licenses
@@ -67,11 +68,17 @@ jobs:
         working-directory: crates/wasm
       - run: wasm-pack build --release --target web --out-dir ../../web/pkg
         working-directory: crates/wasm
-      - name: Check the .wasm size
+      # The model module, with SIMD from crates/models/.cargo/config.toml.
+      - run: wasm-pack build --release --target web --out-dir ../../web/pkg-models --features web
+        working-directory: crates/models
+      - name: Check the .wasm sizes
         run: |
           size=$(stat -c %s web/pkg/plotline_wasm_bg.wasm)
           echo "plotline_wasm_bg.wasm is $size bytes"
           test "$size" -le 2300000
+          size=$(stat -c %s web/pkg-models/plotline_models_bg.wasm)
+          echo "plotline_models_bg.wasm is $size bytes"
+          test "$size" -le 9000000
 
   web:
     runs-on: ubuntu-latest

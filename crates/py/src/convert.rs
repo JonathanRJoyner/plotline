@@ -2,6 +2,7 @@
 
 use numpy::ndarray::{ArrayView2, ArrayView3};
 use numpy::{PyArray1, PyArray2, PyArray3, ToPyArray};
+use plotline_core::models::ModelError;
 use plotline_core::{Frame, Image, Paths, PreviewError, SessionError};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -42,6 +43,19 @@ pub fn session_error(e: SessionError) -> PyErr {
         SessionError::NoImage | SessionError::NoMachine | SessionError::NoDrawing => {
             runtime_error(e)
         }
+    }
+}
+
+/// The Python exception for a model error: `ValueError` for a file or id the engine refuses,
+/// `RuntimeError` for a build that cannot run models or a model that failed to run. The match is
+/// exhaustive so that a new variant has to be placed here.
+pub fn model_error(e: ModelError) -> PyErr {
+    match e {
+        ModelError::TooLarge(_)
+        | ModelError::Hash { .. }
+        | ModelError::Unknown(_)
+        | ModelError::Invalid(_) => value_error(e),
+        ModelError::NoRuntime | ModelError::Run(_) => runtime_error(e),
     }
 }
 

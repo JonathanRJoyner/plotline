@@ -1,7 +1,8 @@
 // The command side of the worker (spec 2026-10-12-gui-design section 5): one command in, one
 // reply out, and the run events `drive` posts. Every decision lives here so tests can cover it;
-// `worker.ts` only connects it to `self`.
-import { describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
+// `worker.ts` connects it to `self` and holds commands back while the model module loads for an
+// `addModel`.
+import { catalogue, describe, listInks, listPens, listStyles, presetFromText, Session, syntheticStillLife, takePanic, type Run } from "../pkg/plotline_wasm.js";
 import { drive, free, macrotask, postDone } from "./driver";
 import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch } from "./events";
 
@@ -9,6 +10,13 @@ import type { Canvas, Event, Finding, Machine, Pen, Stats, ThumbEvent, ToneMatch
 export type Patch = { style?: string; pens?: Pen[]; settings?: Record<string, Record<string, unknown>>; page?: { width_mm: number; height_mm: number } | Pick<Canvas, "crop"> };
 export type Suggestion = { kind: string; reason: string; patch: Patch | null };
 export type Speeds = { draw_mm_s: number; travel_mm_s: number; pen_lift_s: number; accel_mm_s2: number };
+/** A hosted model, in the shape of the core's `CatalogueEntry`. */
+export type CatalogueEntry = {
+  id: string; label: string; description: string; url: string; sha256: string; licence: string; attribution: string;
+  source: string; paper: string; training: string; bytes: number; overlap: number;
+};
+/** A model the session holds; `entry` is null for a file of the user's own. */
+export type ModelInfo = { id: string; label: string; overlap: number; entry: CatalogueEntry | null };
 export type State = {
   image: boolean; style: string;
   /** The name of the style's look the settings match; null when they match none, which the page calls Custom. */
@@ -27,6 +35,8 @@ export type State = {
   lint: Finding[];
   /** How the last drawing's tones follow its tone map; null without one or with nothing to compare. */
   tone: ToneMatch | null;
+  /** The models the session holds, in id order. */
+  models: ModelInfo[];
   /** Where the tone stage's focus points are drawn, in page mm; empty without an image. */
   focus: [number, number][];
 };
@@ -36,7 +46,7 @@ export type Reply = { id: number; ok: true; state: State; value?: unknown } | { 
 // The commands that change what a drawing is made from: each one redraws once it succeeds. `setPaper` is
 // not among them: the paper is no input of a run, so a change only repaints. Nor is `setPenLibrary`: the
 // user's own pens only change the suggestions, which every reply's state carries.
-const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore"]);
+const REDRAWS = new Set(["setImageBytes", "setImage", "sample", "setCanvas", "setPens", "setStyle", "applyLook", "resetSettings", "update", "loadPreset", "loadPresetText", "apply", "restore", "addModel", "removeModel"]);
 
 const message = (e: unknown): string => String((e as { message?: unknown } | null)?.message ?? e);
 // A trap: a panic or memory running out aborts the call with a `RuntimeError`, and a stack
@@ -55,6 +65,10 @@ export class Protocol {
   private saved: { preset: string; speeds: string } | null = null;
   // The pen library as the session last took it, which a rebuilt session gets again.
   private library = "[]";
+  // The model files the session holds, by id, with the catalogue id each was added under, which a
+  // rebuilt session loads again. shortcut: keeps a second copy of each file, up to 200 MB for one of
+  // the user's own; read them back from the browser's store instead if that memory matters.
+  private readonly modelFiles = new Map<string, [string | null, Uint8Array]>();
   private readonly methods: Record<string, (...args: any[]) => unknown>;
 
   constructor(private session: Session, private readonly post: (msg: Reply | Event | ThumbEvent, transfer?: Transferable[]) => void) {
@@ -139,6 +153,18 @@ export class Protocol {
       },
       svg: () => s().svg(),
       json: () => s().json(),
+      // The worker loads the model module before it hands this command over.
+      addModel: (id: string | null, bytes: Uint8Array) => {
+        const info = JSON.parse(s().addModel(id, bytes)) as ModelInfo;
+        this.modelFiles.set(info.id, [id, bytes]);
+        return info;
+      },
+      removeModel: (id: string) => {
+        s().removeModel(id);
+        this.modelFiles.delete(id);
+      },
+      models: () => JSON.parse(s().models()),
+      catalogue: () => JSON.parse(catalogue()),
     };
   }
 
@@ -183,6 +209,15 @@ export class Protocol {
     this.session = new Session();
     try {
       this.session.setPenLibrary(this.library); // before the image, so it is measured once
+      // Before the preset, so a run with the learned style finds its model. Each on its own, so a
+      // model that fails to load again leaves the others, the image and the preset to come back.
+      for (const [key, [id, bytes]] of this.modelFiles) {
+        try {
+          this.session.addModel(id, bytes);
+        } catch {
+          this.modelFiles.delete(key); // not in the new session, so not offered again
+        }
+      }
       this.source?.(this.session);
       if (this.saved) {
         this.session.loadPreset(this.saved.preset);
@@ -220,6 +255,7 @@ export class Protocol {
   private async thumbs(id: number, width: number, shrink: number, names?: string[]): Promise<void> {
     let lastYield = performance.now();
     for (const name of names ?? (JSON.parse(listStyles()) as Array<{ name: string }>).map((s) => s.name)) {
+      if (name === "learned") continue; // it needs a downloaded model, so it has no trial picture
       if (id !== this.thumbsId) return;
       let png: Uint8Array | null = null;
       let error: string | null = null;
@@ -279,6 +315,7 @@ export class Protocol {
       suggestions: analysis ? JSON.parse(analysis).suggestions : [],
       lint: lint ? JSON.parse(lint) : [],
       tone: tone ? JSON.parse(tone) : null,
+      models: JSON.parse(s.models()),
       focus,
       run: { id: this.counter, state: s.state(), error: s.error() ?? null },
       stats: stats ? JSON.parse(stats) : null,

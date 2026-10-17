@@ -5,7 +5,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "wasm": "wasm-pack build ../crates/wasm --release --target web --out-dir ../../web/pkg",
+    "wasm": "npm run wasm:engine && npm run wasm:models",
+    "wasm:engine": "wasm-pack build ../crates/wasm --release --target web --out-dir ../../web/pkg",
+    "wasm:models": "wasm-pack build ../crates/models --release --target web --out-dir ../../web/pkg-models --features web",
     "dev": "vite",
     "build": "vite build",
     "check": "tsc --noEmit && vitest run",

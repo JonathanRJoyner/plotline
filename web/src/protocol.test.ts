@@ -483,7 +483,8 @@ test("thumbs without an image posts each style's error", async () => {
   ok("thumbs", 120);
   for (let i = 0; i < 50; i++) await macrotask();
   const events = posted.filter((m) => m.type === "thumb");
-  expect(events).toHaveLength((ok("listStyles").value as unknown[]).length);
+  expect(events).toHaveLength((ok("listStyles").value as unknown[]).length - 1); // not `learned`, which needs a model
+  expect(events.map((m) => m.style)).not.toContain("learned");
   expect(events[0]).toMatchObject({ style: "grid", png: null, error: "no image is loaded" });
 });
 
@@ -540,7 +541,8 @@ test("undoing a random run of edits through restore returns the start, and undo 
   const history = new History(1000);
   const see = (state: State, restored = false) => { history.see(setupOf(state), restored); return setupOf(state); };
   const start = see(ok("preset").state);
-  const styles = (ok("listStyles").value as Array<{ name: string }>).map((s) => s.name);
+  // Not `learned`: it has no tone stage for the edits below, and needs a model to draw.
+  const styles = (ok("listStyles").value as Array<{ name: string }>).map((s) => s.name).filter((n) => n !== "learned");
   let seed = 7; // a fixed linear congruential sequence, so a failure repeats
   const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
   const pick = <T,>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
@@ -572,6 +574,59 @@ test("undoing a random run of edits through restore returns the start, and undo 
   expect(now).toBe(start);
   while (history.future.length) now = step(history.redo());
   expect(now).toBe(end);
+});
+
+// What loadModelsModule does in the browser, with the bytes read from disk.
+async function loadModels(): Promise<void> {
+  const models = await import("../pkg-models/plotline_models.js");
+  await models.default({ module_or_path: readFileSync(new URL("../pkg-models/plotline_models_bg.wasm", import.meta.url)) });
+  globalThis.plotlineModels = models;
+}
+
+test("addModel runs a model in the model module through the engine's bridge", async () => {
+  await loadModels();
+  try {
+    const { posted, ok, ended } = setup();
+    const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
+    const { state, value } = ok("addModel", null, onnx);
+    const id = (value as { id: string }).id;
+    expect(id).toMatch(/^file-[0-9a-f]{12}$/);
+    expect(state.models.map((m) => m.id)).toEqual([id]);
+    expect(ok("models").value).toEqual(state.models);
+    ok("setImage", ...image());
+    await ended(1);
+    ok("apply", { style: "learned", settings: { model: { model: id, resolution: 256 } } });
+    await ended(2);
+    expect(posted.find((m) => m.type === "end" && m.id === 2)).toMatchObject({ state: "done" });
+    expect(ok("removeModel", id).state.models).toEqual([]);
+  } finally {
+    delete globalThis.plotlineModels;
+  }
+});
+
+test("catalogue lists the hosted models", () => {
+  expect(Array.isArray(setup().ok("catalogue").value)).toBe(true);
+});
+
+test("a model arriving or leaving redraws an image, so a drawing on it follows", async () => {
+  await loadModels();
+  try {
+    const { posted, ok, ended } = setup();
+    const runs = () => posted.filter((m) => m.type === "run").length;
+    const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
+    const id = (ok("addModel", null, onnx).value as { id: string }).id;
+    expect(runs()).toBe(0); // no image yet, so nothing to draw
+    ok("setImage", ...image());
+    await ended(1);
+    ok("removeModel", id);
+    expect(runs()).toBe(2);
+    await ended(2);
+    ok("addModel", null, onnx);
+    expect(runs()).toBe(3);
+    await ended(3);
+  } finally {
+    delete globalThis.plotlineModels;
+  }
 });
 
 test("a panic ends the run with its message, and the rebuilt session keeps the image and setup", async () => {
@@ -607,7 +662,8 @@ test("a trap in one style's picture shows in its cell, and the grid and drawing 
   p.handle({ id: 2, method: "update", args: ["tone", { resolution: 64 }] });
   p.handle({ id: 3, method: "setImage", args: image() });
   while (!posted.some((m) => m.type === "end")) await macrotask();
-  const styles = JSON.parse(listStyles()) as unknown[];
+  // `learned` needs a downloaded model, so the grid leaves it out.
+  const styles = (JSON.parse(listStyles()) as Array<{ name: string }>).filter((s) => s.name !== "learned");
   p.handle({ id: 4, method: "thumbs", args: [120] });
   for (let i = 0; i < 20000 && posted.filter((m) => m.type === "thumb").length < styles.length; i++) await macrotask();
   const thumbs = posted.filter((m) => m.type === "thumb");
@@ -615,3 +671,42 @@ test("a trap in one style's picture shows in its cell, and the grid and drawing 
   expect(thumbs.filter((m) => m.png !== null)).toHaveLength(styles.length - 1);
   expect(posted.filter((m) => m.type === "run").map((m) => m.id)).toEqual([1, 2]); // the drawing, redrawn on the new session
 }, 30_000);
+
+test("a rebuilt session keeps the models", async () => {
+  await loadModels();
+  try {
+    const { ok, ended } = setup();
+    const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
+    const id = (ok("addModel", null, onnx).value as { id: string }).id;
+    ok("setImage", ...image());
+    await ended(1);
+    ok("setStyle", "_slow");
+    await ended(2);
+    ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+    await ended(3);
+    expect(ok("models").value).toEqual([expect.objectContaining({ id })]);
+  } finally {
+    delete globalThis.plotlineModels;
+  }
+});
+
+test("a model that fails to load again leaves the image and setup to come back", async () => {
+  await loadModels();
+  try {
+    const { ok, ended } = setup();
+    const onnx = new Uint8Array(readFileSync(new URL("../e2e/fixtures/tiny-conv.onnx", import.meta.url)));
+    ok("addModel", null, onnx);
+    ok("setImage", ...image());
+    await ended(1);
+    ok("setStyle", "_slow");
+    await ended(2);
+    // From here the model module refuses every file, so the rebuilt session cannot take the model.
+    globalThis.plotlineModels = { ...globalThis.plotlineModels!, load: () => { throw new Error("refused"); } };
+    ok("update", "b", { frames: 3, delay_ms: 0, panic_after: 2 });
+    await ended(3);
+    expect(ok("models").value).toEqual([]);
+    expect(ok("preset").state).toMatchObject({ image: true, style: "_slow" });
+  } finally {
+    delete globalThis.plotlineModels;
+  }
+});

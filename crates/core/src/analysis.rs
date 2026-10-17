@@ -34,6 +34,7 @@ use serde_json::{json, Value};
 use crate::math;
 use crate::pens::INKS;
 use crate::preview::rgb;
+use crate::registry::get_style;
 use crate::stages::split;
 use crate::stages::tone::{self, flatten};
 use crate::types::{Canvas, Fit, Image, Pen, MAX_CROP};
@@ -835,8 +836,9 @@ const TURN_GAIN: f64 = 1.3;
 /// the colour suggestion's pens are the library's own, of each colour the one closest to the
 /// first pen's width, and a `pens_to_add` note lists [`ImageStats::palette_additions`].
 /// The framing suggestion crops to the subject in the shape of the canvas's drawing area,
-/// and is left out when the canvas's crop is within 0.01 of it on every side. The cut-offs are
-/// hand-set starting values, not a fitted model.
+/// and is left out when the canvas's crop is within 0.01 of it on every side. A style with no
+/// tone stage gets none of the suggestions that set it. The cut-offs are hand-set starting values,
+/// not a fitted model.
 pub fn suggest(
     stats: &ImageStats,
     canvas: &Canvas,
@@ -851,6 +853,9 @@ pub fn suggest(
         return out;
     }
     let tone = |key: &str| settings.get("tone").and_then(|t| t.get(key));
+    // The patches of the next four set the tone stage, which a style that makes its own tone map,
+    // such as `learned`, does not have. An unknown style counts as having one.
+    let has_tone = get_style(style).is_none_or(|s| s.stage_index("tone").is_some());
     let mut add = |kind, reason: &str, patch| {
         out.push(Suggestion {
             kind,
@@ -863,7 +868,8 @@ pub fn suggest(
     }
     // Under 1/64 the tone stage keeps black 0 and white 1, so there is nothing to stretch.
     let range = stats.p_high - stats.p_low;
-    if (1.0 / 64.0..0.6).contains(&range)
+    if has_tone
+        && (1.0 / 64.0..0.6).contains(&range)
         && tone("levels").and_then(Value::as_str).unwrap_or("manual") == "manual"
     {
         let patch = json!({"settings": {"tone": {"levels": "auto"}}});
@@ -872,7 +878,8 @@ pub fn suggest(
     let [_, _, dw, dh] = canvas.drawing_rect();
     // Flattening that turns an image two-level is what a drawing on uneven paper shows.
     // A colour image's flat patches also flatten to two levels, and colour has its own suggestion.
-    if stats.flat_two_level >= 0.85
+    if has_tone
+        && stats.flat_two_level >= 0.85
         && stats.flat_two_level >= stats.two_level + 0.05
         && stats.colourfulness <= COLOUR_CUT
         && tone("flatten_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0
@@ -882,7 +889,8 @@ pub fn suggest(
         let patch = json!({"settings": {"tone": {"flatten_mm": window}}});
         add("paper", PAPER, Some(patch));
     }
-    if stats.border < 0.3
+    if has_tone
+        && stats.border < 0.3
         && stats.mean < 0.5
         && stats.two_level >= 0.85
         && !tone("invert").and_then(Value::as_bool).unwrap_or(false)
@@ -890,7 +898,10 @@ pub fn suggest(
         let patch = json!({"settings": {"tone": {"invert": true}}});
         add("invert", LIGHT_MARKS, Some(patch));
     }
-    if stats.noise > 0.03 && tone("blur_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0 {
+    if has_tone
+        && stats.noise > 0.03
+        && tone("blur_mm").and_then(Value::as_f64).unwrap_or(0.0) <= 0.0
+    {
         let resolution = tone("resolution").and_then(Value::as_f64).unwrap_or(1000.0);
         // The schema's largest blur is 10 mm.
         let blur = ((dw.max(dh) / resolution.max(1.0) * 10.0).ceil() / 10.0).min(10.0);
@@ -1265,6 +1276,26 @@ mod tests {
         );
         let marks = run(&strokes(256, 256, 1.0, 0.0), "grid", &none);
         assert!(find(&marks, "invert").is_some());
+    }
+
+    #[test]
+    fn a_style_without_a_tone_stage_gets_no_tone_suggestions() {
+        // These images call for levels, an inversion and a blur on a style with a tone stage.
+        let none = json!({});
+        for image in [
+            ramp(256, 64, 0.4, 0.6),
+            strokes(256, 256, 1.0, 0.0),
+            flat_noise(256, 256, 0.5, 0.1, 7),
+        ] {
+            let kinds = |style| {
+                let all = run(&image, style, &none);
+                all.iter().map(|s| s.kind).collect::<Vec<_>>()
+            };
+            assert!(!kinds("grid").is_empty());
+            assert!(kinds("learned")
+                .iter()
+                .all(|k| !["levels", "invert", "noise"].contains(k)));
+        }
     }
 
     #[test]

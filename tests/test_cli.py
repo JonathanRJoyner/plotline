@@ -1,12 +1,17 @@
 """Tests for the command line interface: listing, a full run with every output, presets, bad input,
 the GUI server and the MCP command without its extra."""
 
+import hashlib
 import http.server
+import io
 import json
 import sys
+import urllib.error
+import urllib.request
 import webbrowser
 import xml.etree.ElementTree as ET
 from importlib import resources
+from pathlib import Path
 
 import click
 import numpy as np
@@ -16,7 +21,7 @@ from looks import off_look, style_with_looks
 from machines import MACHINE
 from pngs import decode_png, write_png
 
-from plotline import Pen, _core, get_style, inks, list_styles
+from plotline import Pen, Session, _core, get_style, inks, list_styles, models
 from plotline.cli.main import main, parse_pen, parse_set
 
 
@@ -27,9 +32,9 @@ def image(tmp_path):
     return str(p)
 
 
-def run(*args):
+def run(*args, input=None):
     # click 8.2: .output is the combined stream, .stdout and .stderr are separate.
-    return CliRunner().invoke(main, list(args))
+    return CliRunner().invoke(main, list(args), input=input)
 
 
 def test_styles_and_describe():
@@ -632,6 +637,233 @@ def test_a_gcode_run_needs_a_machine_that_works(tmp_path, image):
     r = coarse(tmp_path, image, "--machine", str(good), "--width", "300", "--gcode", str(out))
     assert r.exit_code == 1 and "larger than the machine's" in r.stderr, r.output
     assert not out.exists()
+
+
+TINY_MODEL = Path(__file__).parent.parent / "web" / "e2e" / "fixtures" / "tiny-conv.onnx"
+DEMO_BYTES = b"demo model bytes"
+
+
+def with_catalogue(monkeypatch, data=DEMO_BYTES, **changes):
+    """List one catalogue entry for a model whose file is ``data``, and make ``urlopen`` serve it."""
+    entry = {
+        "id": "demo-1",
+        "label": "Demo lines",
+        "description": "Draws demo lines.",
+        "url": "https://example.test/demo-1.onnx",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "licence": "MIT",
+        "attribution": "Demo authors",
+        "source": "https://example.test/source",
+        "paper": "https://example.test/paper",
+        "training": "Trained on demo photos.",
+        "bytes": len(data),
+        "overlap": 64,
+    } | changes
+    monkeypatch.setattr(_core, "catalogue", lambda: [entry])
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, **kw: io.BytesIO(data))
+    return entry
+
+
+def test_models_add_then_list_shows_it(monkeypatch, tmp_path):
+    with_catalogue(monkeypatch)
+    r = run("models", "add", str(TINY_MODEL))
+    assert r.exit_code == 0, r.output
+    model_id = r.stdout.strip()
+    assert model_id.startswith("file-")
+    out = run("models", "list").stdout.splitlines()
+    assert out[0].split() == ["ID", "NAME", "LICENCE", "STATUS"]
+    assert out[1].split() == ["demo-1", "Demo", "lines", "MIT", "0.0", "MB"]
+    # The licence of a file of your own is not known, so its column is blank.
+    assert out[2].split() == [model_id, "your", "own", "downloaded"]
+    assert out[2].index("downloaded") == out[1].index("0.0 MB")
+    # A file that is missing or not a model is an error, and nothing more is kept.
+    (tmp_path / "bad.onnx").write_bytes(b"not a model")
+    for name in ("missing.onnx", "bad.onnx"):
+        r = run("models", "add", str(tmp_path / name))
+        assert r.exit_code == 1 and r.stderr.startswith("Error:"), r.output
+    assert [i for i, _ in models.kept()] == [model_id]
+
+
+def test_models_get_without_yes_downloads_nothing(monkeypatch):
+    with_catalogue(monkeypatch, bytes=2_500_000)
+    r = run("models", "get", "demo-1", input="n\n")
+    assert r.exit_code == 1
+    lines = r.stdout.splitlines()
+    assert lines[:8] == [
+        "Demo lines",
+        "Licence: MIT",
+        "Attribution: Demo authors",
+        "Training: Trained on demo photos.",
+        "Source: https://example.test/source",
+        "Paper: https://example.test/paper",
+        "Size: 2.5 MB",
+        "Provided as is, without warranty of any kind.",
+    ]
+    assert lines[8].startswith("Accept this licence and download? [y/N]")
+    assert models.kept() == [] and not models.cache_dir().exists()
+    # No answer at all is not a yes either.
+    assert run("models", "get", "demo-1").exit_code == 1 and models.kept() == []
+
+
+def test_models_get_with_accept_licence_skips_the_question(monkeypatch):
+    entry = with_catalogue(monkeypatch)
+    r = run("models", "get", "demo-1", "--accept-licence")
+    assert r.exit_code == 0, r.output
+    assert "Accept this licence" not in r.output
+    assert [i for i, _ in models.kept()] == ["demo-1"]
+    assert models.kept()[0][1].read_bytes() == DEMO_BYTES and models.accepted(entry)
+
+
+def test_models_get_asks_only_until_the_licence_is_accepted(monkeypatch):
+    with_catalogue(monkeypatch)
+    r = run("models", "get", "demo-1", input="y\n")
+    assert r.exit_code == 0 and "Accept this licence and download? [y/N]" in r.output
+    assert run("models", "remove", "demo-1").exit_code == 0 and models.kept() == []
+    r = run("models", "get", "demo-1")
+    assert r.exit_code == 0 and "Accept this licence" not in r.output
+    assert [i for i, _ in models.kept()] == ["demo-1"]
+    assert ["demo-1", "Demo", "lines", "MIT", "downloaded"] in [
+        line.split() for line in run("models", "list").stdout.splitlines()
+    ]
+
+
+def test_models_get_refuses_an_unknown_id_and_keeps_nothing_of_a_bad_download(monkeypatch):
+    with_catalogue(monkeypatch)
+    r = run("models", "get", "nope-1")
+    assert r.exit_code == 2 and "nope-1" in r.stderr and "plotline models list" in r.stderr
+    with_catalogue(monkeypatch, sha256="0" * 64)
+    r = run("models", "get", "demo-1", "--accept-licence")
+    assert r.exit_code == 1 and "checksum" in r.stderr, r.output
+    assert models.kept() == [] and not models.cache_dir().exists()  # no model, no accepted.json
+
+
+def test_models_remove_deletes_the_file():
+    model_id = run("models", "add", str(TINY_MODEL)).stdout.strip()
+    r = run("models", "remove", model_id)
+    assert r.exit_code == 0 and models.kept() == []
+    assert r.stdout == f"removed {model_id}\n"
+    r = run("models", "remove", model_id)
+    assert r.exit_code == 1 and "plotline models list" in r.stderr and r.stdout == ""
+
+
+def test_models_list_marks_a_kept_file_that_fails_its_hash_as_damaged(monkeypatch):
+    with_catalogue(monkeypatch)
+    assert run("models", "get", "demo-1", "--accept-licence").exit_code == 0
+    path = models.cache_dir() / "demo-1.onnx"
+
+    def status():
+        lines = run("models", "list").stdout.splitlines()
+        return next(line.split()[-1] for line in lines if "demo-1" in line)
+
+    assert status() == "downloaded"
+    path.write_bytes(b"demo model byteX")  # the right size, the wrong bytes
+    assert status() == "damaged"
+    path.write_bytes(b"short")
+    assert status() == "damaged"
+
+
+def test_models_get_does_not_fetch_a_model_that_is_kept(monkeypatch):
+    with_catalogue(monkeypatch)
+    assert run("models", "get", "demo-1", "--accept-licence").exit_code == 0
+
+    def never(url, **kw):
+        raise AssertionError("fetched a model that is kept")
+
+    monkeypatch.setattr(urllib.request, "urlopen", never)
+    r = run("models", "get", "demo-1")  # not even a licence question
+    assert r.exit_code == 0, r.output
+    assert r.stdout == "demo-1 is already downloaded\n"
+    # A kept file that does not match is fetched again, and mended.
+    (models.cache_dir() / "demo-1.onnx").write_bytes(b"damaged")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, **kw: io.BytesIO(DEMO_BYTES))
+    r = run("models", "get", "demo-1")
+    assert r.exit_code == 0 and "already" not in r.output, r.output
+    assert models.kept()[0][1].read_bytes() == DEMO_BYTES
+
+
+def test_models_get_offline_says_which_model_and_where(monkeypatch):
+    entry = with_catalogue(monkeypatch)
+
+    def offline(url, **kw):
+        raise urllib.error.URLError(OSError(11001, "getaddrinfo failed"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", offline)
+    r = run("models", "get", "demo-1", "--accept-licence")
+    assert r.exit_code == 1 and r.stderr.startswith("Error:"), r.output
+    assert "demo-1" in r.stderr and entry["url"] in r.stderr
+    assert "urlopen" not in r.stderr and "Traceback" not in r.output
+    assert models.kept() == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("models", "list"),
+        ("models", "get", "demo-1", "--accept-licence"),
+        ("models", "add", str(TINY_MODEL)),
+        ("models", "remove", "demo-1"),
+    ],
+)
+def test_the_models_commands_without_a_home_folder_say_so(monkeypatch, args):
+    with_catalogue(monkeypatch)
+
+    def no_home():
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(models, "cache_dir", no_home)
+    r = run(*args)
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert r.stderr == "Error: Could not determine home directory.\n"
+
+
+def run_learned(image, tmp_path, *sets):
+    args = ["run", "learned", image, "--out", str(tmp_path / "o.svg")]
+    return run(*args, *(f"--set={s}" for s in sets))
+
+
+def test_run_learned_without_a_model_is_a_plain_error(image, tmp_path):
+    r = run_learned(image, tmp_path)
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert r.stderr.startswith("Error: ")
+    assert "choose a model; run `plotline models list`" in r.stderr
+    assert "Traceback" not in r.output and "Styles" not in r.stderr  # the GUI's path is no advice
+    assert not (tmp_path / "o.svg").exists()
+
+
+def test_run_learned_with_a_model_that_is_not_loaded_says_how_to_get_it(image, tmp_path):
+    r = run_learned(image, tmp_path, "model.model=teed-1")
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert "model teed-1 is not loaded; run `plotline models get teed-1`" in r.stderr
+    assert "Styles" not in r.stderr
+
+
+def test_run_learned_with_a_file_of_your_own_that_is_not_loaded_says_how_to_add_it(image, tmp_path):
+    # A file of your own is not in the catalogue: `get` is no advice, `add` is.
+    r = run_learned(image, tmp_path, "model.model=file-0123456789ab")
+    assert r.exit_code == 1, r.output
+    assert "model file-0123456789ab is not loaded" in r.stderr
+    assert "plotline models add <file>" in r.stderr and "models get" not in r.stderr
+    assert "Load your own" not in r.stderr
+
+
+def test_a_preset_naming_a_model_that_is_not_loaded_is_a_plain_error(image, tmp_path):
+    preset = tmp_path / "p.json"
+    session = Session()
+    session.set_style("learned")
+    session.update("model", model="teed-1")
+    session.save_preset(preset)
+    r = run("run", "learned", image, "--out", str(tmp_path / "o.svg"), "--preset", str(preset))
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert "model teed-1 is not loaded; run `plotline models get teed-1`" in r.stderr
+
+
+def test_a_kept_file_that_cannot_load_leaves_a_plain_error(image, tmp_path):
+    models.cache_dir().mkdir(parents=True)
+    (models.cache_dir() / "file-0123456789ab.onnx").write_bytes(b"not a model")
+    with pytest.warns(UserWarning, match="file-0123456789ab"):
+        r = run_learned(image, tmp_path, "model.model=file-0123456789ab")
+    assert r.exit_code == 1 and isinstance(r.exception, SystemExit), r.output
+    assert "model file-0123456789ab is not loaded" in r.stderr
 
 
 FAST = ("--set", "tone.resolution=64", "--set", "points.spacing_mm=5", "--quiet")

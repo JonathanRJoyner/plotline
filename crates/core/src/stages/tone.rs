@@ -223,14 +223,7 @@ impl Stage for ToneStage {
         let settings = validate::<ToneSettings>(self.name(), &self.schema(), settings)?;
         check_focus(&settings.focus)?;
         let (image, canvas) = (inputs.image().clone(), inputs.canvas().clone());
-        // Image's fields are public, so check here what the resize would otherwise panic on.
-        let (w, h, n) = (image.width as usize, image.height as usize, image.rgb.len());
-        if w == 0 || h == 0 || n != w * h * 3 {
-            return Err(StageError::Failed(format!(
-                "the image is {w} x {h} pixels with {n} values; it needs at least one pixel \
-                 and 3 values per pixel"
-            )));
-        }
+        check_image(&image)?;
         Ok(Box::new(ToneRun {
             input: Some((image, canvas, settings)),
             pending: None,
@@ -409,6 +402,19 @@ fn finish(
         origin_mm,
         gamma: s.gamma as f32,
     }
+}
+
+/// Check what the resize would otherwise panic on, since `Image`'s fields are public: at least
+/// one pixel and 3 values per pixel.
+pub(crate) fn check_image(image: &Image) -> Result<(), StageError> {
+    let (w, h, n) = (image.width as usize, image.height as usize, image.rgb.len());
+    if w == 0 || h == 0 || n != w * h * 3 {
+        return Err(StageError::Failed(format!(
+            "the image is {w} x {h} pixels with {n} values; it needs at least one pixel \
+             and 3 values per pixel"
+        )));
+    }
+    Ok(())
 }
 
 /// Refuse more than [`MAX_FOCUS`] points, and a point that is not two numbers from 0 to 1.

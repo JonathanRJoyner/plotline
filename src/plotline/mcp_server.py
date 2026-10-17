@@ -30,7 +30,7 @@ from mcp.types import TextContent
 from typing_extensions import TypedDict  # pydantic refuses typing.TypedDict before Python 3.12
 
 import plotline
-from plotline import registry
+from plotline import _core, registry
 from plotline.session import RunHandle, Session
 from plotline.types import Cancelled, Canvas, Frame, Pen, RunState
 
@@ -50,9 +50,11 @@ INSTRUCTIONS = (
     "which suggests a density, or set tone.response to auto. Use preview with region_mm to "
     "inspect detail. export writes the result. testchart draws a calibration chart for the "
     "first pen, to plot and compare by eye. set_machine describes a pen plotter or "
-    "pen-fitted printer; export with gcode then writes one file per pen. All lengths are "
-    "millimetres, the page origin is its top-left corner and y grows down. Paths must be "
-    "absolute."
+    "pen-fitted printer; export with gcode then writes one file per pen. list_models shows the "
+    "models that the learned style can draw with; choose one with "
+    'run(style="learned", settings={"model": {"model": id}}). A person downloads a model, so '
+    "an assistant cannot. All lengths are millimetres, the page origin is its top-left corner and "
+    "y grows down. Paths must be absolute."
 )
 
 
@@ -184,6 +186,27 @@ def build_server(session: Session | None = None) -> MCPServer:
         text. Change a setting by passing it to run."""
         with _errors():
             return registry.get_style(style).schema()
+
+    @server.tool()
+    async def list_models() -> dict[str, Any]:
+        """List the learned line models. downloaded are the models a run can use, each as {id,
+        label}: pass an id as the model setting of the learned style. available are the models
+        the catalogue offers that are not downloaded, each as {id, label, description, licence,
+        bytes}. There is no tool to download one, because a person accepts each model's licence:
+        tell them to run plotline models get <id>, or to use the GUI. Models downloaded while
+        the server runs are loaded when it starts again."""
+        with _errors():
+            held = session.models()
+            have = {m["id"] for m in held}
+            fields = ("id", "label", "description", "licence", "bytes")
+            return {
+                "downloaded": [{"id": m["id"], "label": m["label"]} for m in held],
+                "available": [
+                    {key: e[key] for key in fields}
+                    for e in _core.catalogue()
+                    if e["id"] not in have
+                ],
+            }
 
     @server.tool()
     async def load_image(path: str) -> dict[str, Any]:

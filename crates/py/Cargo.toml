@@ -17,3 +17,4 @@ numpy = "0.29.0"
 serde = "1"
 serde_json = "1"
 plotline-core = { path = "../core" }
+plotline-models = { path = "../models" }
