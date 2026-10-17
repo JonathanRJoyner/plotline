@@ -46,9 +46,10 @@ export type Event = RunEvent | FrameEvent | ResultEvent | EndEvent;
 /** One style drawn for the styles dialog: its preview as PNG bytes, or why it failed. */
 export type ThumbEvent = { type: "thumb"; id: number; style: string; png: Uint8Array | null; error: string | null };
 export type Area = { x: number; y: number; width: number; height: number };
-/** The engine leaves out the last four fields while they hold their defaults: Z, "", "", none. */
+/** The engine leaves out the last five fields while they hold their defaults: Z, "", "", none, 1000. */
 export type Machine = {
   name: string; area: Area; z_down_mm: number; z_up_mm: number; z_safe_mm: number;
   draw_feed: number; travel_feed: number; z_feed: number; settle_ms: number; start_gcode: string; end_gcode: string;
   pen_lift?: "z" | "gcode"; pen_down_gcode?: string; pen_up_gcode?: string; max_segment_mm?: number | null;
+  accel_mm_s2?: number;
 };

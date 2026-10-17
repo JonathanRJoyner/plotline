@@ -465,6 +465,38 @@ test("Optimize names a closer spacing the time limit left out", async ({ page })
   await expect(found).toContainText(/Spacing at [\d.]+ mm follows them more closely, with a tone error of \d\.\d{3}, but takes [\d.]+ min to plot, over the limit of [\d.]+ min: type a target in minutes to allow it\./);
 });
 
+test("a lower acceleration lengthens the plot time, and a machine brings its own", async ({ page }) => {
+  await sample(page);
+  const stats = page.locator(".stats");
+  const seconds = async () => {
+    const [, m, s] = /about (\d+) min (\d+) s to plot/.exec((await stats.textContent()) ?? "") ?? [];
+    return 60 * Number(m) + Number(s);
+  };
+  const before = await seconds();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const dialog = page.locator("dialog").filter({ has: page.getByRole("heading", { name: "Settings" }) });
+  await dialog.getByRole("button", { name: "Plot time", exact: true }).click();
+  const accel = dialog.getByRole("spinbutton", { name: /^Acceleration/ });
+  await expect(accel).toHaveValue("1000");
+  await accel.fill("0");
+  await accel.blur();
+  await expect(accel).toHaveValue("1000"); // no estimate at 0, so it snaps back
+  await accel.fill("20");
+  await accel.blur();
+  // The stats follow the speeds without a new run.
+  await expect.poll(seconds).toBeGreaterThan(before);
+  // A machine sets the acceleration with its feeds, and Plot time shows it read-only.
+  await dialog.getByRole("button", { name: "Machine", exact: true }).click();
+  await dialog.getByRole("combobox", { name: /^Machine/ }).selectOption("new");
+  const own = dialog.getByRole("spinbutton", { name: /^Acceleration/ });
+  await expect(own).toHaveValue("1000");
+  await own.fill("500");
+  await own.blur();
+  await dialog.getByRole("button", { name: "Plot time", exact: true }).click();
+  await expect(accel).toHaveValue("500");
+  await expect(accel).toBeDisabled();
+});
+
 // A white picture, on which the line styles draw nothing.
 async function whitePng(page: Page) {
   const png = await page.evaluate(async () => {

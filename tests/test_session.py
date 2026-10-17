@@ -372,6 +372,22 @@ def test_stats_use_the_speeds_edited_in_place():
     assert s.stats().estimated_seconds == pytest.approx(before.estimated_seconds + 1.0)
 
 
+def test_a_lower_acceleration_lengthens_the_plot_time_and_a_machine_sets_it():
+    s = slow(Session(), frames=1)
+    s.run_blocking()
+    assert s.speeds.accel_mm_s2 == 1000
+    before = s.stats().estimated_seconds
+    s.speeds.accel_mm_s2 = 1.0
+    assert s.stats().estimated_seconds > before
+    s.set_machine({**MACHINE, "accel_mm_s2": 250})
+    assert s.speeds.accel_mm_s2 == 250 and s.machine["accel_mm_s2"] == 250
+    # At its default the machine leaves it out, as a preset saved before it existed has it.
+    s.set_machine(MACHINE)
+    assert s.speeds.accel_mm_s2 == 1000 and "accel_mm_s2" not in s.machine
+    with pytest.raises(ValueError, match="accel_mm_s2 must be positive"):
+        s.set_machine({**MACHINE, "accel_mm_s2": 0})
+
+
 def test_an_error_after_the_last_frame_ends_the_run_in_error(monkeypatch):
     def broken(self):
         raise OSError("drawing lost")

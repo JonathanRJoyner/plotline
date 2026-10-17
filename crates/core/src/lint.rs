@@ -420,9 +420,9 @@ fn more_ink(cx: &Context, d: &Drawing, paths: usize) -> Option<Value> {
 
 const SPACING: &[&str] = &["spacing_mm", "min_spacing_mm"];
 
-/// The share of the plot time `st` spends on pen-up travel.
-fn travel_share(st: &Stats, speeds: Speeds) -> f64 {
-    st.pen_up_mm / speeds.travel_mm_s / st.estimated_seconds
+/// The share of the plot time spent on pen-up travel, from [`stats::timed`].
+fn travel_share((st, travel_s): (Stats, f64)) -> f64 {
+    travel_s / st.estimated_seconds
 }
 
 /// The travel share of `d` once the ordering stage has put every layer in nearest-neighbour order.
@@ -458,7 +458,7 @@ fn optimized_travel_share(d: &Drawing, speeds: Speeds) -> Option<f64> {
         tone: None,
         preset: None,
     };
-    Some(travel_share(&stats::compute(&ordered, speeds), speeds))
+    Some(travel_share(stats::timed(&ordered, speeds)))
 }
 
 /// The `vertices` number of `d` once the ordering stage simplifies every path to `tolerance` and
@@ -668,7 +668,8 @@ pub fn check(
         );
         add("dark", Severity::Info, message, c, patch);
     }
-    let st = stats::compute(d, speeds);
+    let timed = stats::timed(d, speeds);
+    let st = timed.0;
     if st.estimated_seconds > 0.0 {
         let lifts = paths as f64 * speeds.pen_lift_s / st.estimated_seconds;
         if lifts > LIFT_SHARE {
@@ -678,7 +679,7 @@ pub fn check(
             );
             add("lifts", Severity::Info, message, lifts, None);
         }
-        let travel = travel_share(&st, speeds);
+        let travel = travel_share(timed);
         if travel > TRAVEL_SHARE {
             let optimized = cx.settings["order"]["optimize"] != false;
             let mut message = format!(
@@ -1156,7 +1157,9 @@ mod tests {
     fn lifts_and_travel_take_a_share_of_the_time() {
         let all = lint(&page(dots(100)), "grid", |_| {});
         let lifts = find(&all, "lifts").unwrap();
-        assert!(lifts.value > 0.9, "{}", lifts.value);
+        // Each 0.9 mm hop never reaches travel speed and takes 2·sqrt(0.9 / 1000) s, about 0.06 s,
+        // against a 0.2 s lift.
+        assert!(lifts.value > 0.7, "{}", lifts.value);
         assert!(lifts.message.contains("(100 lifts)"), "{}", lifts.message);
         // Two short strokes at opposite corners: most of the time is travel.
         let far = page(vec![
@@ -1217,7 +1220,8 @@ mod tests {
         assert!(predicted < find(&found, "travel").unwrap().value);
         s.update("order", &patch["settings"]["order"]).unwrap();
         draw(&mut s);
-        assert_eq!(travel_share(&s.stats().unwrap(), s.speeds()), predicted);
+        let timed = stats::timed(&s.drawing().unwrap(), s.speeds());
+        assert_eq!(travel_share(timed), predicted);
     }
 
     #[test]

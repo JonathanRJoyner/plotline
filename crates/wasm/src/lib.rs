@@ -208,14 +208,15 @@ impl Session {
         Ok(self.inner.update(stage, &patch)?)
     }
 
-    /// Time plots at the `{"draw_mm_s", "travel_mm_s", "pen_lift_s"}` in `json`.
+    /// Time plots at the `{"draw_mm_s", "travel_mm_s", "pen_lift_s", "accel_mm_s2"}` in `json`.
     #[wasm_bindgen(js_name = setSpeeds)]
     pub fn set_speeds(&mut self, json: &str) -> Result<(), JsError> {
         self.inner.set_speeds(serde_json::from_str(json)?);
         Ok(())
     }
 
-    /// The speeds the stats time a plot at, as `{"draw_mm_s", "travel_mm_s", "pen_lift_s"}` JSON.
+    /// The speeds the stats time a plot at, as
+    /// `{"draw_mm_s", "travel_mm_s", "pen_lift_s", "accel_mm_s2"}` JSON.
     pub fn speeds(&self) -> String {
         json!(self.inner.speeds()).to_string()
     }

@@ -91,6 +91,7 @@ class MachineSpec(TypedDict):
     pen_down_gcode: NotRequired[str]
     pen_up_gcode: NotRequired[str]
     max_segment_mm: NotRequired[float | None]
+    accel_mm_s2: NotRequired[float]
 
 
 @contextmanager
@@ -285,7 +286,9 @@ def build_server(session: Session | None = None) -> MCPServer:
         pen_down_gcode and pen_up_gcode, the lines written as they are in place of each Z move;
         the Z heights and z_feed are then unused. max_segment_mm, for a machine whose firmware
         draws a long straight move as a curve (a hanging plotter, say), cuts every move into
-        pieces no longer than it; leave it out to keep moves whole. The page becomes the area's
+        pieces no longer than it; leave it out to keep moves whole. accel_mm_s2 is how fast the
+        pen speeds up and slows down, in mm/s², 1000 when left out; only the plot time reads it,
+        since short moves never reach full speed. The page becomes the area's
         width and height, with the margin and fit kept, so that the drawing fits the machine;
         set_page can change it afterwards. The machine also sets the plot speeds that the stats
         and the lint use. export with format gcode needs a machine, and a result drawn before the
