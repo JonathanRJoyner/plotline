@@ -184,7 +184,7 @@ impl Canvas {
     /// canvas's crop, and for fill the centre of that cut to the drawing area's aspect, which is
     /// the rectangle the tone stage and the colour split cut. Placing a source point on the page
     /// and finding one again both start here.
-    fn shown(&self, w: u32, h: u32) -> [usize; 4] {
+    pub(crate) fn shown(&self, w: u32, h: u32) -> [usize; 4] {
         let (x, y, sw, sh) = source_rect(w as usize, h as usize, self);
         [x, y, sw, sh]
     }

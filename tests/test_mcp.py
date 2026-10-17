@@ -310,7 +310,15 @@ async def test_run_and_preview(tmp_path):
         stats = json.loads(r.content[0].text)
         keys = {"path_count", "pen_down_mm", "pen_up_mm", "estimated_seconds", "tone", "lint"}
         assert set(stats) == keys and isinstance(stats["lint"], list)
-        assert set(stats["tone"]) == {"error", "ssim", "floor", "reach"}
+        assert set(stats["tone"]) == {
+            "error",
+            "ssim",
+            "floor",
+            "reach",
+            "contrast",
+            "blank",
+            "colour",
+        }
         assert png(r.content[1]).startswith(b"\x89PNG")
 
         r = await call(c, "preview", region_mm=[0, 0, 50, 50], width_px=200)

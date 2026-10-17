@@ -315,8 +315,9 @@ export function StatsPanel({ stats, tone }: { stats: Stats | null; tone: ToneMat
       {pathsText(stats.path_count)} · pen down {lengthText(stats.pen_down_mm)} · pen up {lengthText(stats.pen_up_mm)}{" "}
       · about {Math.floor(t / 60)} min {t % 60} s to plot
       {tone && (
-        <span title="How far the drawing's tones are from the image's, seen from a metre or two: the tone error is in the image's own ink, 0 for a perfect match, and SSIM compares their shapes, 1 for identical.">
-          {" "}· tone error {tone.error.toFixed(3)} · SSIM {tone.ssim.toFixed(2)}
+        <span title="How far the drawing's tones are from the image's, seen from a metre or two: the tone error is in the image's own ink, 0 for a perfect match, and SSIM compares their shapes, 1 for identical. Contrast is how much of the image's range from light to dark the drawing reaches, 100 % for all of it. For a drawing in several colours, the colour ΔE compares it with the image in CIELAB, lower is closer, beside blank paper's.">
+          {" "}· tone error {tone.error.toFixed(3)} · SSIM {tone.ssim.toFixed(2)} · contrast {Math.round(100 * tone.contrast)} %
+          {tone.colour && ` · colour ΔE ${tone.colour.error.toFixed(1)} against ${tone.colour.blank.toFixed(1)} for blank paper`}
         </span>
       )}
     </p>

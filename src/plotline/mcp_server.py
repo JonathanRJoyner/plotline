@@ -375,10 +375,15 @@ def build_server(session: Session | None = None) -> MCPServer:
         look: str | None = None,
     ) -> list[str | Image]:
         """Draw the image and return the stats as JSON and a preview at true pen width, up to 1000
-        px wide. The JSON's tone key is {error, ssim, floor, reach}: how the drawing's tones,
-        seen through a 1.5 mm eye filter, follow the tone map, as the RMS error in tone-map ink
-        once the coverage is put on the tone map's scale (lower is closer) and the structural
-        similarity (1 is identical), or null when there is nothing to compare. Its lint key lists
+        px wide. The JSON's tone key is {error, ssim, floor, reach, contrast, blank, colour}: how
+        the drawing's tones, seen through a 1.5 mm eye filter, follow the tone map, as the RMS
+        error in tone-map ink once the coverage is put on the tone map's scale (lower is closer)
+        and the structural similarity (1 is identical), or null when there is nothing to compare.
+        contrast is how much of the image's tonal range the drawing reaches (1 is all of it),
+        blank the error of blank paper, and colour, for a drawing in more than one pen colour,
+        {error, blank, gain}: the mean colour difference (CIE ΔE*ab, lower is closer) of the
+        drawing and of blank paper against the image, and the share of blank paper's that the
+        drawing takes away. Its lint key lists
         physical problems with the drawing as {code, severity, message, value, patch}; a patch
         applies like an analyse_image suggestion's. A style that
         differs from the current one replaces it; a stage the two styles share keeps the values
