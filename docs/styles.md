@@ -347,7 +347,7 @@ Level lines of the image, like a topographic map: each line follows one tone.
 - `contours.levels` (density): the number of levels between white and full ink.
 - `contours.smooth_mm`: blurs the map before tracing. More gives rounder, calmer lines.
 
-**Pens.** Any pen. The lines are long, so the pen lifts rarely, and `order.join` is `on`, so where several levels run together along the edge of the image their shared line is drawn once.
+**Pens.** Any pen. The lines are long, so the pen lifts rarely.
 
 **Looks:** Balanced only: its default levels already stack where the tone is steep.
 

@@ -319,7 +319,6 @@ pub fn contours_style() -> Style {
         "Level lines of the image, like a topographic map.",
         Arc::new(ContourStage),
     )
-    .with_defaults("order", json!({"join": "on"}))
 }
 
 /// Evenly spaced lines along the image's edges, closer where it is darker: tone, split, flow, order.
