@@ -1,5 +1,8 @@
-//! The ordering stage: simplify the paths, drop short ones, then reorder and reverse the rest to
-//! cut pen-up travel.
+//! The ordering stage: join the paths that meet, simplify them, drop short ones, then reorder and
+//! reverse the rest to cut pen-up travel.
+//!
+//! Joining is [`join::join`], which cites Edmonds and Johnson's 1973 postman paper for the fewest
+//! trails a graph needs and Hierholzer's 1873 paper for the trails.
 //!
 //! Simplification is the Ramer-Douglas-Peucker algorithm in [`raster::simplify`], which cites
 //! Douglas and Peucker's 1973 paper.
@@ -17,17 +20,32 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::join;
 use crate::raster;
 use crate::settings::{defaults_for, schema_for, validate};
 use crate::spatial::{bounds, GridIndex};
 use crate::stage::{Artifact, Frame, Inputs, Kind, RunContext, Stage, StageError, StageRun, Step};
 use crate::types::Paths;
 
+/// Whether and how the ordering stage joins the paths that meet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Join {
+    /// Each path stays as the style drew it.
+    Off,
+    /// The paths that meet are drawn as the fewest trails that draw each edge once.
+    On,
+    /// As on, and short edges between two trail ends are drawn twice, which joins their trails.
+    Retrace,
+}
+
 // Each help text stays on one line: schemars keeps the line breaks of a doc comment.
 /// Settings for the ordering stage.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct OrderSettings {
+    /// Join paths that meet into the fewest pen-down trails, drawing an edge two paths share once; retrace also draws some short edges twice, so the pen lifts less.
+    pub join: Join,
     /// Reorder paths to cut pen-up travel.
     pub optimize: bool,
     /// Drop paths shorter than this. Dots have zero length, so any positive value removes them.
@@ -41,6 +59,7 @@ pub struct OrderSettings {
 impl Default for OrderSettings {
     fn default() -> Self {
         OrderSettings {
+            join: Join::Off,
             optimize: true,
             min_length_mm: 0.0,
             simplify_mm: 0.0,
@@ -48,7 +67,9 @@ impl Default for OrderSettings {
     }
 }
 
-/// Simplify each path of three or more vertices to within `simplify_mm`, keeping its end points;
+/// With `join` on, rebuild the paths as the fewest trails over the graph of their vertices; with
+/// `retrace`, fewer still by drawing short edges twice (see [`join::join`]). Then simplify each
+/// path of three or more vertices to within `simplify_mm`, keeping its end points;
 /// at 0 the paths are left as they are. Drop the paths shorter than `min_length_mm`, then, with
 /// `optimize` on, put the rest in nearest-neighbour order from the top-left corner of the drawing
 /// area.
@@ -92,6 +113,9 @@ impl Stage for OrderStage {
     ) -> Result<Box<dyn StageRun>, StageError> {
         let s = validate::<OrderSettings>(self.name(), &self.schema(), settings)?;
         let mut paths = inputs.paths().clone();
+        if s.join != Join::Off {
+            paths = Arc::new(join::join(&paths, s.join == Join::Retrace));
+        }
         if s.simplify_mm > 0.0 {
             let mut simplified = Paths::new();
             // Deserialized paths may be empty, and an empty path draws nothing.

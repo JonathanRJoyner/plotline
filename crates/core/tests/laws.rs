@@ -33,6 +33,7 @@ use plotline_core::registry::{get_style, list_styles};
 use plotline_core::runner::Shared;
 use plotline_core::settings::merge;
 use plotline_core::stage::{Artifact, Inputs, Kind, RunContext, Stage, Step};
+use plotline_core::stages::join::join;
 use plotline_core::stages::split::SplitStage;
 use plotline_core::stages::tone::{flatten, guided, ToneStage};
 use plotline_core::stats::{self, DEFAULT_ACCEL_MM_S2};
@@ -1132,7 +1133,11 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
         let above = fit.samples.iter().any(|x| x.metric > target);
         if !within && !(below && above) {
             // Out of reach: then the fit is no farther from the target than the end of the
-            // range that density points towards.
+            // range that density points towards, give or take the fit's tolerance or one of the
+            // end drawing's average paths. As in the density law, lines land on whole steps, so
+            // a closer spacing can draw a line less: flow's minutes fell from 0.0642 to 0.0639
+            // as its minimum spacing closed from 0.8 to 0.7 mm, and the search took that for a
+            // cliff and stayed near 0.75 mm while 0.3 mm gave 0.0700.
             let end = if (target > start) == d.direct {
                 d.max
             } else {
@@ -1146,10 +1151,12 @@ fn a_fit_lands_near_its_target_or_says_how_near_it_can() {
             s.update(&d.stage, &json!({ &d.key: end })).unwrap();
             let mut r = s.start().unwrap();
             drain(&mut r)?;
-            let at_end = metrics(&s, &r)[metric];
+            let end_metrics = metrics(&s, &r);
+            let at_end = end_metrics[metric];
             let off = |m: f64| (ln(m) - ln(target)).abs();
+            let slack = ln(1.0 + TOLERANCE.max(1.0 / end_metrics[1].max(1.0)));
             prop_assert!(
-                off(fit.achieved) <= off(at_end),
+                off(fit.achieved) <= off(at_end) + slack,
                 "{} {target}: {} is farther than {at_end} at {end}: {:?}",
                 names[metric],
                 fit.achieved,
@@ -1526,6 +1533,63 @@ fn simplify_keeps_the_ends_drops_no_more_than_the_tolerance_and_nothing_at_zero(
         }
         // Nothing is collinear, so a tolerance of 0 drops nothing.
         prop_assert!(!no_collinear || out == line, "{out:?} lost vertices");
+        Ok(())
+    });
+}
+
+/// Each segment of `paths` between two different points, as its two ends sorted, once.
+fn segments_of(paths: &Paths) -> Vec<[[i64; 2]; 2]> {
+    let point = |p: [f64; 2]| [p[0] as i64, p[1] as i64];
+    let mut out: Vec<[[i64; 2]; 2]> = (paths.iter())
+        .flat_map(|p| p.windows(2).map(|s| [point(s[0]), point(s[1])]))
+        .filter(|s| s[0] != s[1])
+        .map(|mut s| {
+            s.sort();
+            s
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[test]
+fn joining_never_adds_a_path_and_draws_every_segment_and_dot() {
+    // Paths on a coarse grid, so that paths meet, cross at vertices, repeat a segment, repeat a
+    // vertex in place and come as dots.
+    let vertex = (0..6i32, 0..6i32).prop_map(|(x, y)| [f64::from(x), f64::from(y)]);
+    let paths = prop::collection::vec(prop::collection::vec(vertex, 1..7), 0..16);
+    check("join", 512, paths, |list| {
+        let mut input = Paths::new();
+        for p in &list {
+            input.push(p);
+        }
+        let dots = |p: &Paths| {
+            let mut d: Vec<Vec<[f64; 2]>> = p
+                .iter()
+                .filter(|q| q.len() == 1)
+                .map(<[_]>::to_vec)
+                .collect();
+            d.sort_by(|a, b| {
+                a[0][0]
+                    .total_cmp(&b[0][0])
+                    .then(a[0][1].total_cmp(&b[0][1]))
+            });
+            d
+        };
+        let joined = join(&input, false);
+        let retraced = join(&input, true);
+        for out in [&joined, &retraced] {
+            prop_assert!(
+                out.len() <= input.len(),
+                "{} paths from {}",
+                out.len(),
+                input.len()
+            );
+            prop_assert_eq!(segments_of(out), segments_of(&input));
+            prop_assert_eq!(dots(out), dots(&input));
+        }
+        prop_assert!(retraced.len() <= joined.len());
         Ok(())
     });
 }

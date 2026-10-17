@@ -10,6 +10,7 @@ pub mod grid;
 pub mod hatch;
 pub mod hilbert;
 pub mod ink;
+pub mod join;
 pub mod lines;
 pub mod mosaic;
 pub mod order;

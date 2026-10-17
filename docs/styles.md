@@ -19,7 +19,7 @@ The GUI's style picker groups the styles under these same headings, and a test k
 
 **Pen use** (the `split` stage) shares the drawing between the pens: the first pen alone, light to dark in list order, or each pen by its colour. With several pens, every style but `ink` spreads its marks so that one pen does not draw on top of another. By colour, the tone `gamma` darkens each pen's own share of a colour rather than adding grey, which the black pen would draw over every colour ([decision](decisions/2026-10-17-colour-lanes.md)). `waves`, `spiral`, `flow` and `hilbert` lift a pen where its share of the ink is under half of what their lines cover over white, so a pen leaves paper and other pens' colours alone.
 
-**Path order** (the `order` stage) reorders the paths to cut pen-up travel (`optimize`), drops paths shorter than `min_length_mm`, which clears specks, and, with `simplify_mm` above 0, removes the vertices a pen cannot show (Ramer–Douglas–Peucker; see [the decision](decisions/2026-10-16-path-simplification.md)).
+**Path order** (the `order` stage) joins the paths that meet into the fewest pen-down trails (`join`: `on` draws each edge once, `retrace` also draws some short edges twice so the pen lifts less; see [the decision](decisions/2026-10-17-join-paths-into-trails.md)), reorders the paths to cut pen-up travel (`optimize`), drops paths shorter than `min_length_mm`, which clears specks, and, with `simplify_mm` above 0, removes the vertices a pen cannot show (Ramer–Douglas–Peucker; see [the decision](decisions/2026-10-16-path-simplification.md)).
 
 **Density.** Every style but `ink` has one density setting, named in its section. Fit to target in the GUI, the `--fit-minutes`, `--fit-paths`, `--fit-metres` and `--fit-dots` flags and the MCP `fit` tool change that setting until the drawing meets a plot time, a path count, metres of line or a dot count.
 
@@ -202,7 +202,7 @@ The points joined by the shortest tree, so every point is reached and no loop fo
 
 **Settings.** The tree has none of its own; try `voronoi.exponent` 2.
 
-**Pens.** Fine pens. The tree is drawn as long branching strokes, so the pen lifts far less often than there are points.
+**Pens.** Fine pens. The tree is drawn as long branching strokes, and `order.join` is `retrace`, which draws some short twigs twice to join the strokes, so the pen lifts far less often than there are points.
 
 **Looks:** Faithful (`tone.response` auto and `voronoi.count` 20,000).
 
@@ -217,7 +217,7 @@ A triangle mesh over the points (their Delaunay triangulation), dense and dark w
 **Settings**
 - `delaunay.max_edge_mm`: leaves out edges longer than this, such as those across light areas, so white stays white.
 
-**Pens.** A fine pen: the mesh draws a lot of line, and close edges merge under a wide pen.
+**Pens.** A fine pen: the mesh draws a lot of line, and close edges merge under a wide pen. `order.join` is `retrace`, so the mesh is drawn in long strokes that draw some short edges twice.
 
 **Looks:** Faithful (`tone.response` auto and `voronoi.count` 6,000) and Fine (`voronoi.count` 20,000).
 
@@ -231,7 +231,7 @@ The outlines of the points' Voronoi cells: small cells where it is dark, large o
 
 **Settings.** The cells have none of their own; try `voronoi.exponent` 2.
 
-**Pens.** A fine pen. The outlines are drawn in thousands of short pieces, so expect many pen lifts.
+**Pens.** A fine pen. Every corner of a cell joins three edges, so the outlines cannot be drawn in fewer pieces than half the corners; `order.join` is `retrace`, which draws some short edges twice to join the pieces and lifts the pen about a seventh as often. Set it to `on` to draw every edge once, with many more lifts.
 
 **Looks:** Faithful (`tone.response` auto and `voronoi.count` 8,400) and Fine (`voronoi.count` 12,000).
 
