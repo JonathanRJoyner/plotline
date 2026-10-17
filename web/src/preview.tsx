@@ -142,6 +142,31 @@ function paintCompare(ctx: CanvasRenderingContext2D, s: Props, c: Compare, bitma
   ctx.restore();
 }
 
+// The indigo of the focus rings (--ring in style.css), which a canvas cannot read from there.
+const RING = "#4338ca";
+
+// A crosshair of about 12 CSS pixels at the canvas centre, where Enter marks a focus point, so
+// the arrow keys can aim; a white casing keeps it visible on dark ink and the dark backdrop. In
+// device pixels, after the page content.
+function paintAim(ctx: CanvasRenderingContext2D, dpr: number) {
+  const { width, height } = ctx.canvas;
+  const [x, y, r] = [width / 2, height / 2, 6 * dpr];
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.lineCap = "butt";
+  ctx.beginPath();
+  ctx.moveTo(x - r, y);
+  ctx.lineTo(x + r, y);
+  ctx.moveTo(x, y - r);
+  ctx.lineTo(x, y + r);
+  for (const [color, w] of [["#fff", 3.5], [RING, 1.5]] as const) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = w * dpr;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // Draws everything in page millimetres, so a line width is a length on the paper. While running,
 // each pen's latest frame stands in for the result and is drawn in that pen, so a finished pen's
 // lines stay while the next pen's frames arrive.
@@ -213,15 +238,8 @@ function paint(ctx: CanvasRenderingContext2D, s: Props, view: View, w: number, h
     stroke(travel, p);
   }
 
-  if (!s.hasImage) {
-    ctx.fillStyle = onPaper(s.paper);
-    ctx.font = "6px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Open, drop or paste an image to start", page.width_mm / 2, page.height_mm / 2);
-  }
-
   if (s.compare && !s.running) paintCompare(ctx, s, s.compare, bitmap, dpr);
+  if (s.focusing) paintAim(ctx, dpr);
 }
 
 export function Preview(props: Props): JSX.Element {
@@ -276,7 +294,7 @@ export function Preview(props: Props): JSX.Element {
       paint(ctx, props, view, size.w, size.h, window.devicePixelRatio || 1, bitmap);
     });
     return () => cancelAnimationFrame(id);
-  }, [props.canvas, props.paper, props.frames, props.result, props.running, props.showSource, props.showTravel, props.compare?.against, props.compare?.at, props.previous, props.hidden, props.pens, props.hasImage, view, size, bitmap]);
+  }, [props.canvas, props.paper, props.frames, props.result, props.running, props.showSource, props.showTravel, props.compare?.against, props.compare?.at, props.previous, props.hidden, props.pens, props.focusing, view, size, bitmap]);
 
   // Zooms by `k`, keeping the page point under (px, py) in place.
   const zoom = (k: number, px: number, py: number) => setView((v) => zoomAt(v, Math.min(200, Math.max(0.05, v.scale * k)) / v.scale, px, py));
@@ -287,13 +305,14 @@ export function Preview(props: Props): JSX.Element {
       <canvas
         ref={cvs}
         tabIndex={0}
-        aria-label="Preview of the drawing: arrow keys pan, plus and minus zoom, 0 fits the page"
+        aria-label={`Preview of the drawing: arrow keys pan, plus and minus zoom, 0 fits the page${focusing ? ", Enter marks a focus point at the centre" : ""}`}
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", touchAction: "none", cursor: focusing ? "crosshair" : "grab" }}
         onKeyDown={(e) => {
           if (e.key === "+" || e.key === "=") zoom(1.25, size.w / 2, size.h / 2);
           else if (e.key === "-") zoom(0.8, size.w / 2, size.h / 2);
           else if (e.key === "0") fit(size.w, size.h);
           else if (PAN[e.key]) setView((v) => ({ ...v, x: v.x + PAN[e.key][0], y: v.y + PAN[e.key][1] }));
+          else if (e.key === "Enter" && focusing) { if (!e.repeat) onFocusAt(toMm(view, size.w / 2, size.h / 2)); } // a held key would fill the 16 points
           else return;
           e.preventDefault();
         }}

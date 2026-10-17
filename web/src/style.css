@@ -7,6 +7,8 @@
   --field: light-dark(#f5f6f9, #1e222b);
   --hover: light-dark(#eceef3, #262b36);
   --border: light-dark(#e2e5eb, #2a2f3a);
+  /* A control's boundary, 3:1 (WCAG 1.4.11): light 3.35 on --surface and 3.10 on --field; dark 3.70 and 3.35. */
+  --control-border: light-dark(#848d9d, #6b7385);
   --text: light-dark(#171a20, #e7e9ef);
   --muted: light-dark(#5f6878, #8f97a8);
   --accent: light-dark(#4f46e5, #8b8ff9);
@@ -129,6 +131,28 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
   pointer-events: none;
 }
 
+/* How to start, centred over the empty preview until an image is open. */
+.preview .empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(300px, calc(100% - 24px));
+  padding: 18px 16px 14px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transform: translate(-50%, -50%);
+}
+.preview .empty p { margin: 0; }
+.preview .empty .lead { font-size: 15px; font-weight: 600; }
+.preview .empty button, .preview .empty .button { justify-content: center; width: 100%; }
+
 /* The compare view's controls: a card at the top left with the chip and its menu, the slider along
    the bottom and, between them, a handle on the divider that the canvas draws. The hint moves above the slider. */
 .preview .compare-pick, .preview .compare-swipe {
@@ -146,6 +170,7 @@ details.stage[open] > summary, details.panel[open] > summary { margin-bottom: 8p
   border-radius: 8px;
   box-shadow: var(--shadow);
 }
+.preview .compare-pick[hidden] { display: none; } /* until there is a drawing; the flex above would show it */
 .preview .compare-pick { top: 10px; left: 10px; max-width: calc(100% - 20px); padding: 4px; }
 .preview .compare-pick > span { padding: 0 8px 0 4px; }
 .preview .compare-pick select { height: 28px; min-width: 0; }
@@ -190,6 +215,7 @@ footer {
 .status li[data-state="running"]::before { background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
 @keyframes pulse { to { opacity: 0.3; } }
 .stats { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+details.fit-panel { margin-top: 6px; }
 .fit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 6px 0 0; font-variant-numeric: tabular-nums; }
 .fit input { width: 7em; }
 .fit .error { margin: 0; }
@@ -214,7 +240,7 @@ input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [ty
   font: inherit;
   color: inherit;
   background: var(--field);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 7px;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -223,7 +249,7 @@ input[type="number"] { width: 6.5em; font-variant-numeric: tabular-nums; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 input[type="checkbox"], input[type="range"] { margin: 0; }
 input[type="checkbox"] { width: 15px; height: 15px; flex: none; }
-input[type="color"] { width: 36px; height: 26px; margin-left: auto; padding: 2px; background: var(--field); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+input[type="color"] { width: 36px; height: 26px; margin-left: auto; padding: 2px; background: var(--field); border: 1px solid var(--control-border); border-radius: 7px; cursor: pointer; }
 input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 input[type="color"]::-moz-color-swatch { border: none; border-radius: 4px; }
@@ -269,7 +295,7 @@ fieldset > button, fieldset > .button { margin: 4px 6px 0 0; }
 .control { margin-bottom: 4px; }
 .help { margin: -2px 0 8px; color: var(--muted); font-size: 12px; }
 details details { margin-top: 6px; }
-details details > summary { color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+details details > summary, details.fit-panel > summary { color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; }
 summary { cursor: pointer; }
 summary:hover { color: var(--text); }
 .error { margin: 4px 0; color: var(--danger); }

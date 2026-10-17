@@ -408,6 +408,9 @@ type FitProps = {
 export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOptimize, onApply }: FitProps): JSX.Element {
   const [target, setTarget] = useState("");
   const [metric, setMetric] = useState("minutes");
+  // Closed until the first need, so the stats lead; a result or an error opens it so none is hidden, and nothing closes it again.
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (error || fitted || optimum) setOpen(true); }, [error, fitted, optimum]);
   const unit = (m: string) => UNITS.find(([name]) => name === m)?.[1] ?? m;
   // What the fit says: the setting under its label and unit from the settings panel, and whether the target was met.
   const text = (f: FitResult) => {
@@ -436,34 +439,37 @@ export function FitPanel({ disabled, error, fitted, optimum, stages, onFit, onOp
     return `${label} at ${at(o.value)} follows the image's tones best${within}: a tone error of ${o.error.toFixed(3)} and ${time(o.minutes)} to plot, ${against}.`;
   };
   return (
-    <form
-      class="fit" data-tour="fit"
-      onSubmit={(e) => { e.preventDefault(); if (Number(target) > 0) onFit(metric, Number(target)); }}
-    >
-      <input type="number" min="0" step="any" required aria-label="Target" placeholder="Target" value={target} onInput={(e) => setTarget(e.currentTarget.value)} />
-      <select aria-label="Target unit" value={metric} onChange={(e) => setMetric(e.currentTarget.value)}>
-        {UNITS.map(([name, label]) => <option value={name}>{label}</option>)}
-      </select>
-      <button
-        type="submit" disabled={disabled}
-        title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says."
+    <details class="fit-panel" data-tour="fit" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>Fit and optimize</summary>
+      <form
+        class="fit"
+        onSubmit={(e) => { e.preventDefault(); if (Number(target) > 0) onFit(metric, Number(target)); }}
       >
-        <Target /> Fit to target
-      </button>
-      <button
-        type="button" disabled={disabled} data-tour="optimize"
-        title="Reruns the style up to nine times with its density setting from a quarter to four times its value, and suggests the value whose drawing's tones follow the image best. It leaves out values that plot for over twice as long, or an hour if that is more, or that the plot lint warns about, and keeps within the target if one is typed. Nothing changes until you apply it."
-        onClick={() => (Number(target) > 0 ? onOptimize(metric, Number(target)) : onOptimize())}
-      >
-        <Wand /> Optimize
-      </button>
-      {error ? <span class="error">{error}</span> : fitted ? <span>{text(fitted)}</span> : optimum && (
-        <span>
-          {found(optimum)}
-          {optimum.patch && <button type="button" aria-label={`Apply: ${found(optimum)}`} onClick={() => onApply(optimum.patch!)}><Check /> Apply</button>}
-        </span>
-      )}
-    </form>
+        <input type="number" min="0" step="any" required aria-label="Target" placeholder="Target" value={target} onInput={(e) => setTarget(e.currentTarget.value)} />
+        <select aria-label="Target unit" value={metric} onChange={(e) => setMetric(e.currentTarget.value)}>
+          {UNITS.map(([name, label]) => <option value={name}>{label}</option>)}
+        </select>
+        <button
+          type="submit" disabled={disabled}
+          title="Reruns the style up to eight times with its density setting changed, and keeps the run nearest the target. The plot time leaves out acceleration, so styles of short strokes or dots plot slower than it says."
+        >
+          <Target /> Fit to target
+        </button>
+        <button
+          type="button" disabled={disabled}
+          title="Reruns the style up to nine times with its density setting from a quarter to four times its value, and suggests the value whose drawing's tones follow the image best. It leaves out values that plot for over twice as long, or an hour if that is more, or that the plot lint warns about, and keeps within the target if one is typed. Nothing changes until you apply it."
+          onClick={() => (Number(target) > 0 ? onOptimize(metric, Number(target)) : onOptimize())}
+        >
+          <Wand /> Optimize
+        </button>
+        {error ? <span class="error">{error}</span> : fitted ? <span>{text(fitted)}</span> : optimum && (
+          <span>
+            {found(optimum)}
+            {optimum.patch && <button type="button" aria-label={`Apply: ${found(optimum)}`} onClick={() => onApply(optimum.patch!)}><Check /> Apply</button>}
+          </span>
+        )}
+      </form>
+    </details>
   );
 }
 

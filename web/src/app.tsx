@@ -147,6 +147,20 @@ function Export({ status, machine, error, onExport, onHpgl, onGcode, onTestchart
   return <ExportPanel drawing={stats !== null} layers={layers} machine={machine} error={error} onExport={onExport} onHpgl={onHpgl} onGcode={onGcode} onTestchart={onTestchart} />;
 }
 
+// The file input of an Open button, in the toolbar and in the empty preview's card.
+function OpenInput({ onOpen }: { onOpen: (file: File | undefined) => void }) {
+  return (
+    <input
+      class="visually-hidden" type="file" accept={ACCEPT}
+      onChange={(e) => {
+        const file = e.currentTarget.files?.[0];
+        e.currentTarget.value = ""; // so the same file can be opened again
+        onOpen(file);
+      }}
+    />
+  );
+}
+
 type RunViewProps = Omit<Parameters<typeof Preview>[0], "frames" | "result" | "running" | "showSource" | "showTravel" | "compare" | "previous" | "view" | "onView" | "fits" | "focusing"> & {
   engine: Engine; status: StatusStore; stages: Stage[]; error?: string; fitError?: string;
   onOpen: (file: File | undefined) => void; onSample: () => void; onRun: () => void; onStop: () => void; onSvg: () => void;
@@ -223,14 +237,7 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
         <span class="group" data-tour="image">
           <label class="button" title="Open image">
             <ImageUp /> <span class="label">Open image</span>
-            <input
-              class="visually-hidden" type="file" accept={ACCEPT}
-              onChange={(e) => {
-                const file = e.currentTarget.files?.[0];
-                e.currentTarget.value = ""; // so the same file can be opened again
-                onOpen(file);
-              }}
-            />
+            <OpenInput onOpen={onOpen} />
           </label>
           <button type="button" title="Sample image" onClick={onSample}><Sparkles /> <span class="label">Sample image</span></button>
         </span>
@@ -263,7 +270,7 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
         <span class="group end shrink">
           <button type="button" title="Export SVG" disabled={stats === null} onClick={onSvg}><Download /> <span class="label">Export SVG</span></button>
           <button type="button" title="Settings" data-tour="machine" onClick={onSettings}><Gear /> <span class="label">Settings</span></button>
-          <button type="button" title="Tour" onClick={onTour}><CircleHelp /> <span class="label">Tour</span></button>
+          <button type="button" id="tour-button" title="Tour" onClick={onTour}><CircleHelp /> <span class="label">Tour</span></button>
           <ThemeButton />
         </span>
       </div>
@@ -274,6 +281,15 @@ function RunView({ engine, status, stages, error, fitError, onOpen, onSample, on
           showTravel={showTravel} compare={comparing && shown ? { against: shown, at: swipe } : null} previous={previous}
           view={view} onView={setView} fits={fits} focusing={focusing}
         />
+        {/* Not over a test chart, which draws with no image. */}
+        {!preview.hasImage && result === null && (
+          <div class="empty">
+            <p class="lead">Start with an image</p>
+            <button type="button" class="primary" onClick={onSample}>Use the sample image</button>
+            <label class="button">Open an image <OpenInput onOpen={onOpen} /></label>
+            <p class="help">Or drop or paste a PNG, JPEG or WebP anywhere on the page.</p>
+          </div>
+        )}
         <CompareControls
           on={comparing} enabled={result !== null} against={shown} offered={offered} at={swipe}
           onOn={setComparing} onAgainst={setAgainst} onAt={setSwipe}
